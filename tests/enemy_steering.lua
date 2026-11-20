@@ -38,49 +38,51 @@ return function(Ship, Enemies, Camera, check)
         enemy.angle, manual.angle = math.pi / 2, math.pi / 2
         check(matchesManual({turn = 0, thrust = true, brake = false}) and enemy.accelerating,
             "A correctly aimed enemy must accelerate like a player holding thrust")
-        local holdX = ship.x - Enemies.types[3].pressRange
-        enemy.x, manual.x, enemy.vx, manual.vx = holdX, holdX, 130, 130
+        enemy.vx, manual.vx = -130, -130
         check(matchesManual({turn = 0, thrust = false, brake = true}) and enemy.braking,
-            "An enemy reaching its holding position must brake like a player")
+            "An enemy drifting away from its waypoint must brake like a player")
     end
 
     do
         local ship, group = fixture()
-        local left = group:spawn(ship, 3, {x = ship.x - 330, y = ship.y})
-        local right = group:spawn(ship, 3, {x = ship.x + 330, y = ship.y})
-        local randomValues = {0, 1, 1, 0, 0, 1, 1, 0}
-        local draws = 0
-        group.rng = function()
-            draws = draws + 1
-            return randomValues[draws] or 0.5
+        local squad = group:spawnSquad(ship)
+        local leader, wing = squad[1], squad[4]
+        group:update(leader.phaseRemaining + dt, ship)
+        local route = leader.route
+        local first = route.waypoints[1]
+        local function isInPatrolRange(point)
+            local distance = length(point.x - ship.x, point.y - ship.y)
+            return distance >= 195 - 1e-6 and distance <= 290 + 1e-6
         end
-        local refreshed = {[left] = {}, [right] = {}}
-        for frame = 0, 60 do
-            ship.y = height / 2 + frame
-            local previousLeftY = left.goal and left.goal.y
-            local previousRightY = right.goal and right.goal.y
-            local previousDraws = draws
-            group:update(dt, ship)
-            local changes = 0
-            for _, pair in ipairs({{left, previousLeftY}, {right, previousRightY}}) do
-                local enemy, previousY = unpack(pair)
-                if enemy.goal.y ~= previousY then
-                    local times = refreshed[enemy]
-                    times[#times + 1] = frame * dt
-                    changes = changes + 1
-                    if #times > 1 then
-                        local elapsed = times[#times] - times[#times - 1]
-                        assert(elapsed >= 0.25 - 1e-6 and elapsed <= 1 / 3 + 1e-6,
-                            "A waypoint changed outside its scheduled refresh window")
-                    end
-                end
-            end
-            assert(changes == draws - previousDraws, "Waypoints must stay fixed between random refreshes")
+        local function occupiesSlot(enemy, point)
+            local x, y = enemy.goal.x - point.x, enemy.goal.y - point.y
+            local fx, fy = math.sin(point.angle), -math.cos(point.angle)
+            return math.abs(x * fx + y * fy - enemy.forward) < 1e-6
+                and math.abs(y * fx - x * fy - enemy.right) < 1e-6
         end
-        local leftTimes, rightTimes = refreshed[left], refreshed[right]
-        check(#leftTimes == 4 and #rightTimes == 4 and leftTimes[2] ~= rightTimes[2]
-            and math.abs(rightTimes[3] - 2 * rightTimes[2]) > dt,
-            "Each enemy must refresh its waypoint on its own varying schedule")
+        check(isInPatrolRange(first) and leader.goal.x == first.x and leader.goal.y == first.y
+            and occupiesSlot(wing, first), "The random OBTUSE waypoint must define every formation slot")
+
+        ship.y = ship.y + 80
+        local oldGoal = wing.goal
+        group:update(0.4, ship)
+        check(wing.goal == oldGoal and leader.waypointIndex == 1, "Unreached waypoints must stay fixed as the player moves")
+
+        wing.x, wing.y = wing.goal.x, wing.goal.y
+        group:update(dt, ship)
+        local second = route.waypoints[2]
+        check(wing.waypointIndex == 2 and leader.waypointIndex == 1 and isInPatrolRange(second)
+            and occupiesSlot(wing, second), "A wing reaching its slot must advance while the OBTUSE is still approaching")
+
+        leader.x, leader.y = leader.goal.x, leader.goal.y
+        group:update(dt, ship)
+        check(leader.waypointIndex == 2 and leader.goal.x == second.x and leader.goal.y == second.y,
+            "The OBTUSE must follow the same waypoint after reaching its own slot")
+        group:destroy(1)
+        wing.x, wing.y = wing.goal.x, wing.goal.y
+        group:update(dt, ship)
+        check(wing.waypointIndex == 3 and occupiesSlot(wing, route.waypoints[3]),
+            "Surviving ships must continue the formation route after the OBTUSE is destroyed")
     end
 
     local function step(ship, group, aim)
@@ -113,17 +115,11 @@ return function(Ship, Enemies, Camera, check)
             and leftWing.y < leftEscort.y and rightWing.y > rightEscort.y,
             "A squad must enter from one edge with an OBTUSE leader, two escorts and two flankers")
 
-        local dives, regrouped = 0, false
-        for _ = 1, 16 * 60 do
-            local leftBefore, rightBefore = leftWing.state, rightWing.state
-            step(ship, group)
-            if leftBefore == "form" and leftWing.state == "dive" then
-                assert(rightBefore == "form" and rightWing.state == "dive", "Flankers launched on different frames")
-                dives = dives + 1
-            end
-            if dives > 0 and leftWing.state == "form" and rightWing.state == "form" then regrouped = true end
+        for _ = 1, 10 * 60 do step(ship, group) end
+        for _, enemy in ipairs(squad) do
+            assert(enemy.waypointIndex >= 3, "Every aircraft must keep reaching new waypoints with the player at rest")
         end
-        check(dives >= 2 and regrouped, "WEDGE pair must dive together and reform before launching again")
+        check(#leader.route.waypoints >= 3, "The stationary-player patrol must visit several distinct waypoints")
     end
 
     do
@@ -148,6 +144,10 @@ return function(Ship, Enemies, Camera, check)
         group:update(dt, ship, nil, camera, w, h)
         check(leader.phase == "departing" and not leader.goal and not leader.dead,
             "A squad must give up the patrol and start a visible departure when time expires")
+        local exit = leader.route.exit
+        for _, e in ipairs(squad) do
+            assert(e.phase == "departing" and e.route.exit == exit, "The full squad must share one departure point")
+        end
 
         w, h = 800, 600
         camera:update(0, ship, w, h)
@@ -158,8 +158,9 @@ return function(Ship, Enemies, Camera, check)
             group:update(dt, ship, nil, camera, w, h)
             for _, e in ipairs(squad) do
                 if e.dead then
-                    assert(e.x + e.radius < left or e.x - e.radius > right
-                        or e.y + e.radius < top or e.y - e.radius > bottom,
+                    local cleared = {e.x + e.radius < left, e.x - e.radius > right,
+                        e.y + e.radius < top, e.y - e.radius > bottom}
+                    assert(cleared[exit.edge],
                         "A departing hull disappeared before crossing the resized viewport edge")
                 end
             end
@@ -181,28 +182,14 @@ return function(Ship, Enemies, Camera, check)
         for _ = 1, 30 do step(ship, group) end
         check(enemy.x - enemy.radius > screenEdge and group.items[1] == enemy,
             "An enemy must be able to fly entirely off-screen")
-        for _ = 1, 180 do step(ship, group) end
+        for _ = 1, 240 do step(ship, group) end
         check(enemy.x + enemy.radius < screenEdge and group.items[1] == enemy,
             "An off-screen enemy must keep steering and be able to return")
     end
 
-    do
+    local function onRight(range)
         local ship, group = fixture()
-        local squad = group:spawnSquad(ship)
-        group.rng = function() return 0.2 end
-        local backup = group:spawnSquad(ship)
-        group:destroy(7) -- one open escort position in the backup squad
-        group:destroy(1)
-        step(ship, group)
-        check(squad[2].leader == backup[1] and squad[3].leader == nil
-            and squad[4].leader == nil and squad[5].leader == nil
-            and squad[4].state == "dive" and squad[5].state == "dive",
-            "Losing a leader must redirect escorts to available slots and release its WEDGE pair")
-    end
-
-    local function onRight(range, playerSpeed, braking)
-        local ship, group = fixture()
-        ship.vx, ship.braking = playerSpeed, braking
+        group.rng = function() return 0.5 end
         local enemy = group:spawn(ship, 3, {
             x = ship.x + range, y = ship.y + 24, angle = 1.5 * math.pi,
         })
@@ -210,8 +197,8 @@ return function(Ship, Enemies, Camera, check)
     end
 
     do
-        local ship, group, targeted = onRight(420, 0, false)
-        local otherShip, otherGroup, ignored = onRight(420, 0, false)
+        local ship, group, targeted = onRight(420)
+        local otherShip, otherGroup, ignored = onRight(420)
         for frame = 1, 30 do
             step(ship, group, frame <= 5 and math.pi / 2 or -math.pi / 2)
             step(otherShip, otherGroup, -math.pi / 2)
@@ -225,20 +212,4 @@ return function(Ship, Enemies, Camera, check)
         check(targeted.y > ignored.y + 10, "The dodge must carry lateral momentum after the turn ends")
     end
 
-    do
-        local cruiseSpeed = -Ship.maxSpeed * 0.55
-        local ship, group, cruising = onRight(240, cruiseSpeed, false)
-        local otherShip, otherGroup, pressing = onRight(240, cruiseSpeed, true)
-        for _ = 1, 4 * 60 do
-            step(ship, group)
-            step(otherShip, otherGroup)
-        end
-        check(pressing.x - otherShip.x < cruising.x - ship.x - 30,
-            "A leader must press in when the player brakes")
-
-        local fastShip, fastGroup, pursuing = onRight(420, -Ship.boostSpeed, false)
-        for _ = 1, 66 do step(fastShip, fastGroup) end
-        check(pursuing.vx < -pursuing.maxSpeed * 0.78 and pursuing:speed() <= pursuing.maxSpeed + 1e-6,
-            "A leader must pursue a boosting player within its own speed limit")
-    end
 end
