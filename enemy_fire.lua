@@ -6,6 +6,8 @@ EnemyFire.__index = EnemyFire
 local burstInterval = 0.12
 local impactLifetime = 0.24
 local missileAngles = {-60, -36, -12, 12, 36, 60}
+local missileTurnRate = 5
+local tau = 2 * math.pi
 local bullet = {speed = 540, lifetime = 1.4, radius = 3, damage = 6, trail = 13, color = {1, 0.45, 0.23}}
 local laser = {speed = 1400, lifetime = 0.7, radius = 4, damage = 14, trail = 48, color = {1, 0.24, 0.65}}
 local missile = {radius = 5, damage = 8, trail = 24, color = {1, 0.28, 0.28}}
@@ -83,9 +85,54 @@ local function playerHit(shot, motion, x, y, elapsed, step, radius)
     if t then return px + dx * span * t, py + dy * span * t, start + step * span * t end
 end
 
+local function beginSecondLeg(shot, targetX, targetY)
+    local speed = math.sqrt(shot.vx ^ 2 + shot.vy ^ 2)
+    local heading = math.atan2(shot.vy, shot.vx)
+    local radius = speed / missileTurnRate
+    local samePoint = (targetX - shot.x) ^ 2 + (targetY - shot.y) ^ 2 < 1e-12
+    local best, length
+    -- Choose the shorter of the two forward turns with a straight tangent to the target.
+    for direction = -1, 1, 2 do
+        local radial = heading - direction * math.pi / 2
+        local cx = shot.x - math.cos(radial) * radius
+        local cy = shot.y - math.sin(radial) * radius
+        local dx, dy = targetX - cx, targetY - cy
+        local distance = math.sqrt(dx * dx + dy * dy)
+        if samePoint or distance >= radius then
+            local sweep, straight = tau, 0
+            if not samePoint then
+                local tangent = math.atan2(dy, dx) - direction * math.acos(radius / distance)
+                sweep = ((tangent - radial) * direction) % tau
+                if sweep > tau - 1e-9 then sweep = 0 end
+                straight = math.sqrt(math.max(0, distance * distance - radius * radius))
+            end
+            local arc = sweep * radius
+            if not length or arc + straight < length then
+                length = arc + straight
+                best = {cx = cx, cy = cy, radial = radial, direction = direction, radius = radius, arc = arc}
+            end
+        end
+    end
+
+    best.speed, best.started, best.x, best.y = speed, shot.age, targetX, targetY
+    shot.secondLeg = best
+    shot.lifetime = shot.age + length / speed
+end
+
 local function moveShot(shot, step)
     shot.age = shot.age + step
-    if shot.profile == missile then
+    local leg = shot.secondLeg
+    if leg then
+        local distance = (shot.age - leg.started) * leg.speed
+        local arc = math.min(distance, leg.arc)
+        local radial = leg.radial + leg.direction * arc / leg.radius
+        local heading = radial + leg.direction * math.pi / 2
+        local dx, dy = math.cos(heading), math.sin(heading)
+        shot.x = leg.cx + math.cos(radial) * leg.radius + dx * (distance - arc)
+        shot.y = leg.cy + math.sin(radial) * leg.radius + dy * (distance - arc)
+        shot.vx, shot.vy = dx * leg.speed, dy * leg.speed
+        if shot.age >= shot.lifetime - 1e-9 then shot.x, shot.y = leg.x, leg.y end
+    elseif shot.profile == missile then
         local t = math.min(1, shot.age / shot.lifetime)
         local u = 1 - t
         -- Each curve leaves along its own launch angle and ends at the locked aim point.
@@ -148,8 +195,14 @@ local function stepShots(fire, ship, motion, elapsed, finish)
         if shot.spent then
             table.remove(fire.shots, i)
         elseif shot.age >= shot.lifetime - 1e-9 then
-            if shot.profile == missile then impact(fire, shot, shot.x, shot.y) end
-            table.remove(fire.shots, i)
+            if shot.profile == missile and not shot.secondLeg then
+                local x = (motion.x + motion.vx * finish) % Arena.width
+                local y = (motion.y + motion.vy * finish) % Arena.height
+                beginSecondLeg(shot, x, y)
+            else
+                if shot.profile == missile then impact(fire, shot, shot.x, shot.y) end
+                table.remove(fire.shots, i)
+            end
         end
     end
 end
@@ -178,6 +231,13 @@ function EnemyFire:update(dt, ship)
     local elapsed = 0
     while elapsed < dt and #self.shots > 0 do
         local finish = math.min(dt, elapsed + 1 / 60)
+        for _, shot in ipairs(self.shots) do
+            if shot.profile == missile and not shot.secondLeg then
+                local arrival = math.max(elapsed, shot.delay) + (shot.lifetime - shot.age)
+                -- Sample the player at the waypoint event, then use the rest of the frame for the turn.
+                if arrival > elapsed then finish = math.min(finish, arrival) end
+            end
+        end
         stepShots(self, ship, motion, elapsed, finish)
         elapsed = finish
     end

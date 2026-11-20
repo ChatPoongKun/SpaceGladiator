@@ -13,20 +13,20 @@ Enemies.maxCount = 15
 Enemies.patrolDuration = 10
 Enemies.types = {
     {
-        name = "WEDGE", vertices = {-2, -15, 2, -15, 10, 10, -10, 10},
+        name = "WEDGE", vertices = {0, -15, 10, 10, 0, 5, -10, 10},
         radius = 16, evadeSpeed = 94, turnSpeed = 3.2,
-        thrust = 285, brake = 4.2, maxSpeed = 225,
+        thrust = 285, brake = 4.2, maxSpeed = 500,
         patrolMin = 55, patrolMax = 110, arrivalRadius = 32,
     },
     {
         name = "EQUILATERAL", vertices = {0, -24, -12 * math.sqrt(3), 12, 12 * math.sqrt(3), 12},
         radius = 24, evadeSpeed = 78,
-        turnSpeed = 2.8, thrust = 255, brake = 2.6, maxSpeed = 190,
+        turnSpeed = 2.8, thrust = 255, brake = 2.6, maxSpeed = 320,
         patrolMin = 120, patrolMax = 185, arrivalRadius = 40,
     },
     {
         name = "OBTUSE", vertices = {0, -12, -26, 10, 26, 10},
-        radius = 28, evadeSpeed = 62, turnSpeed = 1.4, thrust = 218, brake = 1.25, maxSpeed = 155,
+        radius = 28, evadeSpeed = 62, turnSpeed = 1.4, thrust = 218, brake = 1.25, maxSpeed = 200,
         patrolMin = 195, patrolMax = 290, arrivalRadius = 48,
     },
 }

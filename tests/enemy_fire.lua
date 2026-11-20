@@ -60,16 +60,74 @@ return function(Ship, Enemies, Camera, check)
                 "All six missiles must have distinct ejection angles and one aim point")
             lastAngle = angle
         end
+        local firstDuration = group.fire.shots[1].lifetime
         group.fire:update(0.12, ship)
         group:draw(0)
-        ship.y = ship.y + 170
-        group.fire:update(1.2, ship)
-        check(#group.fire.shots == 0 and #group.fire.impacts == 6 and ship.shield == ship.maxShield,
-            "A player leaving the aim point must evade the whole missile salvo")
-        for _, impact in ipairs(group.fire.impacts) do
-            assert(math.abs(impact.x - aimX) < 1e-6 and math.abs(impact.y - aimY) < 1e-6,
-                "All six missile paths must converge at the locked position")
+        ship.x, ship.y = aimX - 90, aimY + 170
+        local secondX, secondY = ship.x, ship.y
+        group.fire:update(firstDuration - 0.12, ship)
+        check(#group.fire.shots == 6 and #group.fire.impacts == 0 and ship.shield == ship.maxShield,
+            "OBTUSE missiles must pass the first waypoint without detonating")
+
+        local speeds, velocities, endTime = {}, {}, firstDuration
+        for i, rocket in ipairs(group.fire.shots) do
+            local leg = rocket.secondLeg
+            check(math.abs(rocket.x - aimX) < 1e-6 and math.abs(rocket.y - aimY) < 1e-6
+                and leg and leg.x == secondX and leg.y == secondY,
+                "Every missile must lock the player's position as it passes the first waypoint")
+            local dx, dy = aimX - rocket.controlX, aimY - rocket.controlY
+            local expectedSpeed = 2 * math.sqrt(dx * dx + dy * dy) / firstDuration
+            assert(math.abs(leg.speed - expectedSpeed) < 1e-6, "The second leg must inherit the incoming speed")
+            speeds[i] = leg.speed
+            velocities[i] = {rocket.vx, rocket.vy}
+            endTime = math.max(endTime, rocket.lifetime)
         end
+
+        ship.x, ship.y = 200, 50
+        group.fire:update(0.12, ship)
+        local turned = false
+        for i, rocket in ipairs(group.fire.shots) do
+            local speed = math.sqrt(rocket.vx ^ 2 + rocket.vy ^ 2)
+            assert(math.abs(speed - speeds[i]) < 1e-6, "The missile must maintain speed through its turn")
+            assert(rocket.secondLeg.x == secondX and rocket.secondLeg.y == secondY, "A second waypoint must stay locked")
+            turned = turned or math.abs(rocket.vx - velocities[i][1]) + math.abs(rocket.vy - velocities[i][2]) > 1
+        end
+        check(#group.fire.shots == 6 and turned, "The salvo must steer into the second leg instead of snapping or stopping")
+        group.fire:update(endTime - firstDuration, ship)
+        check(#group.fire.shots == 0 and #group.fire.impacts == 6 and ship.shield == ship.maxShield,
+            "The missile salvo must detonate at its second waypoint if the player moves away again")
+        for _, impact in ipairs(group.fire.impacts) do
+            assert(math.abs(impact.x - secondX) < 1e-6 and math.abs(impact.y - secondY) < 1e-6,
+                "The second waypoint must be the final detonation point for all missiles")
+        end
+    end
+
+    do
+        local ship, group, enemy = fixture(3)
+        group.fire:shoot(enemy, ship)
+        local firstDuration = group.fire.shots[1].lifetime
+        group.fire:update(firstDuration, ship)
+        check(#group.fire.shots == 0 and #group.fire.impacts == 6 and ship.shield == ship.maxShield - 48,
+            "Actual shield contact must still detonate missiles before a waypoint transition")
+    end
+
+    do
+        local ship, group, enemy = fixture(3)
+        group.fire:shoot(enemy, ship)
+        local firstDuration = group.fire.shots[1].lifetime
+        ship.x, ship.y = 560, 410
+        group.fire:update(firstDuration - 0.01, ship)
+        ship.prevX, ship.prevY = ship.x, ship.y
+        ship.x, ship.y = 570, 420
+        group.fire:update(0.025, ship)
+        for _, rocket in ipairs(group.fire.shots) do
+            local leg = rocket.secondLeg
+            assert(leg and math.abs(leg.x - 564) < 1e-6 and math.abs(leg.y - 414) < 1e-6,
+                "Retargeting must sample the moving player at the exact waypoint time")
+            assert(math.abs(rocket.x - rocket.targetX) + math.abs(rocket.y - rocket.targetY) > 1e-6,
+                "The missile must use the rest of that update to start its turn")
+        end
+        check(#group.fire.shots == 6, "All missiles must keep moving during an in-frame retarget")
     end
 
     do

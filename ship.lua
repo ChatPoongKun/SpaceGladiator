@@ -3,7 +3,7 @@ local Ship = {}
 Ship.__index = Ship
 
 Ship.thrust = 315
-Ship.brake = 2.8
+Ship.brake = 2.0
 Ship.maxSpeed = 180
 Ship.turnSpeed = 2.8
 Ship.radius = 23
