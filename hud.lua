@@ -107,7 +107,7 @@ function Hud:draw(ship, width, height, time)
     arc(g, x, y, 66, pi / 6, pi * 2 / 3, velocity, cyan, 4)
     g.setFont(self.small)
     g.setColor(0.66, 0.82, 0.88, 1)
-    g.printf(percent(velocity) .. " MAX", x - 38, y + 45, 76, "center")
+    g.printf(ship.boostLevel > 0 and "BOOST" or percent(velocity) .. " MAX", x - 38, y + 45, 76, "center")
 
     -- A separate segmented capacitor keeps energy distinct from defenses.
     local bx, by = x + 136, y + 13
@@ -116,7 +116,9 @@ function Hud:draw(ship, width, height, time)
     g.printf("BATTERY", x + 88, y - 51, 96, "center")
     g.setFont(self.small)
     g.setColor(0.64, 0.73, 0.78, 1)
-    g.printf("CAPACITOR", x + 88, y - 35, 96, "center")
+    local batteryStatus = ship.boostLevel > 0 and "DISCHARGING"
+        or ship.battery >= ship.boostCost and "BOOST READY" or "RECHARGING"
+    g.printf(batteryStatus, x + 88, y - 35, 96, "center")
     for i = 0, 23 do
         local start = pi * 3 / 4 + i * pi / 16
         local charge = math.max(0, math.min(1, battery * 24 - i))

@@ -1,19 +1,29 @@
+local Arena = require("arena")
 local Ship = {}
 Ship.__index = Ship
 
-Ship.thrust = 350
+Ship.thrust = 315
 Ship.brake = 2.8
-Ship.maxSpeed = 700
+Ship.maxSpeed = 180
 Ship.turnSpeed = 2.8
 Ship.radius = 23
-Ship.driftThreshold = 150
-Ship.driftDeceleration = 200
+Ship.driftThreshold = 90
+Ship.driftDeceleration = 195
+Ship.boostSpeed = 420
+Ship.boostHold = 0.24
+Ship.boostFalloff = 0.24
+Ship.boostCost = 25
+Ship.batteryRecharge = 12
+Ship.wrapBonusSpeed = 110
 
 function Ship.new(width, height)
     return setmetatable({
         x = width / 2, y = height / 2,
         vx = 0, vy = 0, angle = 0,
+        wrapVx = 0, wrapVy = 0,
         accelerating = false, braking = false,
+        boostRemaining = 0, boostLevel = 0,
+        boostX = 0, boostY = -1,
         shield = 100, maxShield = 100,
         armor = 100, maxArmor = 100,
         hull = 100, maxHull = 100,
@@ -25,11 +35,32 @@ function Ship:speed()
     return math.sqrt(self.vx * self.vx + self.vy * self.vy)
 end
 
-function Ship:update(dt, input)
-    self.angle = (self.angle + input.turn * self.turnSpeed * dt) % (2 * math.pi)
-    self.accelerating = input.thrust and not input.brake
-    self.braking = input.brake
+local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin, dt)
+    if bonus == 0 then
+        local travel = (oldVelocity + velocity) * 0.5 * dt
+        local nextPosition = position + travel
+        if nextPosition < margin or nextPosition > extent - margin then
+            local direction = travel > 0 and 1 or -1
+            if travel == 0 and nextPosition > extent - margin then direction = 1 end
+            bonus = direction * Ship.wrapBonusSpeed
+        end
+    end
 
+    -- Keep the crossing direction until the hull clears the edge.
+    if oldVelocity * bonus < 0 then oldVelocity = 0 end
+    if velocity * bonus < 0 then velocity = 0 end
+    position = (position + ((oldVelocity + velocity) * 0.5 + bonus) * dt) % extent
+    if position >= margin and position <= extent - margin then bonus = 0 end
+    return position, velocity + bonus, bonus
+end
+
+function Ship:turn(dt, direction)
+    self.angle = (self.angle + direction * self.turnSpeed * dt) % (2 * math.pi)
+end
+
+function Ship:updateVelocity(dt, thrust, brake, cap)
+    self.accelerating = thrust and not brake
+    self.braking = brake
     local oldVx, oldVy = self.vx, self.vy
     if self.braking then
         local damping = math.exp(-self.brake * dt)
@@ -38,27 +69,61 @@ function Ship:update(dt, input)
     elseif self.accelerating then
         self.vx = self.vx + math.sin(self.angle) * self.thrust * dt
         self.vy = self.vy - math.cos(self.angle) * self.thrust * dt
-        local speed = self:speed()
-        if speed > self.maxSpeed then
-            self.vx = self.vx * self.maxSpeed / speed
-            self.vy = self.vy * self.maxSpeed / speed
-        end
     end
 
     local speed = self:speed()
-    if speed > 0 and speed < self.driftThreshold then
+    if speed > cap then
+        self.vx, self.vy = self.vx * cap / speed, self.vy * cap / speed
+    elseif speed > 0 and speed < self.driftThreshold then
         local remaining = math.max(0, speed - self.driftDeceleration * dt)
         self.vx, self.vy = self.vx * remaining / speed, self.vy * remaining / speed
     end
+    return oldVx, oldVy
+end
 
-    -- Average velocity keeps acceleration consistent at different frame rates.
-    self.x = self.x + (oldVx + self.vx) * 0.5 * dt
-    self.y = self.y + (oldVy + self.vy) * 0.5 * dt
+function Ship:update(dt, input)
+    if dt <= 0 then return end
+    -- Apply thrust, braking and speed limits to the base velocity alone.
+    self.vx = self.vx - self.wrapVx
+    self.vy = self.vy - self.wrapVy
+    self:turn(dt, input.turn)
+
+    if input.boost and not input.brake and self.boostRemaining == 0 and self.battery >= self.boostCost then
+        self.battery = self.battery - self.boostCost
+        self.boostRemaining = self.boostHold + self.boostFalloff
+        self.boostX, self.boostY = math.sin(self.angle), -math.cos(self.angle)
+        self.vx, self.vy = self.boostX * self.boostSpeed, self.boostY * self.boostSpeed
+        self.boostOriginX, self.boostOriginY = self.x, self.y
+    end
+
+    local rechargeTime = math.max(0, dt - self.boostRemaining)
+    self.battery = math.min(self.maxBattery, self.battery + rechargeTime * self.batteryRecharge)
+    self.boostRemaining = math.max(0, self.boostRemaining - dt)
+    local falloff = math.min(1, self.boostRemaining / self.boostFalloff)
+    self.boostLevel = falloff * falloff * (3 - 2 * falloff)
+    local cap = self.maxSpeed + (self.boostSpeed - self.maxSpeed) * self.boostLevel
+    local oldVx, oldVy = self:updateVelocity(dt, input.thrust, input.brake, cap)
+
+    local margin = self.radius + 1
+    self.x, self.vx, self.wrapVx = crossEdge(self.x, oldVx, self.vx, self.wrapVx, Arena.width, margin, dt)
+    self.y, self.vy, self.wrapVy = crossEdge(self.y, oldVy, self.vy, self.wrapVy, Arena.height, margin, dt)
+end
+
+function Ship:drawBoostPulse()
+    local age = self.boostHold + self.boostFalloff - self.boostRemaining
+    if age < 0.20 then
+        local g = love.graphics
+        local flash = 1 - age / 0.20
+        g.setColor(0.38, 0.83, 1, flash * 0.55)
+        g.setLineWidth(1 + flash * 2)
+        g.circle("line", self.boostOriginX, self.boostOriginY, 22 + age * 260)
+    end
 end
 
 function Ship:draw(time)
     local g = love.graphics
     local speed = self:speed()
+    local boost = self.boostLevel
     if speed > 4 then
         -- The small marker shows momentum, independently of the ship's nose.
         local dx, dy = self.vx / speed, self.vy / speed
@@ -81,7 +146,19 @@ function Ship:draw(time)
     g.translate(self.x, self.y)
     g.rotate(self.angle)
 
-    if self.accelerating then
+    if boost > 0 then
+        local trail = (92 + math.sin(time * 96) * 14) * boost
+        g.setColor(0.14, 0.57, 1, boost * 0.20)
+        g.ellipse("fill", 0, 21 + trail * 0.33, 17, 13 + trail * 0.68)
+        g.setColor(0.23, 0.70, 1, boost * 0.9)
+        g.polygon("fill", -10, 15, 0, 23 + trail, 10, 15)
+        g.setColor(0.81, 0.99, 1, boost)
+        g.polygon("fill", -5, 15, 0, 20 + trail * 0.56, 5, 15)
+        g.setColor(0.48, 0.88, 1, boost * 0.68)
+        g.setLineWidth(2)
+        g.line(-12, 22, -13, 28 + trail * 0.72)
+        g.line(12, 22, 13, 28 + trail * 0.72)
+    elseif self.accelerating then
         local flame = 27 + math.sin(time * 57) * 7 + math.sin(time * 31) * 3
         g.setColor(1, 0.40, 0.16, 0.08)
         g.ellipse("fill", 0, 23, 18, flame + 12)

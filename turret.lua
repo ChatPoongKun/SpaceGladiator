@@ -159,7 +159,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
     until remaining <= 0
 end
 
-function Turret:draw(ship, time, camera, width, height)
+function Turret:drawEffects(camera, width, height)
     local g = love.graphics
     g.push("all")
     for _, missile in ipairs(self.missiles) do
@@ -230,7 +230,12 @@ function Turret:draw(ship, time, camera, width, height)
         end
     end
 
-    g.push()
+    g.pop()
+end
+
+function Turret:drawMount(ship, time)
+    local g = love.graphics
+    g.push("all")
     g.translate(ship.x, ship.y)
     g.rotate(self.angle)
     g.setColor(0.06, 0.11, 0.16, 1)
@@ -244,7 +249,6 @@ function Turret:draw(ship, time, camera, width, height)
     g.rectangle("line", -2.5, -muzzleLength, 5, muzzleLength)
     g.setColor(1, 0.90, 0.59, 0.8 + math.sin((time or 0) * 7) * 0.15)
     g.circle("fill", 0, 0, 3)
-    g.pop()
     g.pop()
 end
 

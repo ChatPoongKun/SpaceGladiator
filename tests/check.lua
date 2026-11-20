@@ -1,5 +1,6 @@
 return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
-    local width, height = 10000, 10000
+    local Arena = require("arena")
+    local width, height = Arena.width, Arena.height
     local coast = { turn = 0, thrust = false, brake = false }
     local thrust = { turn = 0, thrust = true, brake = false }
     local brake = { turn = 0, thrust = false, brake = true }
@@ -20,20 +21,20 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     local startingSpeed = math.max(100, Ship.driftThreshold)
     local ship = Ship.new(width, height)
     ship.vy = -startingSpeed
-    step(ship, thrust, 1, 60)
-    check(near(ship.vx, 0) and near(ship.vy, -startingSpeed - Ship.thrust), "W must accelerate toward the nose")
+    step(ship, thrust, 0.15, 60)
+    check(near(ship.vx, 0) and near(ship.vy, -startingSpeed - Ship.thrust * 0.15), "W must accelerate toward the nose")
     local vx, vy, y = ship.vx, ship.vy, ship.y
-    step(ship, coast, 1, 60)
+    step(ship, coast, 0.25, 60)
     check(near(ship.vx, vx) and near(ship.vy, vy), "Releasing W must preserve velocity")
-    check(near(ship.y, y + vy), "Coasting must advance position")
-    step(ship, { turn = 1, thrust = false, brake = false }, 1, 60)
+    check(near(ship.y, y + vy * 0.25), "Coasting must advance position")
+    step(ship, { turn = 1, thrust = false, brake = false }, 0.25, 60)
     check(near(ship.vx, vx) and near(ship.vy, vy), "Turning must not rotate existing momentum")
-    check(near(ship.angle, Ship.turnSpeed), "D must rotate clockwise")
-    step(ship, { turn = -1, thrust = false, brake = false }, 1, 60)
+    check(near(ship.angle, Ship.turnSpeed * 0.25), "D must rotate clockwise")
+    step(ship, { turn = -1, thrust = false, brake = false }, 0.25, 60)
     check(near(ship.angle, 0) or near(ship.angle, 2 * math.pi), "A must rotate counterclockwise")
 
     ship.angle = math.pi / 2
-    step(ship, thrust, 0.5, 60)
+    step(ship, thrust, 0.2, 60)
     check(ship.vx > 0 and near(ship.vy, vy), "New thrust must add to existing momentum")
     local previousSpeed = ship:speed()
     for _ = 1, 60 do
@@ -47,9 +48,40 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     check(ship:speed() == 0 and not ship.accelerating, "S must take precedence over W")
 
     ship = Ship.new(width, height)
-    step(ship, thrust, 20, 60)
+    ship.angle = math.pi / 2
+    step(ship, thrust, 1.5, 60)
     check(near(ship:speed(), Ship.maxSpeed), "Speed must be capped")
-    check(ship.y < 0, "World movement must continue beyond the viewport without wrapping")
+    for _, edge in ipairs({{"x", width, -1}, {"x", width, 1}, {"y", height, -1}, {"y", height, 1}}) do
+        local axis, extent, sign = unpack(edge)
+        local velocity = "v" .. axis
+        local bonus = sign * Ship.wrapBonusSpeed
+        local crossing = Ship.new(width, height)
+        local baseline = Ship.new(width, height)
+        local distance = crossing.radius + 2
+        crossing[axis] = sign < 0 and distance or extent - distance
+        crossing[velocity], baseline[velocity] = sign * Ship.driftThreshold / 2, sign * Ship.driftThreshold / 2
+        crossing:update(1 / 30, coast)
+        baseline:update(1 / 30, coast)
+        local approach = sign < 0 and crossing[axis] or extent - crossing[axis]
+        check(approach > 0 and approach < crossing.radius and near(crossing[velocity] - baseline[velocity], bonus),
+            "The first crossing frame must add the full signed velocity bonus")
+        local cleared = false
+        for _ = 1, 36 do
+            crossing:update(1 / 60, brake)
+            baseline:update(1 / 60, brake)
+            local difference = crossing[velocity] - baseline[velocity]
+            if near(difference, 0) then
+                cleared = true
+                break
+            end
+            assert(near(difference, bonus), "Braking must leave the full crossing bonus intact")
+        end
+        local arrival = sign < 0 and extent - crossing[axis] or crossing[axis]
+        check(cleared and arrival >= crossing.radius + 1 and arrival < extent / 2,
+            "The first clear frame must remove exactly the same bonus")
+        step(crossing, brake, 2, 60)
+        check(crossing:speed() == 0, "Normal braking must resume once the hull clears the seam")
+    end
 
     local low = Ship.new(width, height)
     local belowThreshold = Ship.driftThreshold - 1
@@ -70,11 +102,12 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
 
     local slow, fast = Ship.new(width, height), Ship.new(width, height)
     slow.vy, fast.vy = -startingSpeed, -startingSpeed
-    step(slow, thrust, 1.5, 30)
-    step(fast, thrust, 1.5, 144)
+    step(slow, thrust, 1 / 6, 30)
+    step(fast, thrust, 1 / 6, 144)
     check(near(slow.vy, fast.vy) and near(slow.y, fast.y), "Acceleration must be frame-rate independent")
-    step(slow, brake, 0.5, 30)
-    step(fast, brake, 0.5, 144)
+    slow.vy, fast.vy = -Ship.maxSpeed, -Ship.maxSpeed
+    step(slow, brake, 1 / 6, 30)
+    step(fast, brake, 1 / 6, 144)
     check(near(slow.vy, fast.vy), "Braking must be frame-rate independent")
     slow.vx, slow.vy, fast.vx, fast.vy = belowThreshold, 0, belowThreshold, 0
     step(slow, coast, 0.5, 30)
@@ -82,132 +115,55 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     remaining = math.max(0, belowThreshold - Ship.driftDeceleration * 0.5)
     check(near(slow.vx, remaining) and near(fast.vx, remaining), "Low-speed deceleration must be frame-rate independent")
 
-    ship = Ship.new(1280, 800)
+    local boost = { turn = 0, thrust = false, brake = false, boost = true }
+    ship = Ship.new(width, height)
+    ship.angle = math.pi / 2
     local camera = Camera.new(ship.x, ship.y)
-    local function settleCamera(view, player, mx, my, w, h)
-        for _ = 1, 900 do view:update(1 / 60, player, w or 1280, h or 800, mx, my) end
+    camera:update(0, ship, 1280, 800)
+    local normalZoom = camera.zoom
+    ship:update(1 / 60, boost)
+    camera:update(1 / 60, ship, 1280, 800)
+    check(near(ship.vx, Ship.boostSpeed) and near(ship.vy, 0)
+        and ship.battery == ship.maxBattery - Ship.boostCost,
+        "A boost from rest must spend battery once and launch in the direction of the nose")
+    check(camera.zoom < normalZoom and camera.x > width / 2, "The boost must pull the camera back and forward")
+    ship:update(Ship.boostHold, boost)
+    check(ship.battery == ship.maxBattery - Ship.boostCost and ship:speed() < Ship.boostSpeed
+        and ship:speed() > Ship.maxSpeed, "A second press during boost must be ignored as the speed starts to decay")
+    ship:update(Ship.boostFalloff, coast)
+    check(near(ship:speed(), Ship.maxSpeed) and ship.boostLevel == 0,
+        "Boost must return to normal speed after the short falloff")
+    ship:update(1 / 60, coast)
+    check(ship.battery > ship.maxBattery - Ship.boostCost, "The battery must recharge after boosting")
+    camera:update(1, ship, 1280, 800)
+    check(near(camera.zoom, normalZoom) and near(camera.x, width / 2), "The camera must settle on the arena center")
+
+    ship.battery = 0
+    ship:update(1 / 60, boost)
+    check(ship.boostRemaining == 0 and ship.battery > 0 and ship.battery < Ship.boostCost,
+        "A boost with insufficient charge must be ignored")
+
+    ship = Ship.new(width, height)
+    ship.x, ship.y, ship.angle = 1, 1, -math.pi / 4
+    ship:update(1 / 60, boost)
+    local travel = (Ship.boostSpeed / math.sqrt(2) + Ship.wrapBonusSpeed) / 60
+    check(near(ship.x, width + 1 - travel) and near(ship.y, height + 1 - travel)
+        and near(ship:speed(), Ship.boostSpeed + math.sqrt(2) * Ship.wrapBonusSpeed) and ship.boostLevel > 0,
+        "Boosting through a corner must add the crossing bonus on both axes without capping it")
+    step(ship, coast, 0.1, 60)
+    check(near(ship:speed(), Ship.boostSpeed) and ship.boostLevel == 1,
+        "Clearing both sides of a corner must restore the original boost velocity")
+    for _, viewport in ipairs({{1280, 800}, {800, 600}}) do
+        local w, h = unpack(viewport)
+        camera:update(1 / 60, ship, w, h)
+        local left, top = camera:worldToScreen(0, 0, w, h)
+        local right, bottom = camera:worldToScreen(width, height, w, h)
+        check(left >= 0 and top >= 104 and right <= w and bottom <= h - 190,
+            "All arena boundaries must stay visible during the boost at both supported viewport sizes")
+        local aimX, aimY = camera:screenToWorld(w * 0.8, h * 0.35, w, h)
+        local x, y = camera:worldToScreen(aimX, aimY, w, h)
+        check(near(x, w * 0.8) and near(y, h * 0.35), "Aiming must account for the boost camera")
     end
-    settleCamera(camera, ship, 640, 400)
-    check(camera.x == ship.x and camera.y == ship.y, "Centered mouse must center the camera on the player")
-    settleCamera(camera, ship, 704, 400)
-    check(camera.mouseOffsetX == 0, "Mouse positions inside 10 percent of screen width must not lead")
-    settleCamera(camera, ship, 768, 400)
-    check(camera.mouseOffsetX == 0, "The exact 10 percent mouse boundary must remain in the dead zone")
-    settleCamera(camera, ship, 832, 400)
-    local playerX = camera:worldToScreen(ship.x, ship.y, 1280, 800)
-    check(near(832 - playerX, 256, 0.001) and near(camera.mouseOffsetX, 64, 0.001),
-        "At 20 percent actual player-to-mouse distance, mouse lead must be 5 percent of screen width")
-    settleCamera(camera, ship, 896, 400)
-    playerX = camera:worldToScreen(ship.x, ship.y, 1280, 800)
-    check(near(896 - playerX, 384, 0.001) and near(camera.mouseOffsetX, 128, 0.001),
-        "At 30 percent actual player-to-mouse distance, mouse lead must reach its 10 percent cap")
-    settleCamera(camera, ship, 1280, 400)
-    check(near(camera.offsetX, 128), "Mouse positions beyond 30 percent must not increase camera lead")
-    local screenX = camera:worldToScreen(ship.x, ship.y, 1280, 800)
-    check(near(screenX, 512), "Maximum mouse lead must keep the player visible")
-    local worldX, worldY = camera:screenToWorld(950, 210, 1280, 800)
-    local px, py = camera:worldToScreen(worldX, worldY, 1280, 800)
-    check(near(px, 950) and near(py, 210), "Mouse aim must round-trip between screen and world coordinates")
-    settleCamera(camera, ship, 640, 144)
-    check(near(camera.offsetX, 0, 0.001) and near(camera.offsetY, -128, 0.001),
-        "Vertical mouse distance and lead must use screen width consistently")
-    settleCamera(camera, ship, 1280, 0)
-    local length = math.sqrt(camera.mouseOffsetX ^ 2 + camera.mouseOffsetY ^ 2)
-    check(near(length, 128) and near(camera.offsetX / -camera.offsetY, 640 / 400),
-        "Diagonal lead must preserve mouse direction and the radial 10 percent cap")
-    camera:update(0, ship, 800, 600, 800, 0)
-    length = math.sqrt(camera.mouseOffsetX ^ 2 + camera.mouseOffsetY ^ 2) * camera.zoom
-    check(length <= 80 + 0.000001, "Window resize must immediately preserve the 10 percent mouse cap")
-    settleCamera(camera, ship, 400, 300, 800, 600)
-    check(math.abs(camera.offsetX) < 0.01 and math.abs(camera.offsetY) < 0.01,
-        "Returning the mouse to the player-centered origin must recenter the camera")
-
-    settleCamera(camera, ship, 440, 300, 800, 600)
-    check(near(camera.offsetX, 0), "A stationary mouse in the dead zone must not cause camera drift")
-    ship.x, ship.y = ship.x + 900, ship.y - 600
-    camera:update(1 / 60, ship, 800, 600, 440, 300)
-    check(near(camera.x, ship.x) and near(camera.y, ship.y),
-        "Camera must continue following a moving player independently of mouse lead")
-
-    local timedCamera = Camera.new(ship.x, ship.y)
-    timedCamera:update(Camera.mouseLeadTime, ship, 1280, 800, 1280, 400)
-    check(near(timedCamera.mouseOffsetX, 128 * (1 - math.exp(-3)))
-        and timedCamera.mouseOffsetX < 128,
-        "Mouse lead must retain its configured easing time")
-
-    local flightCamera = Camera.new(ship.x, ship.y)
-    ship.vx = 100
-    flightCamera:update(8, ship, 1280, 800, 640, 400)
-    check(flightCamera.offsetX < 0 and near(flightCamera.offsetX, -100 * Camera.lagSeconds),
-        "Low-speed flight must restore camera lag with the mouse centered")
-    ship.vx = Ship.maxSpeed
-    settleCamera(flightCamera, ship, 640, 400)
-    local flightLead = flightCamera.offsetX
-    check(flightLead > 0 and near(flightLead, Ship.maxSpeed * Camera.leadSeconds),
-        "High-speed flight must restore camera lead independently of mouse position")
-    settleCamera(flightCamera, ship, 1100, 400)
-    local maxMouseWorld = 128 / flightCamera.zoom
-    check(near(flightCamera.mouseOffsetX, maxMouseWorld)
-        and near(flightCamera.offsetX, flightLead + maxMouseWorld),
-        "Mouse lead must add to flight lead instead of replacing or limiting it")
-    settleCamera(flightCamera, ship, 0, 400)
-    check(near(flightCamera.mouseOffsetX, -maxMouseWorld)
-        and near(flightCamera.offsetX, flightLead - maxMouseWorld),
-        "Opposite mouse and flight offsets must combine as vectors")
-    settleCamera(flightCamera, ship, 640, 400)
-    check(near(flightCamera.offsetX, flightLead), "Centering the mouse must preserve flight lead")
-    ship.vx, ship.vy = 0, -Ship.maxSpeed
-    settleCamera(flightCamera, ship, 1100, 400)
-    check(flightCamera.mouseOffsetX > 0 and near(flightCamera.velocityOffsetY, -flightLead)
-        and near(flightCamera.offsetX, flightCamera.velocityOffsetX + flightCamera.mouseOffsetX)
-        and near(flightCamera.offsetY, flightCamera.velocityOffsetY + flightCamera.mouseOffsetY),
-        "Perpendicular flight and mouse lead must retain both contributions")
-    ship.vy = 0
-    settleCamera(flightCamera, ship, 640, 400)
-    check(math.abs(flightCamera.offsetX) < 0.01 and math.abs(flightCamera.offsetY) < 0.01,
-        "Stopping and centering the mouse must recenter both camera offsets")
-
-    ship.vx = 300
-    local cameraSlow, cameraFast = Camera.new(ship.x, ship.y), Camera.new(ship.x, ship.y)
-    for _ = 1, 30 do cameraSlow:update(1 / 30, ship, 1280, 800, 1100, 400) end
-    for _ = 1, 144 do cameraFast:update(1 / 144, ship, 1280, 800, 1100, 400) end
-    check(near(cameraSlow.x, cameraFast.x) and near(cameraSlow.y, cameraFast.y)
-        and near(cameraSlow.mouseOffsetX, cameraFast.mouseOffsetX)
-        and near(cameraSlow.velocityOffsetX, cameraFast.velocityOffsetX),
-        "Both camera contributions must be frame-rate independent")
-
-    local zoomCamera = Camera.new(ship.x, ship.y)
-    zoomCamera:update(1, ship, 1280, 800, 640, 400)
-    check(zoomCamera.zoom == 1, "Low-speed flight must keep the normal camera zoom")
-    ship.vx = Ship.maxSpeed
-    zoomCamera:update(0.1, ship, 1280, 800, 640, 400)
-    check(zoomCamera.zoom < 1 and zoomCamera.zoom > Camera.minZoom,
-        "High speed must ease the camera outward without a sudden zoom jump")
-    settleCamera(zoomCamera, ship, 640, 400)
-    check(near(zoomCamera.zoom, 0.85), "High-speed zoom must settle at 85 percent")
-    local left = zoomCamera:screenToWorld(0, 400, 1280, 800)
-    local right = zoomCamera:screenToWorld(1280, 400, 1280, 800)
-    check(right - left > 1280 and near(right - left, 1280 / zoomCamera.zoom),
-        "Zooming out must reveal a wider world area")
-    worldX, worldY = zoomCamera:screenToWorld(950, 210, 1280, 800)
-    px, py = zoomCamera:worldToScreen(worldX, worldY, 1280, 800)
-    check(near(px, 950) and near(py, 210), "Mouse aim must round-trip correctly while zoomed out")
-    local bodyX, bodyY = zoomCamera:worldToScreen(ship.x, ship.y, 1280, 800)
-    settleCamera(zoomCamera, ship, bodyX + 64, bodyY)
-    check(near(zoomCamera.mouseOffsetX, 0), "The dead zone must follow the actual zoomed player position")
-    settleCamera(zoomCamera, ship, 1280, 400)
-    check(near(zoomCamera.mouseOffsetX * zoomCamera.zoom, 128),
-        "Maximum mouse lead must stay 10 percent in screen pixels at every zoom")
-    ship.vx = 0
-    settleCamera(zoomCamera, ship, 640, 400)
-    check(near(zoomCamera.zoom, 1), "Slowing down must smoothly restore the normal zoom")
-
-    ship.vx = 600
-    cameraSlow, cameraFast = Camera.new(ship.x, ship.y), Camera.new(ship.x, ship.y)
-    for _ = 1, 30 do cameraSlow:update(1 / 30, ship, 1280, 800, 640, 400) end
-    for _ = 1, 144 do cameraFast:update(1 / 144, ship, 1280, 800, 640, 400) end
-    check(near(cameraSlow.zoom, cameraFast.zoom) and near(cameraSlow.velocityOffsetX, cameraFast.velocityOffsetX),
-        "Speed zoom and flight lead must be frame-rate independent")
 
     ship = Ship.new(1280, 800)
     local turret = Turret.new(0)
@@ -250,7 +206,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     local count = #turret.missiles
     turret:update(0.1, ship, ship.x, ship.y - 1000, false)
     check(#turret.missiles == count, "Releasing fire must stop creating missiles")
-    turret:draw(ship, 0)
+    turret:drawEffects()
 
     ship.vx, ship.vy = 300, -200
     turret = Turret.new(0)
@@ -293,7 +249,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
             and near(turret.explosions[1].x - shotX, (900 + shipVelocity) * Turret.missileLifetime),
             "Fast and slow missiles must expire together at their respective time-based endpoints")
     end
-    turret:draw(ship, 0)
+    turret:drawEffects()
 
     ship.vx, ship.vy = 0, 900
     turret = Turret.new(0)
@@ -321,7 +277,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
             if near(r, 1) and near(g, 0.42) and near(b, 0.12) then tail = { x1, y1, x2, y2 } end
             return originalLine(x1, y1, x2, y2)
         end
-        local ok, message = pcall(function() turret:draw(Ship.new(1280, 800), 0) end)
+        local ok, message = pcall(function() turret:drawEffects() end)
         love.graphics.line = originalLine
         check(ok, "Missile tail drawing must stay valid: " .. tostring(message))
         return tail
@@ -339,16 +295,14 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     tail = captureTail()
     check(tail == nil, "Coincident missile and launcher positions must not divide by zero")
 
-    ship = Ship.new(1280, 800)
-    camera = Camera.new(ship.x + 120, ship.y - 80)
-    camera.zoom = 0.85
+    ship = Ship.new(width, height)
     local enemyGroup = Enemies.new(function() return 0.5 end)
     for kind = 1, 3 do
-        local enemy = enemyGroup:spawn(ship, camera, 1280, 800, kind)
-        local sx, sy = camera:worldToScreen(enemy.x, enemy.y, 1280, 800)
-        local radius = enemy.radius * camera.zoom
-        check(sx + radius < 0 or sx - radius > 1280 or sy + radius < 0 or sy - radius > 800,
-            "Every enemy type must spawn completely outside the actual zoomed camera viewport")
+        local enemy = enemyGroup:spawn(ship, kind)
+        check(enemy.x >= enemy.radius and enemy.x <= width - enemy.radius
+            and enemy.y >= enemy.radius and enemy.y <= height - enemy.radius
+            and (enemy.x - ship.x) ^ 2 + (enemy.y - ship.y) ^ 2 >= 260 ^ 2,
+            "Every default spawn must leave the enemy a safe distance from the player")
         check(enemy.kind == kind and enemy.radius == Enemies.types[kind].radius,
             "Each enemy must spawn with its selected shape and hull radius")
     end
@@ -368,37 +322,37 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
 
     for _, fps in ipairs({ 30, 60, 144 }) do
         local group = Enemies.new(function() return 0.5 end)
-        for _ = 1, 2 * fps do group:update(1 / fps, ship, camera, 1280, 800) end
+        for _ = 1, 2 * fps do group:update(1 / fps, ship) end
         check(#group.items == 5, "A full squad must arrive after two seconds at every frame rate")
     end
     local group = Enemies.new(function() return 0.5 end)
-    group:update(0.3, ship, camera, 1280, 800)
+    group:update(0.3, ship)
     check(#group.items == 0, "Enemy spawning must not create an initial burst")
-    group:update(1.7, ship, camera, 1280, 800)
+    group:update(1.7, ship)
     check(#group.items == 5, "The full squad must arrive across uneven frame durations")
 
     local capped = Enemies.new(function() return 0.5 end)
-    for _ = 1, capped.maxCount do capped:spawn(ship, camera, 1280, 800, 1) end
-    check(#capped.items == capped.maxCount and capped:spawn(ship, camera, 1280, 800, 1) == nil,
+    for _ = 1, capped.maxCount do capped:spawn(ship, 1) end
+    check(#capped.items == capped.maxCount and capped:spawn(ship, 1) == nil,
         "Every spawn path must enforce the enemy cap")
     local first = capped.items[1]
     local beforeX, beforeY = first.x, first.y
-    capped:update(0.5, ship, camera, 1280, 800)
+    capped:update(0.5, ship)
     check(#capped.items == capped.maxCount and capped.spawnAccumulator == 0,
         "A full enemy population must pause reinforcements without accumulating a backlog")
     check(first.x ~= beforeX or first.y ~= beforeY,
         "Existing enemies must keep moving while the population is at its limit")
     capped:destroy(1)
-    capped:update(4, ship, camera, 1280, 800)
+    capped:update(4, ship)
     check(#capped.items == capped.maxCount - 1, "One free slot must not spawn a partial squad")
     for _ = 1, 4 do capped:destroy(1) end
-    capped:update(3.8, ship, camera, 1280, 800)
+    capped:update(3.8, ship)
     check(#capped.items == capped.maxCount - 5, "Reinforcements must wait for a new spawn interval")
-    capped:update(0.2, ship, camera, 1280, 800)
+    capped:update(0.2, ship)
     check(#capped.items == capped.maxCount and capped.kills == 5,
         "A full replacement squad must refill the available slots")
 
-    require("tests.enemy_steering")(Ship, Enemies, Camera, check, near)
+    require("tests.enemy_steering")(Ship, Enemies, Camera, check)
 
     local function target(x, y, radius, prevX, prevY)
         return { x = x, y = y, radius = radius or 10, prevX = prevX or x, prevY = prevY or y }
@@ -458,7 +412,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     check(hits.kills == 1 and hits.items[1] == far and turret.beam and near(turret.beam.hitX, 88)
         and impact and impact.x == turret.beam.hitX and impact.y == turret.beam.hitY,
         "The laser must stop at the first hull beyond the cursor and show an effect at the hit")
-    turret:draw(ship, 0, laserView, 800, 600)
+    turret:drawEffects(laserView, 800, 600)
     turret.weapon = 1
     turret:update(0.5, ship, -400, 0, false, hits)
     check(hits.kills == 3 and #hits.items == 2 and hits.items[1] == far and hits.items[2] == outside
@@ -480,7 +434,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
             endX, endY = view:worldToScreen(x2, y2, 1280, 600)
             return originalLine(x1, y1, x2, y2)
         end
-        local ok, message = pcall(laser.draw, laser, ship, 0, view, 1280, 600)
+        local ok, message = pcall(laser.drawEffects, laser, view, 1280, 600)
         love.graphics.line = originalLine
         check(ok and enemies.kills == 0 and endX and endX > 0 and endX < 1280 and near(endY, 0),
             "The laser must leave offscreen targets intact and follow the current screen edge: " .. tostring(message))

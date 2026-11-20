@@ -15,7 +15,7 @@ function Starfield.new(width, height, rng)
     local self = setmetatable({
         width = math.max(1, finite(width, 1)),
         height = math.max(1, finite(height, 1)),
-        time = 0, vx = 0, vy = 0, thrust = 0,
+        time = 0, vx = 0, vy = 0, thrust = 0, boost = 0,
         layers = {
             {count = 120, parallax = .10, size = .60, r = .48, g = .68, b = .92, alpha = .45, stars = {}},
             {count = 70, parallax = .28, size = .95, r = .73, g = .66, b = .96, alpha = .65, stars = {}},
@@ -53,11 +53,12 @@ function Starfield:resize(width, height)
 end
 
 -- Velocity is in px/s; positive thrust is normalized to [0, 1].
-function Starfield:update(dt, vx, vy, acceleration, width, height)
+function Starfield:update(dt, vx, vy, acceleration, width, height, boost)
     self:resize(width, height)
     dt = math.max(0, finite(dt, 0))
     self.vx, self.vy = finite(vx, 0), finite(vy, 0)
     self.thrust = math.max(0, math.min(1, finite(acceleration, 0)))
+    self.boost = math.max(0, math.min(1, finite(boost, 0)))
     self.time = (self.time + (dt % (tau / .8)) * .8) % tau
     local response = 1 + .12 * self.thrust
     for i = 1, 3 do
@@ -88,13 +89,14 @@ function Starfield:draw()
     local speed = scale * norm
     for i = 1, 3 do
         local layer = self.layers[i]
-        local length = math.min(18, speed * layer.parallax * .025 * (1 + .5 * self.thrust))
+        local length = math.min(18 + 85 * self.boost,
+            speed * layer.parallax * .025 * (1 + .5 * self.thrust + 2.7 * self.boost))
         local tx, ty = ux * length, uy * length
         for j = 1, #layer.stars do
             local star = layer.stars[j]
             local alpha = layer.alpha * (.7 + .3 * math.sin(self.time * star.rate + star.phase))
             if length > 1 then
-                g.setColor(layer.r, layer.g, layer.b, alpha * .28)
+                g.setColor(layer.r, layer.g, layer.b, alpha * (.28 + .38 * self.boost))
                 -- The tail points behind the star's opposite-velocity motion.
                 g.line(star.x, star.y, star.x + tx, star.y + ty)
             end

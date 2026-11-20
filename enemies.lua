@@ -1,33 +1,40 @@
 local Ship = require("ship")
+local Arena = require("arena")
 local Enemies = {}
 Enemies.__index = Enemies
 local tau = 2 * math.pi
+local goalIntervalMin, goalIntervalMax = 0.25, 1 / 3
 
 Enemies.spawnRate = 1 / 4
 Enemies.maxCount = 15
+Enemies.patrolDuration = 10
 Enemies.types = {
     {
         name = "WEDGE", vertices = {-2, -15, 2, -15, 10, 10, -10, 10},
-        radius = 16, cruiseSpeed = 540, chargeSpeed = 620, evadeSpeed = 320,
-        passOffset = 75, runout = 260, turnSpeed = 3.2, bankSpeed = 340,
-        thrust = 520, maxSpeed = 1350,
+        radius = 16, cruiseSpeed = 174, chargeSpeed = 205, evadeSpeed = 94,
+        passOffset = 54, runout = 105, turnSpeed = 3.2, bankSpeed = 116,
+        thrust = 285, maxSpeed = 225,
     },
     {
         name = "EQUILATERAL", vertices = {0, -24, -12 * math.sqrt(3), 12, 12 * math.sqrt(3), 12},
-        radius = 24, cruiseSpeed = 360, chargeSpeed = 470, evadeSpeed = 250,
-        turnSpeed = 2.8, thrust = 440, maxSpeed = 1250,
+        radius = 24, cruiseSpeed = 123, chargeSpeed = 155, evadeSpeed = 78,
+        turnSpeed = 2.8, thrust = 255, maxSpeed = 190,
     },
     {
         name = "OBTUSE", vertices = {0, -12, -26, 10, 26, 10},
-        radius = 28, cruiseSpeed = 230, pursuitSpeed = 340, holdRange = 315,
-        pressRange = 230, evadeSpeed = 185, turnSpeed = 1.4, thrust = 350, maxSpeed = 1150,
+        radius = 28, cruiseSpeed = 81, pursuitSpeed = 122, holdRange = 250,
+        pressRange = 170, evadeSpeed = 62, turnSpeed = 1.4, thrust = 218, maxSpeed = 155,
     },
 }
 
-local wingSpread, wingTrail = 165, 85
+local escortSpread, escortTrail = 82, 34
+local wingSpread, wingTrail = 114, 62
+local entryMargin, entrySpeed = 44, 120
+local entryAngles = {math.pi / 2, math.pi * 1.5, math.pi, 0}
+local departureAngles = {math.pi * 1.5, math.pi / 2, 0, math.pi}
 local formation = {
-    { kind = 2, slot = -1, right = -115, forward = -45 },
-    { kind = 2, slot = 1, right = 115, forward = -45 },
+    { kind = 2, slot = -1, right = -escortSpread, forward = -escortTrail },
+    { kind = 2, slot = 1, right = escortSpread, forward = -escortTrail },
     { kind = 1, slot = -1, right = -wingSpread, forward = -wingTrail },
     { kind = 1, slot = 1, right = wingSpread, forward = -wingTrail },
 }
@@ -48,6 +55,7 @@ end
 function Enemies.new(rng)
     return setmetatable({
         items = {}, kills = 0, spawnAccumulator = 0.5, rng = rng or math.random,
+        view = {left = 0, top = 0, right = Arena.width, bottom = Arena.height},
     }, Enemies)
 end
 
@@ -62,52 +70,58 @@ local function beginDive(enemy, ship, definition, solo)
     local targetX, targetY = ship.x + ship.vx * lead, ship.y + ship.vy * lead
     local angle = math.atan2(targetX - enemy.x, enemy.y - targetY)
     local offset = enemy.slot * (solo and 45 or definition.passOffset)
-    enemy.passX = targetX + math.cos(angle) * offset
-    enemy.passY = targetY + math.sin(angle) * offset
+    enemy.passX, enemy.passY = targetX + math.cos(angle) * offset, targetY + math.sin(angle) * offset
     enemy.courseAngle = math.atan2(enemy.passX - enemy.x, enemy.y - enemy.passY)
     enemy.courseX, enemy.courseY = math.sin(enemy.courseAngle), -math.cos(enemy.courseAngle)
     local vx, vy = ship.vx + ux * closingSpeed, ship.vy + uy * closingSpeed
     enemy.legSpeed = clamp(math.sqrt(vx * vx + vy * vy), baseSpeed, enemy.maxSpeed)
     enemy.state = "dive"
     enemy.bankProgress = nil
+    enemy.goal = nil
 end
 
-local function spawnPointOutside(rng, camera, width, height, margin, span)
+local function spawnPoint(rng, ship)
     local edge = math.min(4, 1 + math.floor(rng() * 4))
-    local t = span and (0.2 + rng() * 0.6) or rng()
-    local x, y = t * width, t * height
-    if edge == 1 then x = -margin
-    elseif edge == 2 then x = width + margin
-    elseif edge == 3 then y = -margin
-    else y = height + margin end
-    return camera:screenToWorld(x, y, width, height)
+    local t = 0.24 + rng() * 0.52
+    local x, y = t * Arena.width, t * Arena.height
+    if edge == 1 then x = 124
+    elseif edge == 2 then x = Arena.width - 124
+    elseif edge == 3 then y = 98
+    else y = Arena.height - 98 end
+    if (x - ship.x) ^ 2 + (y - ship.y) ^ 2 < 260 ^ 2 then
+        x = ship.x < Arena.width / 2 and Arena.width - 124 or 124
+    end
+    return x, y, edge
 end
 
-function Enemies:spawn(ship, camera, width, height, kindIndex, options)
+function Enemies:spawn(ship, kindIndex, options)
     if #self.items >= self.maxCount then return nil end
     local kind = kindIndex or math.min(#self.types, 1 + math.floor(self.rng() * #self.types))
     local definition = self.types[kind]
-    local enemy = Ship.new(width, height)
+    local enemy = Ship.new(Arena.width, Arena.height)
     if options and options.x and options.y then
         enemy.x, enemy.y = options.x, options.y
     else
-        -- The entire bounding circle is at least 60 screen pixels outside the view.
-        local margin = 60 + definition.radius * camera.zoom
-        enemy.x, enemy.y = spawnPointOutside(self.rng, camera, width, height, margin, false)
+        enemy.x, enemy.y = spawnPoint(self.rng, ship)
     end
-    enemy.prevX, enemy.prevY = enemy.x, enemy.y
-    enemy.vx = options and options.vx or ship.vx
-    enemy.vy = options and options.vy or ship.vy
-    enemy.angle = (options and options.angle or math.atan2(ship.x - enemy.x, enemy.y - ship.y)) % tau
     enemy.kind, enemy.radius = kind, definition.radius
-    enemy.maxSpeed = definition.maxSpeed or 1300
-    enemy.thrustLimit = definition.thrust or Ship.thrust
-    enemy.turnSpeed = definition.turnSpeed or Ship.turnSpeed
+    enemy.maxSpeed, enemy.thrust, enemy.turnSpeed = definition.maxSpeed, definition.thrust, definition.turnSpeed
+    -- Give lighter thrust the same time to build momentum out of low-speed drag.
+    local thrustRatio = enemy.thrust / Ship.thrust
+    enemy.driftThreshold = Ship.driftThreshold * thrustRatio
+    enemy.driftDeceleration = Ship.driftDeceleration * thrustRatio
+    enemy.vx, enemy.vy = limitVector(options and options.vx or 0, options and options.vy or 0, enemy.maxSpeed)
+    enemy.prevX, enemy.prevY = enemy.x, enemy.y
+    enemy.angle = (options and options.angle or math.atan2(ship.x - enemy.x, enemy.y - ship.y)) % tau
     enemy.leader = options and options.leader or nil
     enemy.slot = options and options.slot or (self.rng() < 0.5 and -1 or 1)
     enemy.evadeTime, enemy.evadeCooldown = 0, 0
+    enemy.goalDelay = 0
     enemy.sepX, enemy.sepY = 0, 0
     enemy.aimed, enemy.blindside = false, false
+    local entryTime = options and options.entryTime
+    enemy.phase = entryTime and "entering" or "patrol"
+    enemy.phaseRemaining = entryTime or self.patrolDuration
 
     if kind == 3 then
         enemy.role = "leader"
@@ -130,27 +144,31 @@ function Enemies:spawn(ship, camera, width, height, kindIndex, options)
     return enemy
 end
 
-function Enemies:spawnSquad(ship, camera, width, height)
+function Enemies:spawnSquad(ship)
     if #self.items + squadSize > self.maxCount then return {} end
-    -- Place the leader far enough outside that all 5 formation hulls spawn off-screen.
-    local margin = 60 + 210 * camera.zoom
-    local lx, ly = spawnPointOutside(self.rng, camera, width, height, margin, true)
-    local angle = math.atan2(ship.x - lx, ly - ship.y) % tau
+    local lx, ly, edge = spawnPoint(self.rng, ship)
+    local view = self.view
+    if edge == 1 then lx = view.left - entryMargin
+    elseif edge == 2 then lx = view.right + entryMargin
+    elseif edge == 3 then ly = view.top - entryMargin
+    else ly = view.bottom + entryMargin end
+    local angle = entryAngles[edge]
     local fx, fy = math.sin(angle), -math.cos(angle)
     local rx, ry = -fy, fx
-    local vx, vy = limitVector(ship.vx + fx * 160, ship.vy + fy * 160, self.types[3].maxSpeed)
+    local vx, vy = fx * entrySpeed, fy * entrySpeed
+    local entryTime = (entryMargin + wingTrail + self.types[3].radius) / entrySpeed
     local squad = {}
-    local leader = self:spawn(ship, camera, width, height, 3, {
-        x = lx, y = ly, vx = vx, vy = vy, angle = angle,
+    local leader = self:spawn(ship, 3, {
+        x = lx, y = ly, vx = vx, vy = vy, angle = angle, entryTime = entryTime,
     })
     if not leader then return squad end
     squad[#squad + 1] = leader
 
     for _, member in ipairs(formation) do
-        local shipMember = self:spawn(ship, camera, width, height, member.kind, {
+        local shipMember = self:spawn(ship, member.kind, {
             x = lx + rx * member.right + fx * member.forward,
             y = ly + ry * member.right + fy * member.forward,
-            vx = vx, vy = vy, angle = angle,
+            vx = vx, vy = vy, angle = angle, entryTime = entryTime,
             leader = leader, slot = member.slot,
         })
         squad[#squad + 1] = shipMember
@@ -169,7 +187,7 @@ local function aimEvasion(enemy, ship, aimAngle, step)
         local along = dx * aimX + dy * aimY
         local across = dy * aimX - dx * aimY
         enemy.blindside = along < 0 or math.abs(across) > along * 0.7
-        if enemy.evadeCooldown == 0 and along > 0 and along < 950 and math.abs(across) < 65 + enemy.radius then
+        if enemy.evadeCooldown == 0 and along > 0 and along < 700 and math.abs(across) < 48 + enemy.radius then
             local side = math.abs(across) < 4 and enemy.slot or (across >= 0 and 1 or -1)
             enemy.evadeX, enemy.evadeY = -aimY * side, aimX * side
             enemy.evadeTime, enemy.evadeCooldown = 0.55, 1.3
@@ -183,10 +201,11 @@ end
 local function reassignEscort(items, escort)
     local bestLeader, bestSlot, bestDistSq = nil, nil, 1400 * 1400
     for _, candidate in ipairs(items) do
-        if candidate.role == "leader" and not candidate.dead then
+        if candidate.role == "leader" and not candidate.dead and candidate.phase ~= "departing" then
             local leftTaken, rightTaken = false, false
             for _, other in ipairs(items) do
-                if other ~= escort and other.role == "escort" and other.leader == candidate and not other.dead then
+                if other ~= escort and other.role == "escort" and other.leader == candidate
+                    and not other.dead and other.phase ~= "departing" then
                     if other.slot < 0 then leftTaken = true else rightTaken = true end
                 end
             end
@@ -214,107 +233,81 @@ end
 local function wingsReady(leader)
     local hasWing = false
     for _, wing in ipairs(leader.wings) do
-        if not wing.dead then
+        if not wing.dead and wing.phase ~= "departing" then
             local x, y = wingPosition(leader, wing.slot)
-            if wing.state ~= "form" or (wing.x - x) ^ 2 + (wing.y - y) ^ 2 > 95 ^ 2 then return false end
+            if wing.phase ~= "patrol" or wing.state ~= "form"
+                or (wing.x - x) ^ 2 + (wing.y - y) ^ 2 > 72 ^ 2 then return false end
             hasWing = true
         end
     end
     return hasWing
 end
 
-local function leaderSteering(enemy, ship, definition, step, playerSlow, playerFast, visible)
-    local dx, dy = ship.x - enemy.x, ship.y - enemy.y
-    local dist = math.sqrt(dx * dx + dy * dy)
-    local ux, uy = dist > 1e-6 and dx / dist or 0, dist > 1e-6 and dy / dist or -1
-    local angle = math.atan2(dx, -dy)
-
-    -- Coordinate simultaneous flanker dives when the squad reaches attack range.
-    enemy.diveTimer = enemy.diveTimer - step * (playerSlow and 2.0 or 1.0)
-    if enemy.diveTimer <= 0 and visible and dist <= 620 and wingsReady(enemy) then
-        enemy.diveSignal = enemy.diveSignal + 1
-        enemy.diveTimer = 3.2
-    end
-
-    local desiredRange = (playerSlow or not visible) and definition.pressRange or definition.holdRange
-    if enemy.blindside then desiredRange = math.max(180, desiredRange - 50) end
-    local fleeing = playerFast and dist > desiredRange + 45 and dx * ship.vx + dy * ship.vy > 0
-    if fleeing then
-        local speed = definition.pursuitSpeed + (enemy.blindside and 60 or 0)
-        return ship.vx + ux * speed, ship.vy + uy * speed, angle
-    end
-    local approach = definition.cruiseSpeed + (enemy.blindside and 65 or 0)
-    local radial = clamp((dist - desiredRange) * 1.4, -140, approach)
-    return ship.vx + ux * radial, ship.vy + uy * radial, angle
+local function pointGoal(x, y, reference, angle, response, speed)
+    return {x = x, y = y, vx = reference.vx, vy = reference.vy, angle = angle, response = response, speed = speed}
 end
 
-local function escortSteering(enemy, ship, definition, playerSlow, playerFast)
-    local dx, dy = ship.x - enemy.x, ship.y - enemy.y
-    local dist = math.sqrt(dx * dx + dy * dy)
-    local ux, uy = dist > 1e-6 and dx / dist or 0, dist > 1e-6 and dy / dist or -1
-    local angle = math.atan2(dx, -dy)
+local function chooseGoal(enemy, ship, definition, playerSlow, playerFast)
     local leader = enemy.leader
-
-    local vx, vy
-    if leader and not leader.dead then
+    if enemy.state == "form" then
+        local x, y = wingPosition(leader, enemy.slot)
+        return pointGoal(x, y, leader, leader.angle, 2.5, definition.cruiseSpeed)
+    elseif enemy.role == "escort" and leader then
         local fx, fy = math.sin(leader.angle), -math.cos(leader.angle)
         local rx, ry = -fy, fx
-        local forward = (playerSlow or enemy.blindside) and 35 or -45
-        local slotX = leader.x + rx * (enemy.slot * 115) + fx * forward
-        local slotY = leader.y + ry * (enemy.slot * 115) + fy * forward
-        local maxRel = definition.cruiseSpeed + (playerFast and 140 or 0) + (enemy.blindside and 60 or 0)
-        local relX, relY = limitVector((slotX - enemy.x) * 2.4, (slotY - enemy.y) * 2.4, maxRel)
-        vx, vy = leader.vx + relX, leader.vy + relY
-        angle = leader.angle
-    else
-        -- Without a leader to regroup with, charge aggressively at the player.
-        local charge = definition.chargeSpeed + (enemy.blindside and 80 or 0)
-        local desired = playerSlow and 110 or 160
-        local radial = clamp((dist - desired) * 2.5, -140, charge)
-        vx, vy = ship.vx + ux * radial, ship.vy + uy * radial
+        local forward = (playerSlow or enemy.blindside) and 26 or -escortTrail
+        local spread = enemy.slot * escortSpread
+        local slotX = leader.x + rx * spread + fx * forward
+        local slotY = leader.y + ry * spread + fy * forward
+        local maxRel = definition.cruiseSpeed + (playerFast and 41 or 0) + (enemy.blindside and 19 or 0)
+        return pointGoal(slotX, slotY, leader, leader.angle, 2.4, maxRel)
     end
-    return vx, vy, angle
-end
 
-local function flankerSteering(enemy, ship, definition, step, playerSlow, playerFast)
-    local leader = enemy.leader
-    local leaderAlive = leader and not leader.dead
     local dx, dy = ship.x - enemy.x, ship.y - enemy.y
     local dist = math.sqrt(dx * dx + dy * dy)
-    local ux, uy = dist > 1e-6 and dx / dist or 0, dist > 1e-6 and dy / dist or -1
-
-    -- High-speed player getaway forces direct pursuit instead of slow looping.
-    if playerFast and dist > 440 and dx * ship.vx + dy * ship.vy > 0 and enemy.state ~= "form" then
-        local speed = definition.chargeSpeed + (enemy.blindside and 70 or 0)
-        enemy.state = "pursuit"
-        return ship.vx + ux * speed, ship.vy + uy * speed, math.atan2(dx, -dy)
-    elseif enemy.state == "pursuit" then
-        beginDive(enemy, ship, definition, not leaderAlive)
-    end
-
-    if enemy.state == "form" then
-        if not leaderAlive then
-            beginDive(enemy, ship, definition, true)
-        else
-            if enemy.lastDiveSignal ~= leader.diveSignal then
-                enemy.lastDiveSignal = leader.diveSignal
-                beginDive(enemy, ship, definition, false)
-            else
-                local slotX, slotY = wingPosition(leader, enemy.slot)
-                local relX, relY = limitVector((slotX - enemy.x) * 2.5, (slotY - enemy.y) * 2.5, definition.cruiseSpeed)
-                return leader.vx + relX, leader.vy + relY, leader.angle
-            end
+    local angle = math.atan2(dx, -dy)
+    local fleeing = playerFast and dx * ship.vx + dy * ship.vy > 0
+    local range, response, speed
+    if enemy.role == "leader" then
+        if enemy.diveTimer <= 0 and dist <= 475 and wingsReady(enemy) then
+            enemy.diveSignal = enemy.diveSignal + 1
+            enemy.diveTimer = 3.2
         end
+        range = playerSlow and definition.pressRange or definition.holdRange
+        if enemy.blindside then range = range - 30 end
+        if fleeing and dist > range + 45 then
+            return pointGoal(ship.x, ship.y, ship, angle, 1.4,
+                definition.pursuitSpeed + (enemy.blindside and 20 or 0))
+        end
+        response, speed = 1.4, definition.cruiseSpeed + (enemy.blindside and 21 or 0)
+    elseif enemy.role == "escort" then
+        range = playerSlow and 80 or 120
+        response, speed = 2.5, definition.chargeSpeed + (enemy.blindside and 26 or 0)
+    else
+        if fleeing and dist > 350 then
+            enemy.state = "pursuit"
+            return pointGoal(ship.x, ship.y, ship, angle, 2.5,
+                definition.chargeSpeed + (enemy.blindside and 20 or 0))
+        elseif enemy.state == "pursuit" then
+            beginDive(enemy, ship, definition, not leader)
+        end
+        return nil
     end
 
+    local ux, uy = dist > 1e-6 and dx / dist or 0, dist > 1e-6 and dy / dist or -1
+    return pointGoal(ship.x - ux * range, ship.y - uy * range, ship, angle, response, dist < range and 71 or speed)
+end
+
+local function flankerSteering(enemy, ship, definition, step, playerSlow)
     if enemy.state == "recover" then
         enemy.bankProgress = math.min(math.pi * 0.85, enemy.bankProgress + enemy.turnSpeed * 0.7 * step)
         local angle = enemy.courseAngle - enemy.slot * enemy.bankProgress
         if enemy.bankProgress >= math.pi * 0.85 then
             enemy.bankProgress = nil
-            if leaderAlive then
+            if enemy.leader then
                 enemy.state = "form"
-                enemy.lastDiveSignal = leader.diveSignal
+                enemy.lastDiveSignal = enemy.leader.diveSignal
+                enemy.goalDelay = 0
             else
                 beginDive(enemy, ship, definition, true)
             end
@@ -342,43 +335,119 @@ local function flankerSteering(enemy, ship, definition, step, playerSlow, player
     return vx, vy, math.atan2(vx, -vy)
 end
 
-local function move(enemy, dt, ship, aimAngle, camera, width, height)
-    local definition = Enemies.types[enemy.kind]
-    local playerSpeed = ship:speed()
-    local playerSlow = ship.braking or playerSpeed < 160
-    local playerFast = playerSpeed > 420
-    local visible
-    if enemy.role == "leader" then
-        local x, y = camera:worldToScreen(enemy.x, enemy.y, width, height)
-        visible = x > 28 and x < width - 28 and y > 28 and y < height - 28
-    end
-    -- Small steering steps also keep long updates bounded without snapping velocity.
-    while dt > 0 do
-        local step = math.min(dt, 1 / 60)
-        local evadeX, evadeY = aimEvasion(enemy, ship, aimAngle, step)
-        local targetVx, targetVy, angle
-        if enemy.role == "leader" then
-            targetVx, targetVy, angle = leaderSteering(enemy, ship, definition, step, playerSlow, playerFast, visible)
-        elseif enemy.role == "escort" then
-            targetVx, targetVy, angle = escortSteering(enemy, ship, definition, playerSlow, playerFast)
+local function pilot(enemy, dt, targetVx, targetVy, angle)
+    local targetSpeed = math.sqrt(targetVx * targetVx + targetVy * targetVy)
+    local speed = enemy:speed()
+    local brake = speed > targetSpeed + 6
+    local thrust = false
+    if targetSpeed > 9 then
+        local forwardSpeed = (enemy.vx * targetVx + enemy.vy * targetVy) / targetSpeed
+        brake = brake or (speed > 18 and forwardSpeed < speed * 0.35)
+        if brake then
+            angle = math.atan2(targetVx, -targetVy)
         else
-            targetVx, targetVy, angle = flankerSteering(enemy, ship, definition, step, playerSlow, playerFast)
+            -- Point into the turn to correct sideways drift with forward thrust.
+            angle = math.atan2(targetVx - enemy.vx * 0.65, enemy.vy * 0.65 - targetVy)
+            thrust = forwardSpeed < targetSpeed - 4
         end
-        targetVx, targetVy = limitVector(targetVx + enemy.sepX + evadeX * definition.evadeSpeed,
-            targetVy + enemy.sepY + evadeY * definition.evadeSpeed, enemy.maxSpeed)
-        local ax = (targetVx - enemy.vx) * 2.5
-        local ay = (targetVy - enemy.vy) * 2.5
-        local acceleration = math.sqrt(ax * ax + ay * ay)
-        enemy.thrust = math.min(enemy.thrustLimit, acceleration)
-        local scale = acceleration > 0 and enemy.thrust / acceleration or 0
-        local oldVx, oldVy = enemy.vx, enemy.vy
-        enemy.vx, enemy.vy = enemy.vx + ax * scale * step, enemy.vy + ay * scale * step
-        enemy.vx, enemy.vy = limitVector(enemy.vx, enemy.vy, enemy.maxSpeed)
-        enemy.x = enemy.x + (oldVx + enemy.vx) * 0.5 * step
-        enemy.y = enemy.y + (oldVy + enemy.vy) * 0.5 * step
-        local error = (angle - enemy.angle + math.pi) % tau - math.pi
-        enemy.angle = (enemy.angle + clamp(error, -enemy.turnSpeed * step, enemy.turnSpeed * step)) % tau
+    end
+
+    local error = (angle - enemy.angle + math.pi) % tau - math.pi
+    enemy:turn(dt, clamp(error / (enemy.turnSpeed * dt), -1, 1))
+    local oldVx, oldVy = enemy:updateVelocity(dt, thrust and math.abs(error) < 0.6, brake, enemy.maxSpeed)
+    enemy.x = enemy.x + (oldVx + enemy.vx) * 0.5 * dt
+    enemy.y = enemy.y + (oldVy + enemy.vy) * 0.5 * dt
+end
+
+local function patrol(enemy, step, ship, aimAngle, definition, playerSlow, playerFast, rng)
+    local evadeX, evadeY = aimEvasion(enemy, ship, aimAngle, step)
+    if enemy.role == "leader" then
+        enemy.diveTimer = enemy.diveTimer - step * (playerSlow and 2 or 1)
+    end
+    if enemy.state == "form" and enemy.lastDiveSignal ~= enemy.leader.diveSignal then
+        enemy.lastDiveSignal = enemy.leader.diveSignal
+        beginDive(enemy, ship, definition, false)
+    elseif enemy.goalDelay <= 1e-9 then
+        enemy.goal = chooseGoal(enemy, ship, definition, playerSlow, playerFast)
+        enemy.goalDelay = enemy.goalDelay + goalIntervalMin + rng() * (goalIntervalMax - goalIntervalMin)
+    end
+    enemy.goalDelay = enemy.goalDelay - step
+
+    local targetVx, targetVy, angle
+    local goal = enemy.goal
+    if goal then
+        local vx, vy = limitVector((goal.x - enemy.x) * goal.response, (goal.y - enemy.y) * goal.response, goal.speed)
+        targetVx, targetVy, angle = goal.vx + vx, goal.vy + vy, goal.angle
+    else
+        targetVx, targetVy, angle = flankerSteering(enemy, ship, definition, step, playerSlow)
+    end
+    targetVx, targetVy = limitVector(targetVx + enemy.sepX + evadeX * definition.evadeSpeed,
+        targetVy + enemy.sepY + evadeY * definition.evadeSpeed, enemy.maxSpeed)
+    pilot(enemy, step, targetVx, targetVy, angle)
+end
+
+local function departureAngle(enemy, view)
+    local distances = {enemy.x - view.left, view.right - enemy.x, enemy.y - view.top, view.bottom - enemy.y}
+    local bestCost, bestAngle = math.huge, 0
+    for edge, angle in ipairs(departureAngles) do
+        local turn = math.abs((angle - enemy.angle + math.pi) % tau - math.pi)
+        local cost = distances[edge] + turn * enemy.maxSpeed / enemy.turnSpeed
+        if cost < bestCost then bestCost, bestAngle = cost, angle end
+    end
+    return bestAngle
+end
+
+local function outsideView(enemy, view)
+    local radius = enemy.radius + 2
+    return enemy.x + radius < view.left or enemy.x - radius > view.right
+        or enemy.y + radius < view.top or enemy.y - radius > view.bottom
+end
+
+local function move(group, enemy, dt, ship, aimAngle)
+    local definition = group.types[enemy.kind]
+    local playerSpeed = ship:speed()
+    local playerSlow = ship.braking or playerSpeed < ship.maxSpeed * 0.5
+    local playerFast = playerSpeed > ship.maxSpeed * 0.8
+    while dt > 0 do
+        if enemy.phase == "departing" and outsideView(enemy, group.view) then return true end
+        local step = math.min(dt, 1 / 60)
+        if enemy.phase ~= "departing" then step = math.min(step, enemy.phaseRemaining) end
+
+        if step > 0 then
+            if enemy.phase == "patrol" then
+                patrol(enemy, step, ship, aimAngle, definition, playerSlow, playerFast, group.rng)
+            else
+                local angle = enemy.exitAngle or enemy.angle
+                local speed = enemy.phase == "entering" and entrySpeed or enemy.maxSpeed
+                pilot(enemy, step, math.sin(angle) * speed, -math.cos(angle) * speed, angle)
+            end
+        end
+
+        if enemy.phase ~= "departing" then
+            enemy.phaseRemaining = enemy.phaseRemaining - step
+            if enemy.phaseRemaining <= 1e-9 then
+                if enemy.phase == "entering" then
+                    enemy.phase, enemy.phaseRemaining = "patrol", group.patrolDuration
+                else
+                    enemy.phase, enemy.exitAngle = "departing", departureAngle(enemy, group.view)
+                    enemy.goal, enemy.aimed = nil, false
+                end
+            end
+        end
         dt = dt - step
+    end
+    return enemy.phase == "departing" and outsideView(enemy, group.view)
+end
+
+local function advance(group, first, dt, ship, aimAngle)
+    -- Both wings see the same dive signal before the leader advances.
+    for i = #group.items, first, -1 do
+        local enemy = group.items[i]
+        enemy.prevX, enemy.prevY = enemy.x, enemy.y
+        if move(group, enemy, dt, ship, aimAngle) then
+            enemy.dead = true
+            table.remove(group.items, i)
+        end
     end
 end
 
@@ -403,7 +472,7 @@ local function computeSeparation(items)
                     local fallback = (i * 1.7 + j * 2.3) % tau
                     ux, uy = math.cos(fallback), math.sin(fallback)
                 end
-                local push = (minDist - dist) / minDist * 220
+                local push = (minDist - dist) / minDist * 86
                 a.sepX, a.sepY = a.sepX + ux * push, a.sepY + uy * push
                 b.sepX, b.sepY = b.sepX - ux * push, b.sepY - uy * push
             end
@@ -411,27 +480,26 @@ local function computeSeparation(items)
     end
 end
 
-function Enemies:update(dt, ship, camera, width, height, aimAngle)
+function Enemies:update(dt, ship, aimAngle, camera, width, height)
     if dt <= 0 then return end
-    local despawnDistance = math.max(6000, math.sqrt(width * width + height * height) / camera.zoom * 4)
+    if camera then
+        self.view.left, self.view.top = camera:screenToWorld(0, 0, width, height)
+        self.view.right, self.view.bottom = camera:screenToWorld(width, height, width, height)
+    end
     computeSeparation(self.items)
     for _, enemy in ipairs(self.items) do
-        if enemy.role == "escort" and enemy.leader and enemy.leader.dead then
-            reassignEscort(self.items, enemy)
-        elseif enemy.role == "flanker" and enemy.leader and enemy.leader.dead then
-            enemy.leader = nil
-            beginDive(enemy, ship, self.types[enemy.kind], true)
+        local leader = enemy.leader
+        if enemy.phase ~= "departing" and leader and (leader.dead or leader.phase == "departing") then
+            if enemy.role == "escort" then
+                reassignEscort(self.items, enemy)
+                enemy.goalDelay = 0
+            else
+                enemy.leader = nil
+                beginDive(enemy, ship, self.types[enemy.kind], true)
+            end
         end
     end
-    for i = #self.items, 1, -1 do
-        local enemy = self.items[i]
-        enemy.prevX, enemy.prevY = enemy.x, enemy.y
-        move(enemy, dt, ship, aimAngle, camera, width, height)
-        if (enemy.x - ship.x) ^ 2 + (enemy.y - ship.y) ^ 2 > despawnDistance ^ 2 then
-            enemy.dead = true
-            table.remove(self.items, i)
-        end
-    end
+    advance(self, 1, dt, ship, aimAngle)
 
     if #self.items + squadSize > self.maxCount then
         self.spawnAccumulator = 0
@@ -442,12 +510,11 @@ function Enemies:update(dt, ship, camera, width, height, aimAngle)
     self.spawnAccumulator = math.max(0, self.spawnAccumulator - count)
     for i = 1, count do
         if #self.items + squadSize > self.maxCount then break end
-        local squad = self:spawnSquad(ship, camera, width, height)
+        local first = #self.items + 1
+        self:spawnSquad(ship)
         local slice = (count - i + self.spawnAccumulator) / self.spawnRate
-        for _, enemy in ipairs(squad) do
-            -- A new arrival moves only for the portion of the frame after its birth.
-            move(enemy, slice, ship, aimAngle, camera, width, height)
-        end
+        -- A new arrival moves only for the portion of the frame after its birth.
+        advance(self, first, slice, ship, aimAngle)
     end
 end
 
