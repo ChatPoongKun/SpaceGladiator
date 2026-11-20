@@ -35,6 +35,15 @@ function Ship:speed()
     return math.sqrt(self.vx * self.vx + self.vy * self.vy)
 end
 
+function Ship:takeDamage(amount)
+    local absorbed = math.min(self.shield, amount)
+    self.shield = self.shield - absorbed
+    amount = amount - absorbed
+    absorbed = math.min(self.armor, amount)
+    self.armor = self.armor - absorbed
+    self.hull = math.max(0, self.hull - (amount - absorbed))
+end
+
 local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin, dt)
     if bonus == 0 then
         local travel = (oldVelocity + velocity) * 0.5 * dt
@@ -83,6 +92,7 @@ end
 
 function Ship:update(dt, input)
     if dt <= 0 then return end
+    self.prevX, self.prevY = self.x, self.y
     -- Apply thrust, braking and speed limits to the base velocity alone.
     self.vx = self.vx - self.wrapVx
     self.vy = self.vy - self.wrapVy

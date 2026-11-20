@@ -270,4 +270,5 @@ return function(Ship, Enemies, Camera, check)
             "The dodge must carry lateral momentum after the turn ends")
     end
 
+    require("tests.enemy_fire")(Ship, Enemies, Camera, check)
 end

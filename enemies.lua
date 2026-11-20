@@ -1,5 +1,7 @@
 local Ship = require("ship")
 local Arena = require("arena")
+local Collision = require("collision")
+local EnemyFire = require("enemy_fire")
 local Enemies = {}
 Enemies.__index = Enemies
 local tau = 2 * math.pi
@@ -58,6 +60,7 @@ function Enemies.new(rng)
     return setmetatable({
         items = {}, kills = 0, spawnAccumulator = 0.5, rng = rng or math.random,
         view = {left = 0, top = 0, right = Arena.width, bottom = Arena.height},
+        fire = EnemyFire.new(),
     }, Enemies)
 end
 
@@ -232,6 +235,7 @@ local function patrol(group, enemy, dt, ship, aimAngle, definition)
     if not enemy.goal then
         enemy.goal = chooseWaypoint(group, enemy, ship, definition)
     elseif (enemy.goal.x - enemy.x) ^ 2 + (enemy.goal.y - enemy.y) ^ 2 <= definition.arrivalRadius ^ 2 then
+        group.fire:shoot(enemy, ship)
         enemy.goal = chooseWaypoint(group, enemy, ship, definition)
         enemy.waypointBrakeRemaining = waypointBrakeTime
     end
@@ -368,6 +372,7 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
         self.view.left, self.view.top = camera:screenToWorld(0, 0, width, height)
         self.view.right, self.view.bottom = camera:screenToWorld(width, height, width, height)
     end
+    self.fire:update(dt, ship)
     computeSeparation(self.items)
     advance(self, 1, dt, ship, aimAngle)
 
@@ -419,20 +424,7 @@ function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction)
         local endX, endY = positionAt(enemy, endFraction)
         local rx, ry = x1 - startX, y1 - startY
         local vx, vy = dx - (endX - startX), dy - (endY - startY)
-        local radius = enemy.radius + 2
-        local c = rx * rx + ry * ry - radius * radius
-        local t
-        if c <= 0 then
-            t = 0
-        else
-            local a, b = vx * vx + vy * vy, rx * vx + ry * vy
-            local discriminant = b * b - a * c
-            if a > 0 and b < 0 and discriminant >= 0 then
-                -- Stable form of the entry root avoids cancellation near the hull.
-                t = c / (-b + math.sqrt(discriminant))
-                if t > 1 then t = nil end
-            end
-        end
+        local t = Collision.circleEntry(rx, ry, vx, vy, enemy.radius + 2)
         if t and t < nearest then nearest, hitIndex = t, i end
     end
     if hitIndex then
@@ -467,6 +459,7 @@ function Enemies:draw(time)
         g.pop()
     end
     g.pop()
+    self.fire:draw()
 end
 
 return Enemies

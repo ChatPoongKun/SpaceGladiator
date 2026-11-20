@@ -1,4 +1,5 @@
 local Arena = require("arena")
+local Collision = require("collision")
 local Camera = {}
 Camera.__index = Camera
 
@@ -31,20 +32,10 @@ function Camera:worldToScreen(x, y, width, height)
         (y - self.y) * self.zoom + height / 2 + self.screenOffsetY
 end
 
-local function axisInterval(origin, direction, size)
-    if direction == 0 then
-        if origin < 0 or origin > size then return math.huge, -math.huge end
-        return -math.huge, math.huge
-    end
-    local a, b = -origin / direction, (size - origin) / direction
-    return math.min(a, b), math.max(a, b)
-end
-
 function Camera:clipRay(x, y, dx, dy, width, height)
     local sx, sy = self:worldToScreen(x, y, width, height)
-    local nearX, farX = axisInterval(sx, dx, width)
-    local nearY, farY = axisInterval(sy, dy, height)
-    local entry, exit = math.max(0, nearX, nearY), math.min(farX, farY)
+    local near, exit = Collision.rectangleInterval(sx, sy, dx, dy, width, height)
+    local entry = math.max(0, near)
     if entry < exit then return entry / self.zoom, exit / self.zoom end
 end
 
