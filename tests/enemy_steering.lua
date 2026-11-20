@@ -19,20 +19,26 @@ return function(Ship, Enemies, Camera, check)
     end
 
     do
-        local ship, group = fixture()
-        local enemy = group:spawn(ship, 3, {x = 400, y = 270, vx = 140, angle = math.pi / 2})
-        enemy.route.waypoints = {{x = 450, y = 270, angle = math.pi / 2}, {x = 450, y = 80, angle = 0}}
-        group:update(dt, ship)
-        check(enemy.waypointIndex == 1 and not enemy.braking and enemy:speed() >= 140,
-            "Approaching a waypoint must not brake the aircraft")
-        group:update(dt, ship)
-        check(enemy.waypointIndex == 2 and enemy.angle < math.pi / 2 and enemy.vx > 0
-            and not enemy.braking and enemy:speed() >= 140,
-            "A right-angle waypoint must start the turn while carrying forward momentum")
-        for _ = 1, 30 do
+        local speedRatios = {}
+        for kind = 1, #Enemies.types do
+            local ship, group = fixture()
+            local enemy = group:spawn(ship, kind, {x = 400, y = 270, vx = 140, angle = math.pi / 2})
+            enemy.route.waypoints = {{x = 450, y = 270, angle = math.pi / 2}, {x = 450, y = 80, angle = 0}}
             group:update(dt, ship)
-            assert(not enemy.braking and enemy:speed() >= 120, "The waypoint turn must keep the aircraft in motion")
+            check(enemy.waypointIndex == 1 and not enemy.braking and enemy:speed() >= 140,
+                "Approaching a waypoint must not brake the aircraft")
+            local incomingSpeed, startX = enemy:speed(), enemy.x
+            group:update(dt, ship)
+            speedRatios[kind] = enemy:speed() / incomingSpeed
+            check(enemy.waypointIndex == 2 and enemy.angle < math.pi / 2 and enemy.x > startX and enemy.braking
+                and math.abs(speedRatios[kind] - math.exp(-Enemies.types[kind].brake * dt)) < 1e-6,
+                "Arriving must apply hull-specific braking while the aircraft slides and turns")
+            group:update(0.2, ship)
+            check(enemy.waypointIndex == 2 and not enemy.braking and enemy:speed() > 0,
+                "The short waypoint brake must release and leave the aircraft moving")
         end
+        check(speedRatios[1] < speedRatios[2] and speedRatios[2] < speedRatios[3] and speedRatios[3] < 1,
+            "WEDGE must brake harder than EQUILATERAL, and OBTUSE must retain the most momentum")
     end
 
     do

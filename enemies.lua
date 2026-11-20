@@ -5,6 +5,7 @@ Enemies.__index = Enemies
 local tau = 2 * math.pi
 local patrolRadiusMin, patrolRadiusMax = 195, 290
 local arrivalRadius, minimumLeg, formationMargin = 48, 185, 155
+local waypointBrakeTime = 0.18
 
 Enemies.spawnRate = 1 / 4
 Enemies.maxCount = 15
@@ -13,16 +14,16 @@ Enemies.types = {
     {
         name = "WEDGE", vertices = {-2, -15, 2, -15, 10, 10, -10, 10},
         radius = 16, evadeSpeed = 94, turnSpeed = 3.2,
-        thrust = 285, maxSpeed = 225,
+        thrust = 285, brake = 4.2, maxSpeed = 225,
     },
     {
         name = "EQUILATERAL", vertices = {0, -24, -12 * math.sqrt(3), 12, 12 * math.sqrt(3), 12},
         radius = 24, evadeSpeed = 78,
-        turnSpeed = 2.8, thrust = 255, maxSpeed = 190,
+        turnSpeed = 2.8, thrust = 255, brake = 2.6, maxSpeed = 190,
     },
     {
         name = "OBTUSE", vertices = {0, -12, -26, 10, 26, 10},
-        radius = 28, evadeSpeed = 62, turnSpeed = 1.4, thrust = 218, maxSpeed = 155,
+        radius = 28, evadeSpeed = 62, turnSpeed = 1.4, thrust = 218, brake = 1.25, maxSpeed = 155,
     },
 }
 
@@ -89,6 +90,7 @@ function Enemies:spawn(ship, kindIndex, options)
     end
     enemy.kind, enemy.radius = kind, definition.radius
     enemy.maxSpeed, enemy.thrust, enemy.turnSpeed = definition.maxSpeed, definition.thrust, definition.turnSpeed
+    enemy.brake = definition.brake
     -- Give lighter thrust the same time to build momentum out of low-speed drag.
     local thrustRatio = enemy.thrust / Ship.thrust
     enemy.driftThreshold = Ship.driftThreshold * thrustRatio
@@ -98,6 +100,7 @@ function Enemies:spawn(ship, kindIndex, options)
     enemy.angle = (options and options.angle or math.atan2(ship.x - enemy.x, enemy.y - ship.y)) % tau
     enemy.route = options and options.route or {waypoints = {}}
     enemy.waypointIndex = 1
+    enemy.waypointBrakeRemaining = 0
     enemy.right = options and options.right or 0
     enemy.forward = options and options.forward or 0
     enemy.slot = options and options.slot or (self.rng() < 0.5 and -1 or 1)
@@ -161,14 +164,15 @@ local function aimEvasion(enemy, ship, aimAngle, step)
     return 0, 0
 end
 
-local function pilot(enemy, dt, targetVx, targetVy, angle, flyThrough)
+local function pilot(enemy, dt, targetVx, targetVy, angle, brakeOverride)
     local targetSpeed = math.sqrt(targetVx * targetVx + targetVy * targetVy)
     local speed = enemy:speed()
-    local brake = not flyThrough and speed > targetSpeed + 6
+    local brake = brakeOverride
+    if brake == nil then brake = speed > targetSpeed + 6 end
     local thrust = false
     if targetSpeed > 9 then
         local forwardSpeed = (enemy.vx * targetVx + enemy.vy * targetVy) / targetSpeed
-        brake = brake or (not flyThrough and speed > 18 and forwardSpeed < speed * 0.35)
+        if brakeOverride == nil and speed > 18 and forwardSpeed < speed * 0.35 then brake = true end
         if brake then
             angle = math.atan2(targetVx, -targetVy)
         else
@@ -185,12 +189,12 @@ local function pilot(enemy, dt, targetVx, targetVy, angle, flyThrough)
     enemy.y = enemy.y + (oldVy + enemy.vy) * 0.5 * dt
 end
 
-local function flyTo(enemy, dt, x, y, speed, steerX, steerY, flyThrough)
+local function flyTo(enemy, dt, x, y, speed, steerX, steerY, brakeOverride)
     local dx, dy = x - enemy.x, y - enemy.y
-    local response = flyThrough and speed / math.max(math.sqrt(dx * dx + dy * dy), 1) or 2.6
+    local response = brakeOverride ~= nil and speed / math.max(math.sqrt(dx * dx + dy * dy), 1) or 2.6
     local vx, vy = limitVector(dx * response, dy * response, speed)
     vx, vy = limitVector(vx + steerX, vy + steerY, speed)
-    pilot(enemy, dt, vx, vy, math.atan2(dx, -dy), flyThrough)
+    pilot(enemy, dt, vx, vy, math.atan2(dx, -dy), brakeOverride)
 end
 
 local function addWaypoint(group, enemy, ship)
@@ -235,11 +239,22 @@ local function patrol(group, enemy, dt, ship, aimAngle, definition)
     if (enemy.goal.x - enemy.x) ^ 2 + (enemy.goal.y - enemy.y) ^ 2 <= arrivalRadius ^ 2 then
         enemy.waypointIndex = enemy.waypointIndex + 1
         assignWaypoint(group, enemy, ship)
+        enemy.waypointBrakeRemaining = waypointBrakeTime
     end
 
     local evadeX, evadeY = aimEvasion(enemy, ship, aimAngle, dt)
-    flyTo(enemy, dt, enemy.goal.x, enemy.goal.y, enemy.maxSpeed * 0.84,
-        enemy.sepX + evadeX * definition.evadeSpeed, enemy.sepY + evadeY * definition.evadeSpeed, true)
+    local steerX = enemy.sepX + evadeX * definition.evadeSpeed
+    local steerY = enemy.sepY + evadeY * definition.evadeSpeed
+    local speed = enemy.maxSpeed * 0.84
+    local brakeStep = math.min(dt, enemy.waypointBrakeRemaining)
+    if brakeStep > 0 then
+        -- Turn toward the next goal while the brakes damp the incoming velocity.
+        flyTo(enemy, brakeStep, enemy.goal.x, enemy.goal.y, speed, steerX, steerY, true)
+        enemy.waypointBrakeRemaining = enemy.waypointBrakeRemaining - brakeStep
+    end
+    if brakeStep < dt then
+        flyTo(enemy, dt - brakeStep, enemy.goal.x, enemy.goal.y, speed, steerX, steerY, false)
+    end
 end
 
 local function departureGoal(enemy, view)
