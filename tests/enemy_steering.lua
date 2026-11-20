@@ -20,6 +20,23 @@ return function(Ship, Enemies, Camera, check)
 
     do
         local ship, group = fixture()
+        local enemy = group:spawn(ship, 3, {x = 400, y = 270, vx = 140, angle = math.pi / 2})
+        enemy.route.waypoints = {{x = 450, y = 270, angle = math.pi / 2}, {x = 450, y = 80, angle = 0}}
+        group:update(dt, ship)
+        check(enemy.waypointIndex == 1 and not enemy.braking and enemy:speed() >= 140,
+            "Approaching a waypoint must not brake the aircraft")
+        group:update(dt, ship)
+        check(enemy.waypointIndex == 2 and enemy.angle < math.pi / 2 and enemy.vx > 0
+            and not enemy.braking and enemy:speed() >= 140,
+            "A right-angle waypoint must start the turn while carrying forward momentum")
+        for _ = 1, 30 do
+            group:update(dt, ship)
+            assert(not enemy.braking and enemy:speed() >= 120, "The waypoint turn must keep the aircraft in motion")
+        end
+    end
+
+    do
+        local ship, group = fixture()
         local enemy = group:spawn(ship, 3, {x = ship.x - 330, y = ship.y, angle = 0})
         local manual = Ship.new(width, height)
         manual.x, manual.y = enemy.x, enemy.y
@@ -39,8 +56,8 @@ return function(Ship, Enemies, Camera, check)
         check(matchesManual({turn = 0, thrust = true, brake = false}) and enemy.accelerating,
             "A correctly aimed enemy must accelerate like a player holding thrust")
         enemy.vx, manual.vx = -130, -130
-        check(matchesManual({turn = 0, thrust = false, brake = true}) and enemy.braking,
-            "An enemy drifting away from its waypoint must brake like a player")
+        check(matchesManual({turn = 0, thrust = true, brake = false}) and not enemy.braking,
+            "An enemy drifting away from its waypoint must steer with thrust without braking")
     end
 
     do
@@ -203,13 +220,15 @@ return function(Ship, Enemies, Camera, check)
             step(ship, group, frame <= 5 and math.pi / 2 or -math.pi / 2)
             step(otherShip, otherGroup, -math.pi / 2)
         end
-        check(targeted.y > ignored.y and targeted.aimed,
+        local dodgeOffset = targeted.y - ignored.y
+        check(dodgeOffset > 0 and targeted.aimed,
             "An aimed-at ship must keep steering away briefly after the turret turns away")
         for _ = 1, 24 do
             step(ship, group, -math.pi / 2)
             step(otherShip, otherGroup, -math.pi / 2)
         end
-        check(targeted.y > ignored.y + 10, "The dodge must carry lateral momentum after the turn ends")
+        check(not targeted.aimed and targeted.y - ignored.y > dodgeOffset,
+            "The dodge must carry lateral momentum after the turn ends")
     end
 
 end

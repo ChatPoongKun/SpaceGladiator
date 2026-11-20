@@ -161,14 +161,14 @@ local function aimEvasion(enemy, ship, aimAngle, step)
     return 0, 0
 end
 
-local function pilot(enemy, dt, targetVx, targetVy, angle)
+local function pilot(enemy, dt, targetVx, targetVy, angle, flyThrough)
     local targetSpeed = math.sqrt(targetVx * targetVx + targetVy * targetVy)
     local speed = enemy:speed()
-    local brake = speed > targetSpeed + 6
+    local brake = not flyThrough and speed > targetSpeed + 6
     local thrust = false
     if targetSpeed > 9 then
         local forwardSpeed = (enemy.vx * targetVx + enemy.vy * targetVy) / targetSpeed
-        brake = brake or (speed > 18 and forwardSpeed < speed * 0.35)
+        brake = brake or (not flyThrough and speed > 18 and forwardSpeed < speed * 0.35)
         if brake then
             angle = math.atan2(targetVx, -targetVy)
         else
@@ -185,11 +185,12 @@ local function pilot(enemy, dt, targetVx, targetVy, angle)
     enemy.y = enemy.y + (oldVy + enemy.vy) * 0.5 * dt
 end
 
-local function flyTo(enemy, dt, x, y, speed, steerX, steerY)
+local function flyTo(enemy, dt, x, y, speed, steerX, steerY, flyThrough)
     local dx, dy = x - enemy.x, y - enemy.y
-    local vx, vy = limitVector(dx * 2.6, dy * 2.6, speed)
+    local response = flyThrough and speed / math.max(math.sqrt(dx * dx + dy * dy), 1) or 2.6
+    local vx, vy = limitVector(dx * response, dy * response, speed)
     vx, vy = limitVector(vx + steerX, vy + steerY, speed)
-    pilot(enemy, dt, vx, vy, math.atan2(dx, -dy))
+    pilot(enemy, dt, vx, vy, math.atan2(dx, -dy), flyThrough)
 end
 
 local function addWaypoint(group, enemy, ship)
@@ -238,7 +239,7 @@ local function patrol(group, enemy, dt, ship, aimAngle, definition)
 
     local evadeX, evadeY = aimEvasion(enemy, ship, aimAngle, dt)
     flyTo(enemy, dt, enemy.goal.x, enemy.goal.y, enemy.maxSpeed * 0.84,
-        enemy.sepX + evadeX * definition.evadeSpeed, enemy.sepY + evadeY * definition.evadeSpeed)
+        enemy.sepX + evadeX * definition.evadeSpeed, enemy.sepY + evadeY * definition.evadeSpeed, true)
 end
 
 local function departureGoal(enemy, view)
