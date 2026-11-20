@@ -3,8 +3,7 @@ local Arena = require("arena")
 local Enemies = {}
 Enemies.__index = Enemies
 local tau = 2 * math.pi
-local patrolRadiusMin, patrolRadiusMax = 195, 290
-local arrivalRadius, minimumLeg, formationMargin = 48, 185, 155
+local exitMargin = 155
 local waypointBrakeTime = 0.18
 
 Enemies.spawnRate = 1 / 4
@@ -15,15 +14,18 @@ Enemies.types = {
         name = "WEDGE", vertices = {-2, -15, 2, -15, 10, 10, -10, 10},
         radius = 16, evadeSpeed = 94, turnSpeed = 3.2,
         thrust = 285, brake = 4.2, maxSpeed = 225,
+        patrolMin = 55, patrolMax = 110, arrivalRadius = 32,
     },
     {
         name = "EQUILATERAL", vertices = {0, -24, -12 * math.sqrt(3), 12, 12 * math.sqrt(3), 12},
         radius = 24, evadeSpeed = 78,
         turnSpeed = 2.8, thrust = 255, brake = 2.6, maxSpeed = 190,
+        patrolMin = 120, patrolMax = 185, arrivalRadius = 40,
     },
     {
         name = "OBTUSE", vertices = {0, -12, -26, 10, 26, 10},
         radius = 28, evadeSpeed = 62, turnSpeed = 1.4, thrust = 218, brake = 1.25, maxSpeed = 155,
+        patrolMin = 195, patrolMax = 290, arrivalRadius = 48,
     },
 }
 
@@ -98,11 +100,8 @@ function Enemies:spawn(ship, kindIndex, options)
     enemy.vx, enemy.vy = limitVector(options and options.vx or 0, options and options.vy or 0, enemy.maxSpeed)
     enemy.prevX, enemy.prevY = enemy.x, enemy.y
     enemy.angle = (options and options.angle or math.atan2(ship.x - enemy.x, enemy.y - ship.y)) % tau
-    enemy.route = options and options.route or {waypoints = {}}
-    enemy.waypointIndex = 1
+    enemy.wave = options and options.wave or {}
     enemy.waypointBrakeRemaining = 0
-    enemy.right = options and options.right or 0
-    enemy.forward = options and options.forward or 0
     enemy.slot = options and options.slot or (self.rng() < 0.5 and -1 or 1)
     enemy.evadeTime, enemy.evadeCooldown = 0, 0
     enemy.sepX, enemy.sepY = 0, 0
@@ -127,18 +126,17 @@ function Enemies:spawnSquad(ship)
     local fx, fy = math.sin(angle), -math.cos(angle)
     local vx, vy = fx * entrySpeed, fy * entrySpeed
     local entryTime = (entryMargin + wingTrail + self.types[3].radius) / entrySpeed
-    local route = {waypoints = {}}
+    local wave = {}
     local leader = self:spawn(ship, 3, {
-        x = lx, y = ly, vx = vx, vy = vy, angle = angle, entryTime = entryTime, route = route,
+        x = lx, y = ly, vx = vx, vy = vy, angle = angle, entryTime = entryTime, wave = wave,
     })
-    route.leader = leader
+    wave.leader = leader
     local squad = {leader}
 
     for _, member in ipairs(formation) do
         local x, y = formationPosition(lx, ly, angle, member.right, member.forward)
         local shipMember = self:spawn(ship, member.kind, {
-            x = x, y = y, vx = vx, vy = vy, angle = angle, entryTime = entryTime, route = route,
-            slot = member.slot, right = member.right, forward = member.forward,
+            x = x, y = y, vx = vx, vy = vy, angle = angle, entryTime = entryTime, wave = wave, slot = member.slot,
         })
         squad[#squad + 1] = shipMember
     end
@@ -197,48 +195,44 @@ local function flyTo(enemy, dt, x, y, speed, steerX, steerY, brakeOverride)
     pilot(enemy, dt, vx, vy, math.atan2(dx, -dy), brakeOverride)
 end
 
-local function addWaypoint(group, enemy, ship)
-    local route, view = enemy.route, group.view
-    local previous = route.waypoints[#route.waypoints]
-    local reference = previous or route.leader or enemy
+local function chooseWaypoint(group, enemy, ship, definition)
+    local view = group.view
+    local margin = enemy.radius + 2
+    local left, right = math.max(0, view.left) + margin, math.min(Arena.width, view.right) - margin
+    local top, bottom = math.max(0, view.top) + margin, math.min(Arena.height, view.bottom) - margin
+    local reference = enemy.goal or enemy
     local angle = group.rng() * tau
-    if not previous then
-        -- Bias the first approach toward the side the formation entered from.
+    if not enemy.goal then
+        -- Favor the side this aircraft is approaching from on its first leg.
         angle = math.atan2(reference.y - ship.y, reference.x - ship.x) + (angle - math.pi) * 0.45
     end
-    local radius = patrolRadiusMin + group.rng() * (patrolRadiusMax - patrolRadiusMin)
+    local radius = definition.patrolMin + group.rng() * (definition.patrolMax - definition.patrolMin)
+    local minimumLeg = enemy.goal and math.max(definition.arrivalRadius * 2, radius * 0.65)
+        or definition.arrivalRadius + 1
     local x, y, bestDistance
     for attempt = 0, 11 do
         local bearing = angle + attempt * tau / 12
         local px, py = ship.x + math.cos(bearing) * radius, ship.y + math.sin(bearing) * radius
-        if px >= view.left + formationMargin and px <= view.right - formationMargin
-            and py >= view.top + formationMargin and py <= view.bottom - formationMargin then
+        if px >= left and px <= right and py >= top and py <= bottom then
             local distance = (px - reference.x) ^ 2 + (py - reference.y) ^ 2
             if not bestDistance or distance > bestDistance then x, y, bestDistance = px, py, distance end
-            if not previous or distance >= minimumLeg ^ 2 then break end
+            if distance >= minimumLeg ^ 2 then break end
         end
     end
     if not bestDistance then
-        local inward = math.atan2(Arena.height / 2 - ship.y, Arena.width / 2 - ship.x)
-        x, y = ship.x + math.cos(inward) * radius, ship.y + math.sin(inward) * radius
+        local cornerX = ship.x < (left + right) / 2 and right or left
+        local cornerY = ship.y < (top + bottom) / 2 and bottom or top
+        local dx, dy = limitVector(cornerX - ship.x, cornerY - ship.y, radius)
+        x, y = clamp(ship.x + dx, left, right), clamp(ship.y + dy, top, bottom)
     end
-    local point = {x = x, y = y, angle = math.atan2(x - reference.x, reference.y - y)}
-    route.waypoints[#route.waypoints + 1] = point
-    return point
-end
-
-local function assignWaypoint(group, enemy, ship)
-    -- Each aircraft has its own cursor through the OBTUSE centerline.
-    local point = enemy.route.waypoints[enemy.waypointIndex] or addWaypoint(group, enemy, ship)
-    local x, y = formationPosition(point.x, point.y, point.angle, enemy.right, enemy.forward)
-    enemy.goal = {x = x, y = y}
+    return {x = x, y = y}
 end
 
 local function patrol(group, enemy, dt, ship, aimAngle, definition)
-    if not enemy.goal then assignWaypoint(group, enemy, ship) end
-    if (enemy.goal.x - enemy.x) ^ 2 + (enemy.goal.y - enemy.y) ^ 2 <= arrivalRadius ^ 2 then
-        enemy.waypointIndex = enemy.waypointIndex + 1
-        assignWaypoint(group, enemy, ship)
+    if not enemy.goal then
+        enemy.goal = chooseWaypoint(group, enemy, ship, definition)
+    elseif (enemy.goal.x - enemy.x) ^ 2 + (enemy.goal.y - enemy.y) ^ 2 <= definition.arrivalRadius ^ 2 then
+        enemy.goal = chooseWaypoint(group, enemy, ship, definition)
         enemy.waypointBrakeRemaining = waypointBrakeTime
     end
 
@@ -258,9 +252,9 @@ local function patrol(group, enemy, dt, ship, aimAngle, definition)
 end
 
 local function departureGoal(enemy, view)
-    local route = enemy.route
-    if not route.exit then
-        local leader = route.leader
+    local wave = enemy.wave
+    if not wave.exit then
+        local leader = wave.leader
         local reference = leader and not leader.dead and leader or enemy
         local distances = {reference.x - view.left, view.right - reference.x,
             reference.y - view.top, view.bottom - reference.y}
@@ -270,7 +264,7 @@ local function departureGoal(enemy, view)
             local cost = distances[edge] + turn * reference.maxSpeed / reference.turnSpeed
             if cost < bestCost then bestCost, bestEdge = cost, edge end
         end
-        route.exit = {
+        wave.exit = {
             edge = bestEdge,
             x = clamp(reference.x, view.left, view.right),
             y = clamp(reference.y, view.top, view.bottom),
@@ -278,11 +272,11 @@ local function departureGoal(enemy, view)
     end
 
     -- If the viewport expands, extend the same exit so all ships can still clear it.
-    local exit = route.exit
-    if exit.edge == 1 then exit.x = math.min(exit.x, view.left - formationMargin)
-    elseif exit.edge == 2 then exit.x = math.max(exit.x, view.right + formationMargin)
-    elseif exit.edge == 3 then exit.y = math.min(exit.y, view.top - formationMargin)
-    else exit.y = math.max(exit.y, view.bottom + formationMargin) end
+    local exit = wave.exit
+    if exit.edge == 1 then exit.x = math.min(exit.x, view.left - exitMargin)
+    elseif exit.edge == 2 then exit.x = math.max(exit.x, view.right + exitMargin)
+    elseif exit.edge == 3 then exit.y = math.min(exit.y, view.top - exitMargin)
+    else exit.y = math.max(exit.y, view.bottom + exitMargin) end
     return exit
 end
 
@@ -325,7 +319,7 @@ local function move(group, enemy, dt, ship, aimAngle)
         end
         dt = dt - step
     end
-    return enemy.phase == "departing" and clearedExit(enemy, view, enemy.route.exit.edge)
+    return enemy.phase == "departing" and clearedExit(enemy, view, enemy.wave.exit.edge)
 end
 
 local function advance(group, first, dt, ship, aimAngle)

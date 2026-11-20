@@ -18,23 +18,37 @@ return function(Ship, Enemies, Camera, check)
         return ship, group
     end
 
+    local function isPatrolGoal(enemy, ship, view)
+        local x, y = enemy.goal.x, enemy.goal.y
+        local definition = Enemies.types[enemy.kind]
+        local distance = length(x - ship.x, y - ship.y)
+        local margin = enemy.radius + 2
+        return distance >= definition.patrolMin - 1e-6 and distance <= definition.patrolMax + 1e-6
+            and x >= math.max(0, view.left) + margin and x <= math.min(width, view.right) - margin
+            and y >= math.max(0, view.top) + margin and y <= math.min(height, view.bottom) - margin
+    end
+
     do
         local speedRatios = {}
         for kind = 1, #Enemies.types do
             local ship, group = fixture()
             local enemy = group:spawn(ship, kind, {x = 400, y = 270, vx = 140, angle = math.pi / 2})
-            enemy.route.waypoints = {{x = 450, y = 270, angle = math.pi / 2}, {x = 450, y = 80, angle = 0}}
+            local firstGoal = {x = enemy.x + Enemies.types[kind].arrivalRadius + 2, y = enemy.y}
+            enemy.goal = firstGoal
+            ship.x, ship.y = enemy.x, enemy.y
+            group.rng = function() return 0.75 end
             group:update(dt, ship)
-            check(enemy.waypointIndex == 1 and not enemy.braking and enemy:speed() >= 140,
+            check(enemy.goal == firstGoal and not enemy.braking and enemy:speed() >= 140,
                 "Approaching a waypoint must not brake the aircraft")
             local incomingSpeed, startX = enemy:speed(), enemy.x
             group:update(dt, ship)
+            local nextGoal = enemy.goal
             speedRatios[kind] = enemy:speed() / incomingSpeed
-            check(enemy.waypointIndex == 2 and enemy.angle < math.pi / 2 and enemy.x > startX and enemy.braking
+            check(nextGoal ~= firstGoal and enemy.angle < math.pi / 2 and enemy.x > startX and enemy.braking
                 and math.abs(speedRatios[kind] - math.exp(-Enemies.types[kind].brake * dt)) < 1e-6,
                 "Arriving must apply hull-specific braking while the aircraft slides and turns")
             group:update(0.2, ship)
-            check(enemy.waypointIndex == 2 and not enemy.braking and enemy:speed() > 0,
+            check(enemy.goal == nextGoal and not enemy.braking and enemy:speed() > 0,
                 "The short waypoint brake must release and leave the aircraft moving")
         end
         check(speedRatios[1] < speedRatios[2] and speedRatios[2] < speedRatios[3] and speedRatios[3] < 1,
@@ -71,41 +85,51 @@ return function(Ship, Enemies, Camera, check)
         local squad = group:spawnSquad(ship)
         local leader, wing = squad[1], squad[4]
         group:update(leader.phaseRemaining + dt, ship)
-        local route = leader.route
-        local first = route.waypoints[1]
-        local function isInPatrolRange(point)
-            local distance = length(point.x - ship.x, point.y - ship.y)
-            return distance >= 195 - 1e-6 and distance <= 290 + 1e-6
+        for _, enemy in ipairs(squad) do
+            assert(isPatrolGoal(enemy, ship, group.view), "Each model must choose a goal in its own patrol range")
         end
-        local function occupiesSlot(enemy, point)
-            local x, y = enemy.goal.x - point.x, enemy.goal.y - point.y
-            local fx, fy = math.sin(point.angle), -math.cos(point.angle)
-            return math.abs(x * fx + y * fy - enemy.forward) < 1e-6
-                and math.abs(y * fx - x * fy - enemy.right) < 1e-6
-        end
-        check(isInPatrolRange(first) and leader.goal.x == first.x and leader.goal.y == first.y
-            and occupiesSlot(wing, first), "The random OBTUSE waypoint must define every formation slot")
+        check(wing.goal.y ~= squad[5].goal.y and length(wing.goal.x - ship.x, wing.goal.y - ship.y)
+            < length(leader.goal.x - ship.x, leader.goal.y - ship.y),
+            "Once deployed, WEDGE aircraft must choose their own goals closer to the player than OBTUSE")
 
         ship.y = ship.y + 80
-        local oldGoal = wing.goal
+        local oldGoal, leaderGoal = wing.goal, leader.goal
         group:update(0.4, ship)
-        check(wing.goal == oldGoal and leader.waypointIndex == 1, "Unreached waypoints must stay fixed as the player moves")
+        check(wing.goal == oldGoal and leader.goal == leaderGoal, "Unreached waypoints must stay fixed as the player moves")
 
         wing.x, wing.y = wing.goal.x, wing.goal.y
         group:update(dt, ship)
-        local second = route.waypoints[2]
-        check(wing.waypointIndex == 2 and leader.waypointIndex == 1 and isInPatrolRange(second)
-            and occupiesSlot(wing, second), "A wing reaching its slot must advance while the OBTUSE is still approaching")
-
-        leader.x, leader.y = leader.goal.x, leader.goal.y
-        group:update(dt, ship)
-        check(leader.waypointIndex == 2 and leader.goal.x == second.x and leader.goal.y == second.y,
-            "The OBTUSE must follow the same waypoint after reaching its own slot")
+        check(wing.goal ~= oldGoal and leader.goal == leaderGoal and isPatrolGoal(wing, ship, group.view),
+            "A WEDGE reaching its goal must choose a new one independently of the OBTUSE")
         group:destroy(1)
+        oldGoal = wing.goal
         wing.x, wing.y = wing.goal.x, wing.goal.y
         group:update(dt, ship)
-        check(wing.waypointIndex == 3 and occupiesSlot(wing, route.waypoints[3]),
-            "Surviving ships must continue the formation route after the OBTUSE is destroyed")
+        check(wing.goal ~= oldGoal and isPatrolGoal(wing, ship, group.view),
+            "Surviving aircraft must continue their own patrol after the OBTUSE is destroyed")
+    end
+
+    do
+        for _, corner in ipairs({{1, 1, -1, -1}, {width - 1, 1, 1, -1},
+            {1, height - 1, -1, 1}, {width - 1, height - 1, 1, 1}}) do
+            local x, y, dx, dy = unpack(corner)
+            for kind = 1, #Enemies.types do
+                local ship, group = fixture()
+                ship.x, ship.y = x, y
+                local camera = Camera.new(x, y)
+                camera:update(0, ship, 800, 600)
+                group.rng = function() return 0.5 end
+                local enemy = group:spawn(ship, kind, {x = x + dx * 300, y = y + dy * 300})
+                group:update(dt, ship, nil, camera, 800, 600)
+                assert(isPatrolGoal(enemy, ship, group.view), "An outward first approach must choose an inward goal")
+                local first = enemy.goal
+                enemy.x, enemy.y = first.x, first.y
+                group:update(dt, ship, nil, camera, 800, 600)
+                assert(enemy.goal ~= first and isPatrolGoal(enemy, ship, group.view),
+                    "Subsequent patrol goals must also fit inside the camera and the hull's patrol range")
+            end
+        end
+        check(true, "All hull types must choose on-screen patrol goals at all four corners")
     end
 
     local function step(ship, group, aim)
@@ -138,11 +162,20 @@ return function(Ship, Enemies, Camera, check)
             and leftWing.y < leftEscort.y and rightWing.y > rightEscort.y,
             "A squad must enter from one edge with an OBTUSE leader, two escorts and two flankers")
 
-        for _ = 1, 10 * 60 do step(ship, group) end
-        for _, enemy in ipairs(squad) do
-            assert(enemy.waypointIndex >= 3, "Every aircraft must keep reaching new waypoints with the player at rest")
+        local previousGoals, visits = {}, {}
+        for _ = 1, 10 * 60 do
+            step(ship, group)
+            for _, enemy in ipairs(squad) do
+                if enemy.goal ~= previousGoals[enemy] then
+                    previousGoals[enemy] = enemy.goal
+                    visits[enemy] = (visits[enemy] or 0) + 1
+                end
+            end
         end
-        check(#leader.route.waypoints >= 3, "The stationary-player patrol must visit several distinct waypoints")
+        for _, enemy in ipairs(squad) do
+            assert(visits[enemy] >= 3, "Every aircraft must keep reaching new waypoints with the player at rest")
+        end
+        check(true, "The stationary-player patrol must visit several distinct waypoints")
     end
 
     do
@@ -167,9 +200,9 @@ return function(Ship, Enemies, Camera, check)
         group:update(dt, ship, nil, camera, w, h)
         check(leader.phase == "departing" and not leader.goal and not leader.dead,
             "A squad must give up the patrol and start a visible departure when time expires")
-        local exit = leader.route.exit
+        local exit = leader.wave.exit
         for _, e in ipairs(squad) do
-            assert(e.phase == "departing" and e.route.exit == exit, "The full squad must share one departure point")
+            assert(e.phase == "departing" and e.wave.exit == exit, "The full squad must share one departure point")
         end
 
         w, h = 800, 600
