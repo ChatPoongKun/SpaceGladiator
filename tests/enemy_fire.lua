@@ -41,10 +41,10 @@ return function(Ship, Enemies, Camera, check)
         check(#group.fire.shots == 1 and #group.fire.bursts == 0 and ship.hull == ship.maxHull,
             "An EQUILATERAL must emit one laser pulse without applying damage before contact")
         group:update(0.35, ship)
-        check(#group.fire.shots == 0 and ship.shield == 0 and ship.armor == 0 and ship.hull == ship.maxHull - 5,
+        check(#group.fire.shots == 0 and ship.shield == 0 and ship.armor == 0 and ship.hull == ship.maxHull - 1,
             "A laser impact must consume the pulse and apply damage through shield, armor, then hull")
         group:update(0.15, ship)
-        check(ship.hull == ship.maxHull - 5, "A laser pulse must only hit the player once")
+        check(ship.hull == ship.maxHull - 1, "A laser pulse must only hit the player once")
     end
 
     do
@@ -80,6 +80,84 @@ return function(Ship, Enemies, Camera, check)
         group.fire:update(0.16, ship)
         check(ship.shield == ship.maxShield - 6,
             "A projectile must be able to hit the visible part of a ship wrapped across the arena seam")
+    end
+
+    do
+        local ship, group, enemy = fixture(1)
+        ship.shield = 1
+        group.fire:shoot(enemy, ship)
+        group.fire:shoot(enemy, ship)
+        local direct, glancing = unpack(group.fire.shots)
+        direct.x = ship.x - ship:hitRadius() - direct.profile.radius - 1
+        glancing.x, glancing.y = ship.x - 14, ship.y + ship.radius + glancing.profile.radius + 1
+        group.fire:update(dt, ship)
+        local impact = group.fire.impacts[1]
+        check(impact and impact.shield and math.abs(ship.x - impact.x - ship.radius * 1.1 - direct.profile.radius) < 1e-6
+            and ship.shield == 0 and ship.armor == 95,
+            "One shield point must intercept a projectile at the outer ring and show a shield impact")
+        check(#group.fire.shots == 1 and group.fire.shots[1] == glancing,
+            "A later shot in the same step must miss if it only crosses the depleted shield radius")
+    end
+
+    do
+        local ship = Ship.new(Arena.width, Arena.height)
+        ship.maxShield, ship.armor = 0, 0
+        check(not ship:hasShield() and ship:hitRadius() == ship.radius,
+            "Zero maximum shield must disable the shield even with a stale charge value")
+        ship:takeDamage(1)
+        check(ship.hull == 2 and not ship:isDestroyed(), "A small hull hit must remove exactly one of three slots")
+        ship:takeDamage(1000)
+        check(ship.hull == 1 and not ship:isDestroyed(), "A large hull hit must also remove exactly one slot")
+        ship.vx, ship.vy = 40, 10
+        ship:takeDamage(1)
+        check(ship:isDestroyed() and ship.hull == 0 and ship:speed() == 0 and ship.destructionAge == 0,
+            "The third hull hit must destroy the craft and stop movement")
+        local x, y, battery = ship.x, ship.y, ship.battery
+        ship:takeDamage(100)
+        ship:update(dt, {turn = 1, thrust = true, boost = true})
+        check(ship.hull == 0 and ship.x == x and ship.y == y and ship.battery == battery and ship.destructionAge == dt,
+            "A destroyed ship must advance its explosion without responding to flight input")
+        ship:drawDestruction()
+    end
+
+    do
+        local Hud = require("hud")
+        local panel = Hud.new()
+        local ship = Ship.new(Arena.width, Arena.height)
+        ship.shield, ship.armor, ship.hull = 1, 68, 2
+        local g = love.graphics
+        local originalArc, originalPrint, originalCircle = g.arc, g.print, g.circle
+        local segments, labels, rings = {}, {}, 0
+        g.arc = function(mode, arcType, x, y, radius, start, finish, ...)
+            local _, _, _, alpha = g.getColor()
+            if math.abs(alpha - 0.15) < 1e-6 then segments[radius] = (segments[radius] or 0) + 1 end
+            return originalArc(mode, arcType, x, y, radius, start, finish, ...)
+        end
+        g.print = function(label, ...)
+            labels[label] = true
+            return originalPrint(label, ...)
+        end
+        g.circle = function(mode, x, y, radius, ...)
+            if mode == "line" and math.abs(radius - ship.radius * 1.1) < 1e-6 then rings = rings + 1 end
+            return originalCircle(mode, x, y, radius, ...)
+        end
+        local ok, message = pcall(function()
+            ship:draw(0)
+            panel:draw(ship, 800, 600, 0)
+        end)
+        local hasSegments = segments[70] == 10 and segments[59] == 10 and segments[48] == 3
+            and labels.SHIELD and labels.ARMOR and labels.HULL and labels["2 / 3"] and rings > 0
+        segments, labels, rings = {}, {}, 0
+        ship.maxShield = 0
+        local noShieldOk, noShieldMessage = pcall(function()
+            ship:draw(0)
+            panel:draw(ship, 800, 600, 0)
+        end)
+        g.arc, g.print, g.circle = originalArc, originalPrint, originalCircle
+        check(ok and hasSegments, "Shield and armor need ten ticks, hull three, and an active shield needs a ring: " .. tostring(message))
+        check(noShieldOk and not labels.SHIELD and labels.ARMOR and labels.HULL and segments[70] == 10
+            and segments[59] == 3 and not segments[48] and rings == 0,
+            "Zero maximum shield must omit the ring and reflow HUD armor and hull: " .. tostring(noShieldMessage))
     end
 
     do

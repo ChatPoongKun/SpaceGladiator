@@ -37,6 +37,7 @@ local function launchLinear(fire, enemy, targetX, targetY, profile, delay)
 end
 
 function EnemyFire:shoot(enemy, ship)
+    if ship:isDestroyed() then return end
     local targetX, targetY = ship.x, ship.y
     if enemy.kind == 1 then
         launchLinear(self, enemy, targetX, targetY, bullet, 0)
@@ -64,7 +65,7 @@ local function wrappedDelta(start, finish, extent)
     return (finish - start + extent / 2) % extent - extent / 2
 end
 
-local function playerHit(shot, motion, x, y, elapsed, step)
+local function playerHit(shot, motion, x, y, elapsed, step, radius)
     local dx, dy = shot.x - x, shot.y - y
     local near, far = Collision.rectangleInterval(x, y, dx, dy, Arena.width, Arena.height)
     local entry, leave = math.max(0, near), math.min(1, far)
@@ -78,8 +79,8 @@ local function playerHit(shot, motion, x, y, elapsed, step)
     local vx, vy = (dx - motion.vx * step) * span, (dy - motion.vy * step) * span
     rx = rx - math.floor((rx + vx * 0.5) / Arena.width + 0.5) * Arena.width
     ry = ry - math.floor((ry + vy * 0.5) / Arena.height + 0.5) * Arena.height
-    local t = Collision.circleEntry(rx, ry, vx, vy, motion.radius + shot.profile.radius)
-    if t then return px + dx * span * t, py + dy * span * t end
+    local t = Collision.circleEntry(rx, ry, vx, vy, radius + shot.profile.radius)
+    if t then return px + dx * span * t, py + dy * span * t, start + step * span * t end
 end
 
 local function moveShot(shot, step)
@@ -97,8 +98,60 @@ local function moveShot(shot, step)
     end
 end
 
-local function impact(fire, shot, x, y)
-    fire.impacts[#fire.impacts + 1] = {x = x, y = y, age = 0, profile = shot.profile}
+local function impact(fire, shot, x, y, shield)
+    fire.impacts[#fire.impacts + 1] = {x = x, y = y, age = 0, profile = shot.profile, shield = shield}
+end
+
+local function stepShots(fire, ship, motion, elapsed, finish)
+    local contacts = {}
+    local hitRadius = ship:hitRadius()
+    for _, shot in ipairs(fire.shots) do
+        local start = math.max(elapsed, shot.delay)
+        local step = math.min(finish - start, shot.lifetime - shot.age)
+        if step > 0 then
+            local oldX, oldY = shot.x, shot.y
+            moveShot(shot, step)
+            if not ship:isDestroyed() then
+                local x, y, at = playerHit(shot, motion, oldX, oldY, start, step, hitRadius)
+                if x then
+                    contacts[#contacts + 1] = {shot = shot, x = x, y = y, at = at,
+                        oldX = oldX, oldY = oldY, start = start, step = step}
+                end
+            end
+        end
+    end
+
+    while #contacts > 0 and not ship:isDestroyed() do
+        local first = 1
+        for i = 2, #contacts do
+            if contacts[i].at < contacts[first].at then first = i end
+        end
+        local hit = table.remove(contacts, first)
+        impact(fire, hit.shot, hit.x, hit.y, ship:hasShield())
+        ship:takeDamage(hit.shot.profile.damage)
+        hit.shot.spent = true
+
+        -- A broken shield exposes the smaller hull to the remaining shots in this step.
+        if ship:hitRadius() ~= hitRadius then
+            hitRadius = ship:hitRadius()
+            for i = #contacts, 1, -1 do
+                local contact = contacts[i]
+                contact.x, contact.y, contact.at = playerHit(contact.shot, motion, contact.oldX,
+                    contact.oldY, contact.start, contact.step, hitRadius)
+                if not contact.x then table.remove(contacts, i) end
+            end
+        end
+    end
+
+    for i = #fire.shots, 1, -1 do
+        local shot = fire.shots[i]
+        if shot.spent then
+            table.remove(fire.shots, i)
+        elseif shot.age >= shot.lifetime - 1e-9 then
+            if shot.profile == missile then impact(fire, shot, shot.x, shot.y) end
+            table.remove(fire.shots, i)
+        end
+    end
 end
 
 function EnemyFire:update(dt, ship)
@@ -120,30 +173,15 @@ function EnemyFire:update(dt, ship)
     end
 
     local x, y = ship.prevX or ship.x, ship.prevY or ship.y
-    local motion = {x = x, y = y, radius = ship.radius,
+    local motion = {x = x, y = y,
         vx = wrappedDelta(x, ship.x, Arena.width) / dt, vy = wrappedDelta(y, ship.y, Arena.height) / dt}
-    for i = #self.shots, 1, -1 do
-        local shot = self.shots[i]
-        local elapsed = shot.delay
-        shot.delay = 0
-        while elapsed < dt and shot.age < shot.lifetime do
-            local step = math.min(1 / 60, dt - elapsed, shot.lifetime - shot.age)
-            local oldX, oldY = shot.x, shot.y
-            moveShot(shot, step)
-            local hitX, hitY = playerHit(shot, motion, oldX, oldY, elapsed, step)
-            if hitX then
-                ship:takeDamage(shot.profile.damage)
-                impact(self, shot, hitX, hitY)
-                table.remove(self.shots, i)
-                break
-            elseif shot.age >= shot.lifetime - 1e-9 then
-                if shot.profile == missile then impact(self, shot, shot.x, shot.y) end
-                table.remove(self.shots, i)
-                break
-            end
-            elapsed = elapsed + step
-        end
+    local elapsed = 0
+    while elapsed < dt and #self.shots > 0 do
+        local finish = math.min(dt, elapsed + 1 / 60)
+        stepShots(self, ship, motion, elapsed, finish)
+        elapsed = finish
     end
+    for _, shot in ipairs(self.shots) do shot.delay = 0 end
 end
 
 function EnemyFire:draw()
@@ -169,6 +207,7 @@ function EnemyFire:draw()
     for _, effect in ipairs(self.impacts) do
         local progress = effect.age / impactLifetime
         local r, green, b = unpack(effect.profile.color)
+        if effect.shield then r, green, b = 0.30, 0.70, 1 end
         g.setLineWidth(1.5)
         g.setColor(r, green, b, 0.8 * (1 - progress))
         g.circle("line", effect.x, effect.y, 4 + progress * effect.profile.radius * 4)

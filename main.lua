@@ -64,7 +64,7 @@ function love.load(args)
             love.update(1 / 60)
             if frame == 120 then assert(ship.battery == ship.maxBattery - ship.boostCost) end
         end
-        if testDamaged then ship.shield, ship.armor, ship.hull, ship.battery = 27, 68, 84, 42 end
+        if testDamaged then ship.shield, ship.armor, ship.hull, ship.battery = 27, 68, 2, 42 end
     end
 end
 
@@ -83,6 +83,7 @@ function love.update(dt)
         input.turn, input.thrust, input.brake = 0.55, true, false
         mouseX, mouseY, firing = width * 0.60, height * 0.24, true
     end
+    if ship:isDestroyed() then input.turn, input.thrust, input.brake, input.boost = 0, false, false, false end
     ship:update(dt, input)
     input.boost = false
     camera:update(dt, ship, width, height)
@@ -92,6 +93,7 @@ function love.update(dt)
         ship.accelerating and 1 or 0, width, height, ship.boostLevel)
     local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
     enemies:update(dt, ship, turret.angle, camera, width, height)
+    firing = firing and not ship:isDestroyed()
     turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height)
 end
 
@@ -146,6 +148,7 @@ local function drawHud()
     local mode = ship.braking and "BRAKING" or ship.accelerating and "THRUST" or "COAST"
     if ship.boostLevel > 0 then mode = "BOOST" end
     if paused or not focused then mode = "PAUSED" end
+    if ship:isDestroyed() then mode = "DESTROYED" end
     local mx = width - 180
     g.setColor(0.38, 0.91, 0.78, 0.85)
     g.circle("fill", mx, y + 14, 3)
@@ -154,16 +157,18 @@ local function drawHud()
     label("R  RESET     P  PAUSE", mx - 3, height - 63)
     label("ESC  EXIT", mx - 3, height - 41)
 
-    if paused or (not focused and not testMode) then
+    local showDestroyed = ship:isDestroyed() and (ship.destructionAge or 0) >= Ship.destructionDuration
+    if showDestroyed or paused or (not focused and not testMode) then
         g.setColor(0.018, 0.028, 0.055, 0.7)
         g.rectangle("fill", 0, height / 2 - 48, width, 96)
         g.setFont(fonts.title)
         g.setColor(0.83, 0.93, 0.97, 1)
-        g.printf("PAUSED", 0, height / 2 - 29, width, "center")
+        g.printf(showDestroyed and "SHIP DESTROYED" or "PAUSED", 0, height / 2 - 29, width, "center")
         g.setFont(fonts.body)
         g.setColor(0.53, 0.65, 0.75, 1)
-        g.printf(focused and "Press P to resume flight" or "Return to the window to resume", 0,
-            height / 2 + 12, width, "center")
+        local hint = focused and "Press P to resume flight" or "Return to the window to resume"
+        if showDestroyed then hint = "Press R to restart" end
+        g.printf(hint, 0, height / 2 + 12, width, "center")
     end
 end
 
@@ -177,17 +182,22 @@ local function drawPlayer(originX, originY)
     local g = love.graphics
     g.push("all")
     g.intersectScissor(originX, originY, Arena.width * camera.zoom, Arena.height * camera.zoom)
-    ship:drawBoostPulse()
+    local destroyed = ship:isDestroyed()
+    if not destroyed then ship:drawBoostPulse() end
     -- Include the longer boost plume when deciding which copies can reach the arena.
-    local reach = 75 + 70 * ship.boostLevel
+    local reach = destroyed and 90 or 75 + 70 * ship.boostLevel
     local xOffsets = wrapOffsets(ship.x, Arena.width, reach)
     local yOffsets = wrapOffsets(ship.y, Arena.height, reach)
     for _, dx in ipairs(xOffsets) do
         for _, dy in ipairs(yOffsets) do
             g.push()
             g.translate(dx, dy)
-            ship:draw(time)
-            turret:drawMount(ship, time)
+            if destroyed then
+                ship:drawDestruction()
+            else
+                ship:draw(time)
+                turret:drawMount(ship, time)
+            end
             g.pop()
         end
     end
@@ -237,7 +247,8 @@ function love.keypressed(key, _, isRepeat)
     if key == "escape" then love.event.quit()
     elseif key == "r" then reset()
     elseif key == "1" or key == "2" or key == "3" then turret.weapon = tonumber(key)
-    elseif key == "space" and not isRepeat and not paused and (focused or testMode) then input.boost = true
+    elseif key == "space" and not isRepeat and not paused and (focused or testMode) and not ship:isDestroyed() then
+        input.boost = true
     elseif key == "p" then
         paused = not paused
         input.boost = false

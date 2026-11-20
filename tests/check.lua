@@ -445,7 +445,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     local statusShip = Ship.new(1280, 800)
     check(statusShip.shield == 100 and statusShip.maxShield == 100
         and statusShip.armor == 100 and statusShip.maxArmor == 100
-        and statusShip.hull == 100 and statusShip.maxHull == 100
+        and statusShip.hull == 3 and statusShip.maxHull == 3
         and statusShip.battery == 100 and statusShip.maxBattery == 100,
         "New ships must expose full shield, armor, hull, and battery values for the HUD")
     for _, value in ipairs({ 100, 50, 0, -10, 150 }) do

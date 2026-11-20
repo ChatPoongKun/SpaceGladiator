@@ -7,6 +7,8 @@ Ship.brake = 2.8
 Ship.maxSpeed = 180
 Ship.turnSpeed = 2.8
 Ship.radius = 23
+Ship.shieldMargin = 1.1
+Ship.destructionDuration = 0.7
 Ship.driftThreshold = 90
 Ship.driftDeceleration = 195
 Ship.boostSpeed = 420
@@ -26,7 +28,7 @@ function Ship.new(width, height)
         boostX = 0, boostY = -1,
         shield = 100, maxShield = 100,
         armor = 100, maxArmor = 100,
-        hull = 100, maxHull = 100,
+        hull = 3, maxHull = 3,
         battery = 100, maxBattery = 100,
     }, Ship)
 end
@@ -35,13 +37,36 @@ function Ship:speed()
     return math.sqrt(self.vx * self.vx + self.vy * self.vy)
 end
 
+function Ship:hasShield()
+    return self.maxShield > 0 and self.shield > 0
+end
+
+function Ship:hitRadius()
+    return self:hasShield() and self.radius * self.shieldMargin or self.radius
+end
+
+function Ship:isDestroyed()
+    return self.hull <= 0
+end
+
 function Ship:takeDamage(amount)
-    local absorbed = math.min(self.shield, amount)
-    self.shield = self.shield - absorbed
-    amount = amount - absorbed
-    absorbed = math.min(self.armor, amount)
+    if amount <= 0 or self:isDestroyed() then return end
+    if self:hasShield() then
+        local absorbed = math.min(self.shield, amount)
+        self.shield = self.shield - absorbed
+        amount = amount - absorbed
+    end
+    local absorbed = math.min(self.armor, amount)
     self.armor = self.armor - absorbed
-    self.hull = math.max(0, self.hull - (amount - absorbed))
+    if amount <= absorbed then return end
+
+    self.hull = math.max(0, self.hull - 1)
+    if self:isDestroyed() then
+        self.destructionAge = 0
+        self.vx, self.vy, self.wrapVx, self.wrapVy = 0, 0, 0, 0
+        self.accelerating, self.braking = false, false
+        self.boostRemaining, self.boostLevel = 0, 0
+    end
 end
 
 local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin, dt)
@@ -93,6 +118,10 @@ end
 function Ship:update(dt, input)
     if dt <= 0 then return end
     self.prevX, self.prevY = self.x, self.y
+    if self:isDestroyed() then
+        self.destructionAge = (self.destructionAge or 0) + dt
+        return
+    end
     -- Apply thrust, braking and speed limits to the base velocity alone.
     self.vx = self.vx - self.wrapVx
     self.vy = self.vy - self.wrapVy
@@ -114,7 +143,7 @@ function Ship:update(dt, input)
     local cap = self.maxSpeed + (self.boostSpeed - self.maxSpeed) * self.boostLevel
     local oldVx, oldVy = self:updateVelocity(dt, input.thrust, input.brake, cap)
 
-    local margin = self.radius + 1
+    local margin = self:hitRadius() + 1
     self.x, self.vx, self.wrapVx = crossEdge(self.x, oldVx, self.vx, self.wrapVx, Arena.width, margin, dt)
     self.y, self.vy, self.wrapVy = crossEdge(self.y, oldVy, self.vy, self.wrapVy, Arena.height, margin, dt)
 end
@@ -134,6 +163,17 @@ function Ship:draw(time)
     local g = love.graphics
     local speed = self:speed()
     local boost = self.boostLevel
+    if self:hasShield() then
+        local radius = self:hitRadius()
+        g.setColor(0.12, 0.36, 0.95, 0.14)
+        g.circle("fill", self.x, self.y, radius)
+        g.setLineWidth(4)
+        g.setColor(0.17, 0.44, 1, 0.21)
+        g.circle("line", self.x, self.y, radius)
+        g.setLineWidth(1.3)
+        g.setColor(0.40, 0.76, 1, 0.90)
+        g.circle("line", self.x, self.y, radius)
+    end
     if speed > 4 then
         -- The small marker shows momentum, independently of the ship's nose.
         local dx, dy = self.vx / speed, self.vy / speed
@@ -203,6 +243,28 @@ function Ship:draw(time)
     g.setColor(0.58, 0.93, 1, 0.9)
     g.line(-6, 17, 6, 17)
     g.pop()
+end
+
+function Ship:drawDestruction()
+    local phase = (self.destructionAge or 0) / self.destructionDuration
+    if phase >= 1 then return end
+    local g = love.graphics
+    local fade = 1 - phase
+    local radius = 15 + 62 * phase
+    g.setColor(1, 0.37, 0.14, fade * 0.24)
+    g.circle("fill", self.x, self.y, radius * 0.6)
+    g.setColor(1, 0.91, 0.73, fade * fade)
+    g.circle("fill", self.x, self.y, 20 * fade)
+    g.setColor(1, 0.59, 0.27, fade)
+    g.setLineWidth(1.5 + 2 * fade)
+    g.circle("line", self.x, self.y, radius)
+    for i = 0, 11 do
+        local angle = i * math.pi / 6
+        local dx, dy = math.cos(angle), math.sin(angle)
+        local reach = radius * (i % 2 == 0 and 0.84 or 1.06)
+        g.line(self.x + dx * reach * 0.68, self.y + dy * reach * 0.68,
+            self.x + dx * reach, self.y + dy * reach)
+    end
 end
 
 return Ship

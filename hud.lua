@@ -4,9 +4,9 @@ local pi = math.pi
 local cyan = {0.43, 0.87, 0.95}
 local amber = {1.00, 0.72, 0.35}
 local resources = {
-    {"shield", "maxShield", "SHIELD", cyan, 70},
-    {"armor", "maxArmor", "ARMOR", {0.91, 0.83, 0.64}, 59},
-    {"hull", "maxHull", "HULL", {0.95, 0.54, 0.43}, 48},
+    {"shield", "maxShield", "SHIELD", cyan, 10},
+    {"armor", "maxArmor", "ARMOR", {0.91, 0.83, 0.64}, 10},
+    {"hull", "maxHull", "HULL", {0.95, 0.54, 0.43}, 1},
 }
 
 local function fraction(value, maximum)
@@ -76,17 +76,33 @@ function Hud:draw(ship, width, height, time)
         g.line(x + math.cos(angle) * inner, y + math.sin(angle) * inner,
             x + math.cos(angle) * 79, y + math.sin(angle) * 79)
     end
-    for i, resource in ipairs(resources) do
-        local value = fraction(ship[resource[1]], ship[resource[2]])
-        local color, row = resource[4], y - 54 + (i - 1) * 38
-        arc(g, x, y, resource[5], pi * 5 / 6, pi * 4 / 3, value, color, 5)
+    local first = ship.maxShield > 0 and 1 or 2
+    local rowStart, rowGap = -54, 38
+    if first == 2 then rowStart, rowGap = -36, 48 end
+    for i = first, #resources do
+        local resource = resources[i]
+        local maximum, unit = ship[resource[2]], resource[5]
+        local value = math.max(0, math.min(maximum, ship[resource[1]]))
+        local color, row = resource[4], y + rowStart + (i - first) * rowGap
+        local segments = math.ceil(maximum / unit)
+        if segments > 0 then
+            local sweep = (pi * 4 / 3) / segments
+            local gap = math.min(0.08, sweep * 0.18)
+            local radius = 70 - (i - first) * 11
+            for segment = 0, segments - 1 do
+                local start = pi * 5 / 6 + segment * sweep + gap / 2
+                local used = segment * unit
+                local capacity = math.min(unit, maximum - used)
+                arc(g, x, y, radius, start, sweep - gap, fraction(value - used, capacity), color, 5)
+            end
+        end
         g.setColor(color[1], color[2], color[3], 1)
         g.rectangle("fill", x - 176, row + 4, 2, 7)
         g.setFont(self.label)
         g.print(resource[3], x - 168, row)
         g.setFont(self.value)
         g.setColor(0.89, 0.95, 0.98, 1)
-        g.print(percent(value), x - 168, row + 12)
+        g.print(string.format("%g / %g", value, maximum), x - 168, row + 12)
     end
 
     -- World velocity is read directly; camera zoom never changes the readout.
@@ -118,6 +134,7 @@ function Hud:draw(ship, width, height, time)
     g.setColor(0.64, 0.73, 0.78, 1)
     local batteryStatus = ship.boostLevel > 0 and "DISCHARGING"
         or ship.battery >= ship.boostCost and "BOOST READY" or "RECHARGING"
+    if ship:isDestroyed() then batteryStatus = "OFFLINE" end
     g.printf(batteryStatus, x + 88, y - 35, 96, "center")
     for i = 0, 23 do
         local start = pi * 3 / 4 + i * pi / 16
