@@ -270,29 +270,33 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     turret = Turret.new(math.pi / 2)
     missile = turret:fire(owner)
     turret:update(0.1, owner, owner.x + 1000, owner.y, false)
-    local function captureTail()
-        local originalLine, tail = love.graphics.line, nil
+    local function captureProjectileLines()
+        local originalLine = love.graphics.line
+        local tail, head
         love.graphics.line = function(x1, y1, x2, y2)
             local r, g, b = love.graphics.getColor()
             if near(r, 1) and near(g, 0.42) and near(b, 0.12) then tail = { x1, y1, x2, y2 } end
+            if near(r, 1) and near(g, 0.87) and near(b, 0.46) then head = { x1, y1, x2, y2 } end
             return originalLine(x1, y1, x2, y2)
         end
         local ok, message = pcall(function() turret:drawEffects() end)
         love.graphics.line = originalLine
         check(ok, "Missile tail drawing must stay valid: " .. tostring(message))
-        return tail
+        return tail, head
     end
     owner.x, owner.y = missile.x + 60, missile.y + 80
-    local tail = captureTail()
+    local tail, head = captureProjectileLines()
     check(tail and near(tail[1], missile.x) and near(tail[2], missile.y)
-        and near(tail[3] - missile.x, 14.4) and near(tail[4] - missile.y, 19.2),
-        "Missile tail must point toward its launching ship's current position, independent of flight direction")
+        and near(tail[3] - missile.x, 14.4) and near(tail[4] - missile.y, 19.2)
+        and head and near(head[3], missile.x) and near(head[4], missile.y)
+        and near(head[3] - head[1], -3.6) and near(head[4] - head[2], -4.8),
+        "A projectile's head and tail must point in opposite directions along the line to its launching ship")
     owner.x, owner.y = missile.x + 3, missile.y + 4
-    tail = captureTail()
+    tail = captureProjectileLines()
     check(tail and near(tail[3], owner.x) and near(tail[4], owner.y),
         "A missile tail must not extend beyond a nearby launching ship")
     owner.x, owner.y = missile.x, missile.y
-    tail = captureTail()
+    tail = captureProjectileLines()
     check(tail == nil, "Coincident missile and launcher positions must not divide by zero")
 
     ship = Ship.new(width, height)
@@ -397,27 +401,53 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     ship, turret, hits = Ship.new(0, 0), Turret.new(0), Enemies.new()
     local far, outside = target(200, 0), target(400, 110)
     hits.items = { far, target(100, 0), target(400, 25), target(400, -80), outside }
+    local combatView = Camera.new(ship.x, ship.y)
     turret.weapon = 2
-    turret:update(0.05, ship, 400, 0, true, hits)
+    turret:update(0.05, ship, 400, 0, true, hits, combatView, 800, 600)
     local rocket = turret.missiles[1]
     local ejectedSideways = math.abs(rocket.y - rocket.startY) > math.abs(rocket.x - rocket.startX)
     local launchSpeed = rocket.speed
-    turret:update(0.12, ship, 400, 0, true, hits)
+    turret:update(0.12, ship, 400, 0, true, hits, combatView, 800, 600)
     check(ejectedSideways and rocket.vx > math.abs(rocket.vy) and rocket.speed > launchSpeed,
         "A missile must eject sideways, then turn and accelerate toward its target")
     turret.weapon = 3
-    local laserView = Camera.new(ship.x, ship.y)
-    turret:update(0.02, ship, 50, 0, true, hits, laserView, 800, 600)
+    turret:update(0.02, ship, 50, 0, true, hits, combatView, 800, 600)
     local impact = turret.explosions[1]
     check(hits.kills == 1 and hits.items[1] == far and turret.beam and near(turret.beam.hitX, 88)
         and impact and impact.x == turret.beam.hitX and impact.y == turret.beam.hitY,
         "The laser must stop at the first hull beyond the cursor and show an effect at the hit")
-    turret:drawEffects(laserView, 800, 600)
+    turret:drawEffects(combatView, 800, 600)
     turret.weapon = 1
-    turret:update(0.5, ship, -400, 0, false, hits)
+    turret:update(0.5, ship, -400, 0, false, hits, combatView, 800, 600)
     check(hits.kills == 3 and #hits.items == 2 and hits.items[1] == far and hits.items[2] == outside
         and #turret.explosions == 1 and near(turret.explosions[1].x, 400),
         "After switching, the missile must explode at its original target and hit each hull in range")
+
+    do
+        local movingShip = Ship.new(0, 0)
+        movingShip.vx, movingShip.vy = 420, -560
+        local stationary, moving = Turret.new(0), Turret.new(0)
+        stationary.weapon, moving.weapon = 2, 2
+        local view = Camera.new(0, 0)
+        local cursorX, cursorY = 650, 330
+        local aimX, aimY = view:screenToWorld(cursorX, cursorY, 800, 600)
+        stationary:update(0.1, ship, aimX, aimY, true, nil, combatView, 800, 600)
+        moving:update(0, movingShip, aimX, aimY, true, nil, view, 800, 600)
+
+        movingShip.x, movingShip.y = movingShip.vx * 0.1, movingShip.vy * 0.1
+        view.x, view.y = movingShip.x, movingShip.y
+        moving:update(0.1, movingShip, -400, 0, false, nil, view, 800, 600)
+        local stillRocket, movingRocket = stationary.missiles[1], moving.missiles[1]
+        local carriesVelocity = near(movingRocket.x - stillRocket.x, movingShip.x)
+            and near(movingRocket.y - stillRocket.y, movingShip.y)
+
+        view.x, view.y, view.zoom = 210, -160, 0.85
+        moving:update(0.35, movingShip, -400, 0, false, nil, view, 800, 600)
+        local blast = moving.explosions[1]
+        local screenX, screenY = view:worldToScreen(blast.x, blast.y, 800, 600)
+        check(carriesVelocity and near(screenX, cursorX) and near(screenY, cursorY),
+            "A missile must carry ship velocity and hit the original screen point after pan and zoom")
+    end
 
     do
         local laser, enemies = Turret.new(0), Enemies.new()

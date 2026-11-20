@@ -23,20 +23,27 @@ function Turret.new(initialAngle)
     }, Turret)
 end
 
-local function updateRocketPose(rocket)
+local function updateRocketPose(rocket, camera, width, height)
     if rocket.lifetime == 0 then
+        rocket.x, rocket.y = camera:screenToWorld(rocket.targetScreenX, rocket.targetScreenY, width, height)
         rocket.vx, rocket.vy, rocket.speed = 0, 0, 0
         return
     end
     local t = rocket.age / rocket.lifetime
-    local dx, dy = rocket.targetX - rocket.startX, rocket.targetY - rocket.startY
+    local dx = rocket.targetScreenX - rocket.startScreenX
+    local dy = rocket.targetScreenY - rocket.startScreenY
     -- Quadratic forward travel builds speed while the sideways offset fades back to zero.
     local bend = math.sin(math.pi * t)
-    rocket.x = rocket.startX + dx * t * t + rocket.bendX * bend
-    rocket.y = rocket.startY + dy * t * t + rocket.bendY * bend
+    local x = rocket.startScreenX + dx * t * t + rocket.bendX * bend
+    local y = rocket.startScreenY + dy * t * t + rocket.bendY * bend
+    -- The camera follows the ship's integrated velocity and also accounts for lead and zoom.
+    rocket.x, rocket.y = camera:screenToWorld(x, y, width, height)
+
+    -- Draw the nose and exhaust along the motion the player sees on screen.
     local bendRate = math.pi * math.cos(math.pi * t)
-    rocket.vx = (2 * t * dx + rocket.bendX * bendRate) / rocket.lifetime
-    rocket.vy = (2 * t * dy + rocket.bendY * bendRate) / rocket.lifetime
+    local worldDuration = rocket.lifetime * camera.zoom
+    rocket.vx = (2 * t * dx + rocket.bendX * bendRate) / worldDuration
+    rocket.vy = (2 * t * dy + rocket.bendY * bendRate) / worldDuration
     rocket.speed = math.sqrt(rocket.vx ^ 2 + rocket.vy ^ 2)
 end
 
@@ -72,10 +79,11 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         local distance = math.sqrt((targetX - x) ^ 2 + (targetY - y) ^ 2)
         local bend = self.launchSide * math.min(rocketMaxBend, distance * 0.18)
         self.launchSide = -self.launchSide
-        missile.bendX, missile.bendY = -dy * bend, dx * bend
-        missile.targetX, missile.targetY = targetX, targetY
+        missile.bendX, missile.bendY = -dy * bend * camera.zoom, dx * bend * camera.zoom
+        missile.startScreenX, missile.startScreenY = camera:worldToScreen(x, y, width, height)
+        missile.targetScreenX, missile.targetScreenY = camera:worldToScreen(targetX, targetY, width, height)
         missile.lifetime = distance / rocketAverageSpeed
-        updateRocketPose(missile)
+        updateRocketPose(missile, camera, width, height)
     else
         missile.vx, missile.vy = dx * self.missileSpeed + ship.vx, dy * self.missileSpeed + ship.vy
         missile.speed = math.sqrt(missile.vx ^ 2 + missile.vy ^ 2)
@@ -116,33 +124,34 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
         end
         for i = #self.missiles, 1, -1 do
             local missile = self.missiles[i]
+            local isRocket = missile.targetScreenX ~= nil
             local oldX, oldY = missile.x, missile.y
             local flightTime = math.min(step, missile.lifetime - missile.age)
             local elapsed = missile.age + step
             missile.age = math.min(missile.lifetime, elapsed)
-            if missile.targetX then
-                updateRocketPose(missile)
+            if isRocket then
+                updateRocketPose(missile, camera, width, height)
             else
                 missile.distance = missile.speed * missile.age
                 missile.x = missile.startX + missile.vx * missile.age
                 missile.y = missile.startY + missile.vy * missile.age
             end
             local hitX, hitY, hitTime
-            if enemies and not missile.targetX then
+            if enemies and not isRocket then
                 local frameStart = dt > 0 and (dt - remaining) / dt or 0
                 local frameEnd = dt > 0 and (dt - remaining + flightTime) / dt or 0
                 hitX, hitY, hitTime = enemies:hitSegment(oldX, oldY, missile.x, missile.y, frameStart, frameEnd)
             end
             if hitX or elapsed >= missile.lifetime then
                 local age = hitX and step - flightTime * hitTime or elapsed - missile.lifetime
-                local x, y = missile.targetX or hitX or missile.x, missile.targetY or hitY or missile.y
-                if enemies and missile.targetX then
+                local x, y = hitX or missile.x, hitY or missile.y
+                if enemies and isRocket then
                     local fraction = dt > 0 and (dt - remaining + flightTime) / dt or 0
                     enemies:hitArea(x, y, blastRadius, fraction)
                 end
                 if age < self.explosionLifetime then
                     self.explosions[#self.explosions + 1] = {
-                        x = x, y = y, radius = missile.targetX and blastRadius,
+                        x = x, y = y, radius = isRocket and blastRadius,
                         age = age, lifetime = self.explosionLifetime,
                     }
                 end
@@ -167,7 +176,7 @@ function Turret:drawEffects(camera, width, height)
         local dx, dy = missile.vx / speed, missile.vy / speed
         g.setLineWidth(3)
         g.setColor(1, 0.42, 0.12, 0.45)
-        if missile.targetX then
+        if missile.targetScreenX then
             local trail = math.min(32, missile.speed * math.min(0.03, missile.age))
             if trail > 0 then
                 g.line(missile.x, missile.y, missile.x - dx * trail, missile.y - dy * trail)
@@ -176,15 +185,15 @@ function Turret:drawEffects(camera, width, height)
             local tailX, tailY = missile.owner.x - missile.x, missile.owner.y - missile.y
             local distance = math.sqrt(tailX * tailX + tailY * tailY)
             if distance > 0 then
+                dx, dy = -tailX / distance, -tailY / distance
                 local trail = math.min(24, missile.distance, distance)
-                g.line(missile.x, missile.y,
-                    missile.x + tailX / distance * trail, missile.y + tailY / distance * trail)
+                g.line(missile.x, missile.y, missile.x - dx * trail, missile.y - dy * trail)
             end
         end
         g.setLineWidth(2)
         g.setColor(1, 0.87, 0.46, 1)
         g.line(missile.x - dx * 6, missile.y - dy * 6, missile.x, missile.y)
-        if missile.targetX then
+        if missile.targetScreenX then
             g.setColor(1, 0.34, 0.20, 1)
             g.polygon("fill", missile.x + dx * 7, missile.y + dy * 7,
                 missile.x - dx * 5 - dy * 4, missile.y - dy * 5 + dx * 4,
@@ -229,7 +238,6 @@ function Turret:drawEffects(camera, width, height)
                 explosion.x + dx * (radius + 5), explosion.y + dy * (radius + 5))
         end
     end
-
     g.pop()
 end
 
