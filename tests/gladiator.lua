@@ -89,7 +89,7 @@ return function(Ship, Enemies, Turret, Gladiator)
         }
         rocket.lifetime = (endX - startX) / speed
 
-        local steps = math.ceil(rocket.lifetime / dt) + 2
+        local steps = math.ceil((rocket.lifetime + Gladiator.missileSettleDuration) / dt) + 2
         for _ = 1, steps do
             ship.prevX, ship.prevY = ship.x, ship.y
             ship.x = (ship.x + shipVx * dt) % Arena.width
@@ -145,7 +145,7 @@ return function(Ship, Enemies, Turret, Gladiator)
         }
         rocket.lifetime = (endX - startX) / speed
 
-        for _ = 1, math.ceil(rocket.lifetime / dt) + 2 do
+        for _ = 1, math.ceil((rocket.lifetime + Gladiator.missileSettleDuration) / dt) + 2 do
             group.fire:update(dt, ship, gladiator)
         end
         check(gladiator.missileDodge.count == 1 and gladiator.missileDodge.points >= 10
@@ -411,6 +411,96 @@ return function(Ship, Enemies, Turret, Gladiator)
         end
         check(gladiator.aerobatics.count == 1 and gladiator.aerobatics.points >= 10,
             "Clean evasion after recovering from a hit must award aerobatics points")
+    end
+
+    -- 14. Situational missile dodge: dodging a full 6-missile OBTUSE salvo counts ONCE, scored by tightest miss.
+    do
+        local ship = Ship.new(Arena.width, Arena.height)
+        ship.x, ship.y = 540, 270
+        ship.prevX, ship.prevY = ship.x, ship.y
+        local gladiator = Gladiator.new()
+        local group = Enemies.new(function() return 0.5 end, gladiator)
+        group.spawnRate = 0
+        local launcher = group:spawn(ship, 3, { x = 200, y = 270 })
+        group.fire:shoot(launcher, ship)
+        check(#group.fire.shots == 6, "OBTUSE salvo must launch 6 missiles")
+
+        local speed, turnRate = 350, 3.35
+        local radius = speed / turnRate
+        local hitDist = ship:hitRadius() + group.fire.shots[1].profile.radius
+        local clearances = { 32, 24, 6, 18, 28, 36 }
+        for i, rocket in ipairs(group.fire.shots) do
+            local startX = ship.x - 100 - (i - 1) * 14
+            local endX = ship.x + 220
+            local y = ship.y + hitDist + clearances[i]
+            rocket.x, rocket.y = startX, y
+            rocket.vx, rocket.vy = speed, 0
+            rocket.age = 0
+            rocket.secondLeg = {
+                direction = 1, radius = radius, speed = speed, started = 0,
+                ramp = 0, sweep = 0, length = (endX - startX) / radius,
+                startX = startX, startY = y, heading = 0,
+                cx = startX, cy = y, radial = 0,
+                exitHeading = 0, exitX = startX, exitY = y,
+                x = endX, y = y,
+            }
+            rocket.lifetime = (endX - startX) / speed
+        end
+
+        for _ = 1, 90 do
+            group:update(dt, ship)
+            gladiator:update(dt)
+        end
+        local expected = Gladiator.evasionPoints(6, Gladiator.missileMargin, speed)
+        check(gladiator.missileDodge.count == 1 and gladiator.missileDodge.points == expected
+            and #gladiator.popups <= 1,
+            "Dodging all 6 missiles in one OBTUSE salvo must count as one evasion using the closest miss")
+    end
+
+    -- 15. Dodging 10 missiles closely then getting hit 0.1s later must award ZERO dodge points.
+    do
+        local ship = Ship.new(Arena.width, Arena.height)
+        ship.x, ship.y = 540, 270
+        ship.prevX, ship.prevY = ship.x, ship.y
+        local gladiator = Gladiator.new()
+        local group = Enemies.new(function() return 0.5 end, gladiator)
+        group.spawnRate = 0
+        local launcher = group:spawn(ship, 3, { x = 200, y = 270 })
+        group.fire:shoot(launcher, ship)
+        group.fire:shoot(launcher, ship)
+        -- Keep 11 missiles: 10 narrow misses followed by 1 direct hit ~0.1s later.
+        table.remove(group.fire.shots)
+        check(#group.fire.shots == 11, "Test must arrange 10 dodged missiles plus 1 trailing hit")
+
+        local speed, turnRate = 400, 3.35
+        local radius = speed / turnRate
+        local hitDist = ship:hitRadius() + group.fire.shots[1].profile.radius
+        for i, rocket in ipairs(group.fire.shots) do
+            local isHit = i == 11
+            local startX = isHit and (ship.x - 160) or (ship.x - 80 - (i - 1) * 4)
+            local endX = ship.x + 260
+            local y = isHit and ship.y or (ship.y + hitDist + 5 + (i % 3) * 4)
+            rocket.x, rocket.y = startX, y
+            rocket.vx, rocket.vy = speed, 0
+            rocket.age = 0
+            rocket.secondLeg = {
+                direction = 1, radius = radius, speed = speed, started = 0,
+                ramp = 0, sweep = 0, length = (endX - startX) / radius,
+                startX = startX, startY = y, heading = 0,
+                cx = startX, cy = y, radial = 0,
+                exitHeading = 0, exitX = startX, exitY = y,
+                x = endX, y = y,
+            }
+            rocket.lifetime = (endX - startX) / speed
+        end
+
+        for _ = 1, 90 do
+            group:update(dt, ship)
+            gladiator:update(dt)
+        end
+        check(ship.shield < ship.maxShield and gladiator.missileDodge.count == 0
+            and gladiator.missileDodge.points == 0,
+            "Dodging 10 missiles then getting hit 0.1s later must cancel the entire evasion situation")
     end
 
     print(string.format("PASS: %d Gladiator Points checks", checks))

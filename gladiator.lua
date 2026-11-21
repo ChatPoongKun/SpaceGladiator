@@ -12,6 +12,7 @@ Gladiator.noticeDuration = 1.6
 Gladiator.popupDuration = 1.05
 Gladiator.popupRise = 26
 Gladiator.hitLockoutDuration = 0.6
+Gladiator.missileSettleDuration = 0.25
 
 local categoryInfo = {
     destroy = { label = "DESTROY", color = { 1.0, 0.58, 0.32 } },
@@ -30,6 +31,7 @@ function Gladiator.new()
         damageEpoch = 0,
         lastDamageCount = nil,
         evasionLockout = 0,
+        missileSituation = nil,
         pendingEvasions = nil,
         batchEpoch = nil,
     }, Gladiator)
@@ -101,6 +103,7 @@ end
 function Gladiator:onPlayerDamaged()
     self.damageEpoch = self.damageEpoch + 1
     self.evasionLockout = math.max(self.evasionLockout, self.hitLockoutDuration)
+    self.missileSituation = nil
     if self.pendingEvasions then
         self.pendingEvasions = {}
     end
@@ -115,6 +118,71 @@ function Gladiator:syncPlayerDamage(ship)
         self.lastDamageCount = count
         self:onPlayerDamaged()
     end
+end
+
+function Gladiator:observeMissileThreat(clearance, relativeSpeed, x, y)
+    if self.evasionLockout > 0 then
+        self.missileSituation = nil
+        return false
+    end
+    if not clearance or clearance <= 0 or clearance > self.missileMargin then
+        return false
+    end
+    local speed = relativeSpeed or 0
+    if speed < self.minRelativeSpeed then
+        if self.missileSituation then self.missileSituation.quietTime = 0 end
+        return true
+    end
+    local sit = self.missileSituation
+    if not sit or sit.epoch ~= self.damageEpoch then
+        self.missileSituation = {
+            minClearance = clearance,
+            relativeSpeed = speed,
+            x = x,
+            y = y,
+            epoch = self.damageEpoch,
+            quietTime = 0,
+        }
+    else
+        sit.quietTime = 0
+        if clearance < sit.minClearance
+            or (clearance == sit.minClearance and speed > sit.relativeSpeed) then
+            sit.minClearance = clearance
+            sit.relativeSpeed = speed
+            sit.x, sit.y = x, y
+        end
+    end
+    return true
+end
+
+function Gladiator:advanceMissileSituation(dt, ship, threatened)
+    self:syncPlayerDamage(ship)
+    local sit = self.missileSituation
+    if not sit then return 0 end
+    if (ship and ship:isDestroyed()) or sit.epoch ~= self.damageEpoch or self.evasionLockout > 0 then
+        self.missileSituation = nil
+        return 0
+    end
+    if threatened then
+        sit.quietTime = 0
+        return 0
+    end
+    sit.quietTime = sit.quietTime + math.max(0, dt)
+    if sit.quietTime < self.missileSettleDuration then
+        return 0
+    end
+    self.missileSituation = nil
+    if self.pendingEvasions then
+        self.pendingEvasions[#self.pendingEvasions + 1] = {
+            category = "missileDodge",
+            clearance = sit.minClearance,
+            relativeSpeed = sit.relativeSpeed,
+            x = sit.x,
+            y = sit.y,
+        }
+        return 0
+    end
+    return self:recordMissileDodge(sit.minClearance, sit.relativeSpeed, sit.x, sit.y)
 end
 
 function Gladiator:beginEvasionBatch(ship)
