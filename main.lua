@@ -54,12 +54,10 @@ local menus = {}
 local function showResults(reason)
     local shield = ship.maxShield - ship.shield
     local armor = ship.maxArmor - ship.armor
-    local hull = ship.maxHull - ship.hull
     local rows = {
-        {label = "입은 피해", value = tostring(shield + armor + hull), heading = true},
+        {label = "입은 피해", value = tostring(shield + armor), heading = true},
         {label = "실드 손실", value = tostring(shield)},
         {label = "장갑 손실", value = tostring(armor)},
-        {label = "선체 손실", value = hull .. "칸"},
         {label = "격추한 적", value = enemies.kills .. "기", heading = true},
     }
     for i, kind in ipairs(Enemies.types) do
