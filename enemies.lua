@@ -8,6 +8,7 @@ local tau = 2 * math.pi
 local exitMargin = 155
 local waypointBrakeTime = 0.18
 local wingAlignment = math.rad(6)
+local contactDamage = 20
 
 Enemies.spawnRate = 1 / 4
 Enemies.maxCount = 15
@@ -367,10 +368,44 @@ local function clearedExit(enemy, view, edge)
     return enemy.y - radius > view.bottom
 end
 
-local function move(group, enemy, dt, ship, aimAngle)
+local function wrappedDelta(distance, extent)
+    return (distance + extent / 2) % extent - extent / 2
+end
+
+local function checkContact(enemy, ship, x, y, motion, elapsed, step)
+    if ship:isDestroyed() then return end
+    local dx, dy = enemy.x - x, enemy.y - y
+    local margin = enemy.radius
+    -- An enemy moving outside the arena can only hit the player if its hitbox reaches inside.
+    local near, far = Collision.rectangleInterval(x + margin, y + margin, dx, dy,
+        Arena.width + 2 * margin, Arena.height + 2 * margin)
+    local first, last = math.max(0, near), math.min(1, far)
+    if first > last then
+        enemy.contactRadius = nil
+        return
+    end
+
+    local shipX, shipY = motion.x + motion.vx * elapsed, motion.y + motion.vy * elapsed
+    local vx, vy = dx - motion.vx * step, dy - motion.vy * step
+    local middle = (first + last) * 0.5
+    local rx = wrappedDelta(x - shipX + vx * middle, Arena.width) - vx * middle
+    local ry = wrappedDelta(y - shipY + vy * middle, Arena.height) - vy * middle
+    local radius = enemy.contactRadius or ship:hitRadius() + margin
+    local span = last - first
+    if not enemy.contactRadius and Collision.circleEntry(rx + vx * first, ry + vy * first, vx * span, vy * span, radius) then
+        ship:takeDamage(contactDamage)
+    end
+
+    -- Keep the contact latched until separation, even if the shield broke on impact.
+    local endX, endY = rx + vx, ry + vy
+    enemy.contactRadius = last == 1 and endX * endX + endY * endY <= radius * radius and radius or nil
+end
+
+local function move(group, enemy, dt, ship, aimAngle, motion)
     local definition = group.types[enemy.kind]
     local view = group.view
     while dt > 0 do
+        local x, y = enemy.x, enemy.y
         local step = math.min(dt, 1 / 60)
         if enemy.phase == "departing" then
             local exit = departureGoal(enemy, view)
@@ -396,16 +431,17 @@ local function move(group, enemy, dt, ship, aimAngle)
                 end
             end
         end
+        if step > 0 then checkContact(enemy, ship, x, y, motion, motion.duration - dt, step) end
         dt = dt - step
     end
     return enemy.phase == "departing" and clearedExit(enemy, view, enemy.wave.exit.edge)
 end
 
-local function advance(group, first, dt, ship, aimAngle)
+local function advance(group, first, dt, ship, aimAngle, motion)
     for i = #group.items, first, -1 do
         local enemy = group.items[i]
         enemy.prevX, enemy.prevY = enemy.x, enemy.y
-        if move(group, enemy, dt, ship, aimAngle) then
+        if move(group, enemy, dt, ship, aimAngle, motion) then
             enemy.dead = true
             table.remove(group.items, i)
         end
@@ -454,7 +490,10 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
     end
     self.fire:update(dt, ship)
     computeSeparation(self.items)
-    advance(self, 1, dt, ship, aimAngle)
+    local x, y = ship.prevX or ship.x, ship.prevY or ship.y
+    local motion = {x = x, y = y, duration = dt,
+        vx = wrappedDelta(ship.x - x, Arena.width) / dt, vy = wrappedDelta(ship.y - y, Arena.height) / dt}
+    advance(self, 1, dt, ship, aimAngle, motion)
 
     if #self.items + squadSize > self.maxCount then
         self.spawnAccumulator = 0
@@ -469,7 +508,7 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
         self:spawnSquad(ship)
         local slice = (count - i + self.spawnAccumulator) / self.spawnRate
         -- A new arrival moves only for the portion of the frame after its birth.
-        advance(self, first, slice, ship, aimAngle)
+        advance(self, first, slice, ship, aimAngle, motion)
     end
 end
 

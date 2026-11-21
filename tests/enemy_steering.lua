@@ -338,5 +338,51 @@ return function(Ship, Enemies, Camera, check)
             "The dodge must carry lateral momentum after the turn ends")
     end
 
+    do
+        for kind, definition in ipairs(Enemies.types) do
+            local ship, group = fixture()
+            ship.shield = 5
+            local offset = (ship:hitRadius() + ship.radius) * 0.5 + definition.radius
+            local enemy = group:spawn(ship, kind, {x = ship.x + offset, y = ship.y, entryTime = 1})
+            group:update(dt, ship)
+            check(ship.shield == 0 and ship.armor == 85 and group.items[1] == enemy,
+                "Contact with " .. definition.name .. " must deal 20 damage through the shield and armor")
+
+            group:update(dt, ship)
+            enemy.x = ship.x
+            group:update(dt, ship)
+            check(ship.armor == 85, "The same contact must not deal more damage after breaking the shield")
+
+            enemy.x = ship.x + 100
+            group:update(dt, ship)
+            enemy.x = ship.x
+            group:update(dt, ship)
+            check(ship.armor == 65, "Separating and touching the same enemy again must deal another hit")
+        end
+    end
+
+    do
+        local ship, group = fixture()
+        local radius = ship:hitRadius() + Enemies.types[1].radius
+        group:spawn(ship, 1, {x = ship.x, y = ship.y + radius - 0.5, vx = 120, angle = math.pi / 2, entryTime = 1})
+        ship.prevX, ship.x = ship.x + 10, ship.x - 10
+        group:update(0.05, ship)
+        check(ship.shield == ship.maxShield - 20, "A grazing collision between the frame endpoints must deal damage")
+    end
+
+    do
+        local ship, group = fixture()
+        ship.x, ship.prevX = 6, width - 6
+        group:spawn(ship, 1, {x = width / 2, y = ship.y, entryTime = 1})
+        group:spawn(ship, 1, {x = -Enemies.types[1].radius - 5, y = ship.y, entryTime = 1})
+        group:update(dt, ship)
+        check(ship.shield == ship.maxShield, "Wrapping must skip enemies in the middle and entirely outside the arena")
+
+        ship.prevX = ship.x
+        group:spawn(ship, 1, {x = width - 2, y = ship.y, entryTime = 1})
+        group:update(dt, ship)
+        check(ship.shield == ship.maxShield - 20, "An enemy must be able to hit the player across the nearby arena edge")
+    end
+
     require("tests.enemy_fire")(Ship, Enemies, Camera, check)
 end
