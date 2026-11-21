@@ -7,7 +7,8 @@ EnemyFire.__index = EnemyFire
 local burstInterval = 0.12
 local impactLifetime = 0.24
 local missileAngles = {-60, -36, -12, 12, 36, 60}
-local missileTurnRate = 5
+local missileTurnRate = 3.35
+local missileTurnRamp = 0.42
 local tau = 2 * math.pi
 local bullet = {speed = 540, lifetime = 1.4, radius = 3, damage = 6, trail = 13, color = {1, 0.45, 0.23}}
 local laser = {speed = 1400, lifetime = 0.7, radius = 4, damage = 14, trail = 48, color = {1, 0.24, 0.65}}
@@ -72,7 +73,7 @@ local function wrappedDelta(start, finish, extent)
     return (finish - start + extent / 2) % extent - extent / 2
 end
 
-local function playerHit(shot, motion, x, y, elapsed, step, radius)
+local function playerRelativeSegment(shot, motion, x, y, elapsed, step)
     local dx, dy = shot.x - x, shot.y - y
     local near, far = Collision.rectangleInterval(x, y, dx, dy, Arena.width, Arena.height)
     local entry, leave = math.max(0, near), math.min(1, far)
@@ -86,56 +87,121 @@ local function playerHit(shot, motion, x, y, elapsed, step, radius)
     local vx, vy = (dx - motion.vx * step) * span, (dy - motion.vy * step) * span
     rx = rx - math.floor((rx + vx * 0.5) / Arena.width + 0.5) * Arena.width
     ry = ry - math.floor((ry + vy * 0.5) / Arena.height + 0.5) * Arena.height
+    return rx, ry, vx, vy, px, py, dx, dy, start, span
+end
+
+local function playerHit(shot, motion, x, y, elapsed, step, radius)
+    local rx, ry, vx, vy, px, py, dx, dy, start, span = playerRelativeSegment(shot, motion, x, y, elapsed, step)
+    if not rx then return end
     local t = Collision.circleEntry(rx, ry, vx, vy, radius + shot.profile.radius)
     if t then return px + dx * span * t, py + dy * span * t, start + step * span * t end
+end
+
+local function offsetPoint(x, y, heading, forward, sideways)
+    local dx, dy = math.cos(heading), math.sin(heading)
+    return x + dx * forward - dy * sideways, y + dy * forward + dx * sideways
+end
+
+-- Distance is in turn radii. This integrates a constant-speed ramp with a linearly rising turn rate.
+local function rampPose(distance, ramp)
+    if ramp == 0 then return 0, 0, 0 end
+    local angle = distance * distance / (2 * ramp)
+    local square = angle * angle
+    local forward = distance * (1 - square / 10 + square * square / 216)
+    local sideways = distance * angle * (1 / 3 - square / 42 + square * square / 1320)
+    return forward, sideways, angle
+end
+
+local function planBank(x, y, heading, radius, targetX, targetY, ramp)
+    local forward, sideways, entryAngle = rampPose(ramp, ramp)
+    local tangentRadius = math.cos(entryAngle) + sideways
+    local exitAdvance = forward - math.sin(entryAngle)
+    local samePoint = (targetX - x) ^ 2 + (targetY - y) ^ 2 < 1e-12
+    if samePoint and ramp > 0 then return end
+    local best
+    for direction = -1, 1, 2 do
+        local entryHeading = heading + direction * entryAngle
+        local px, py = offsetPoint(x, y, heading, radius * forward, direction * radius * sideways)
+        local cx, cy = offsetPoint(px, py, entryHeading, 0, direction * radius)
+        local dx, dy = (targetX - cx) / radius, (targetY - cy) / radius
+        local distanceSquared = dx * dx + dy * dy
+        if distanceSquared >= tangentRadius ^ 2 or samePoint then
+            local sweep, straight = tau, 0
+            if not samePoint then
+                straight = math.sqrt(math.max(0, distanceSquared - tangentRadius ^ 2)) - exitAdvance
+                local finalHeading = math.atan2(dy, dx) + direction * math.asin(math.min(1, tangentRadius / math.sqrt(distanceSquared)))
+                sweep = ((finalHeading - entryHeading) * direction - entryAngle) % tau
+                if sweep > tau - 1e-9 then sweep = 0 end
+            end
+            if straight >= -1e-9 then
+                local length = 2 * ramp + sweep + math.max(0, straight)
+                if not best or length < best.length then
+                    local exitHeading = heading + direction * (sweep + ramp)
+                    local exitX, exitY = offsetPoint(cx, cy, exitHeading, radius * exitAdvance,
+                        -direction * radius * tangentRadius)
+                    best = {direction = direction, cx = cx, cy = cy, radial = entryHeading - direction * math.pi / 2,
+                        sweep = sweep, ramp = ramp, length = length, exitHeading = exitHeading, exitX = exitX, exitY = exitY}
+                end
+            end
+        end
+    end
+    return best
 end
 
 local function beginSecondLeg(shot, targetX, targetY)
     local speed = math.sqrt(shot.vx ^ 2 + shot.vy ^ 2)
     local heading = math.atan2(shot.vy, shot.vx)
     local radius = speed / missileTurnRate
-    local samePoint = (targetX - shot.x) ^ 2 + (targetY - shot.y) ^ 2 < 1e-12
-    local best, length
-    -- Choose the shorter of the two forward turns with a straight tangent to the target.
-    for direction = -1, 1, 2 do
-        local radial = heading - direction * math.pi / 2
-        local cx = shot.x - math.cos(radial) * radius
-        local cy = shot.y - math.sin(radial) * radius
-        local dx, dy = targetX - cx, targetY - cy
-        local distance = math.sqrt(dx * dx + dy * dy)
-        if samePoint or distance >= radius then
-            local sweep, straight = tau, 0
-            if not samePoint then
-                local tangent = math.atan2(dy, dx) - direction * math.acos(radius / distance)
-                sweep = ((tangent - radial) * direction) % tau
-                if sweep > tau - 1e-9 then sweep = 0 end
-                straight = math.sqrt(math.max(0, distance * distance - radius * radius))
-            end
-            local arc = sweep * radius
-            if not length or arc + straight < length then
-                length = arc + straight
-                best = {cx = cx, cy = cy, radial = radial, direction = direction, radius = radius, arc = arc}
-            end
+    local direct = planBank(shot.x, shot.y, heading, radius, targetX, targetY, 0)
+    local leg = direct
+    local ramp = math.min(missileTurnRamp, direct.sweep * 0.5)
+    -- Shallow or very short approaches may need a shorter ramp to avoid another orbit.
+    while ramp >= 1e-4 do
+        local bank = planBank(shot.x, shot.y, heading, radius, targetX, targetY, ramp)
+        if bank and bank.length < direct.length + math.pi / 2 then
+            leg = bank
+            break
         end
+        ramp = ramp * 0.5
     end
 
-    best.speed, best.started, best.x, best.y = speed, shot.age, targetX, targetY
-    shot.secondLeg = best
-    shot.lifetime = shot.age + length / speed
+    leg.startX, leg.startY, leg.heading = shot.x, shot.y, heading
+    leg.radius, leg.speed, leg.started, leg.x, leg.y = radius, speed, shot.age, targetX, targetY
+    shot.secondLeg = leg
+    shot.lifetime = shot.age + leg.length / missileTurnRate
+end
+
+local function secondLegPose(leg, distance)
+    local direction, radius = leg.direction, leg.radius
+    local ramp = leg.ramp
+    if distance < ramp then
+        local forward, sideways, angle = rampPose(distance, ramp)
+        local x, y = offsetPoint(leg.startX, leg.startY, leg.heading, radius * forward, direction * radius * sideways)
+        return x, y, leg.heading + direction * angle
+    end
+    distance = distance - ramp
+    if distance < leg.sweep then
+        local radial = leg.radial + direction * distance
+        return leg.cx + math.cos(radial) * radius, leg.cy + math.sin(radial) * radius, radial + direction * math.pi / 2
+    end
+    distance = distance - leg.sweep
+    if distance < ramp then
+        local forward, sideways, angle = rampPose(ramp - distance, ramp)
+        local x, y = offsetPoint(leg.exitX, leg.exitY, leg.exitHeading, -radius * forward, direction * radius * sideways)
+        return x, y, leg.exitHeading - direction * angle
+    end
+    local x, y = offsetPoint(leg.exitX, leg.exitY, leg.exitHeading, radius * (distance - ramp), 0)
+    return x, y, leg.exitHeading
 end
 
 local function moveShot(shot, step)
     shot.age = shot.age + step
     local leg = shot.secondLeg
     if leg then
-        local distance = (shot.age - leg.started) * leg.speed
-        local arc = math.min(distance, leg.arc)
-        local radial = leg.radial + leg.direction * arc / leg.radius
-        local heading = radial + leg.direction * math.pi / 2
-        local dx, dy = math.cos(heading), math.sin(heading)
-        shot.x = leg.cx + math.cos(radial) * leg.radius + dx * (distance - arc)
-        shot.y = leg.cy + math.sin(radial) * leg.radius + dy * (distance - arc)
-        shot.vx, shot.vy = dx * leg.speed, dy * leg.speed
+        local distance = (shot.age - leg.started) * missileTurnRate
+        local x, y, heading = secondLegPose(leg, distance)
+        shot.x, shot.y = x, y
+        shot.vx, shot.vy = math.cos(heading) * leg.speed, math.sin(heading) * leg.speed
         if shot.age >= shot.lifetime - 1e-9 then shot.x, shot.y = leg.x, leg.y end
     elseif shot.profile == missile then
         local t = math.min(1, shot.age / shot.lifetime)
@@ -154,8 +220,9 @@ local function impact(fire, shot, x, y, shield)
     fire.impacts[#fire.impacts + 1] = {x = x, y = y, age = 0, profile = shot.profile, shield = shield}
 end
 
-local function stepShots(fire, ship, motion, elapsed, finish)
+local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
     local contacts = {}
+    local missileSteps = gladiator and {} or nil
     local hitRadius = ship:hitRadius()
     for _, shot in ipairs(fire.shots) do
         local start = math.max(elapsed, shot.delay)
@@ -163,6 +230,9 @@ local function stepShots(fire, ship, motion, elapsed, finish)
         if step > 0 then
             local oldX, oldY = shot.x, shot.y
             moveShot(shot, step)
+            if missileSteps and shot.profile == missile then
+                missileSteps[#missileSteps + 1] = {shot = shot, oldX = oldX, oldY = oldY, start = start, step = step}
+            end
             if not ship:isDestroyed() then
                 local x, y, at = playerHit(shot, motion, oldX, oldY, start, step, hitRadius)
                 if x then
@@ -195,6 +265,27 @@ local function stepShots(fire, ship, motion, elapsed, finish)
         end
     end
 
+    if missileSteps and not ship:isDestroyed() then
+        for _, entry in ipairs(missileSteps) do
+            local shot = entry.shot
+            if not shot.spent then
+                local rx, ry, vx, vy, _, _, _, _, _, span = playerRelativeSegment(
+                    shot, motion, entry.oldX, entry.oldY, entry.start, entry.step)
+                if rx then
+                    local minDist = Collision.closestDistance(rx, ry, vx, vy)
+                    local endX, endY = rx + vx, ry + vy
+                    local endDist = math.sqrt(endX * endX + endY * endY)
+                    local spanStep = entry.step * span
+                    local relativeSpeed = spanStep > 0 and math.sqrt(vx * vx + vy * vy) / spanStep or 0
+                    gladiator:trackNearMiss(shot, minDist, endDist, hitRadius + shot.profile.radius,
+                        relativeSpeed, "missileDodge", false)
+                else
+                    gladiator:finishNearMiss(shot, "missileDodge")
+                end
+            end
+        end
+    end
+
     for i = #fire.shots, 1, -1 do
         local shot = fire.shots[i]
         if shot.spent then
@@ -205,14 +296,19 @@ local function stepShots(fire, ship, motion, elapsed, finish)
                 local y = (motion.y + motion.vy * finish) % Arena.height
                 beginSecondLeg(shot, x, y)
             else
-                if shot.profile == missile then impact(fire, shot, shot.x, shot.y) end
+                if shot.profile == missile then
+                    if gladiator and not ship:isDestroyed() then
+                        gladiator:finishNearMiss(shot, "missileDodge")
+                    end
+                    impact(fire, shot, shot.x, shot.y)
+                end
                 table.remove(fire.shots, i)
             end
         end
     end
 end
 
-function EnemyFire:update(dt, ship)
+function EnemyFire:update(dt, ship, gladiator)
     for i = #self.impacts, 1, -1 do
         local effect = self.impacts[i]
         effect.age = effect.age + dt
@@ -243,7 +339,7 @@ function EnemyFire:update(dt, ship)
                 if arrival > elapsed then finish = math.min(finish, arrival) end
             end
         end
-        stepShots(self, ship, motion, elapsed, finish)
+        stepShots(self, ship, motion, elapsed, finish, gladiator)
         elapsed = finish
     end
     for _, shot in ipairs(self.shots) do shot.delay = 0 end

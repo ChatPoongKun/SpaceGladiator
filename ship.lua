@@ -8,7 +8,7 @@ Ship.brake = 2.0
 Ship.maxSpeed = 180
 Ship.turnSpeed = 2.8
 Ship.radius = 23
-Ship.shieldMargin = 1.1
+Ship.shieldMargin = 1.3
 Ship.destructionDuration = 0.7
 Ship.driftThreshold = 90
 Ship.driftDeceleration = 195
@@ -18,6 +18,7 @@ Ship.boostFalloff = 0.24
 Ship.boostCost = 25
 Ship.batteryRecharge = 12
 Ship.wrapBonusSpeed = 110
+Ship.combatPower = 100
 
 function Ship.new(width, height)
     return setmetatable({
@@ -31,6 +32,7 @@ function Ship.new(width, height)
         armor = 100, maxArmor = 100,
         hull = 3, maxHull = 3,
         battery = 100, maxBattery = 100,
+        combatPower = Ship.combatPower,
     }, Ship)
 end
 

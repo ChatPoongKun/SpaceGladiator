@@ -4,11 +4,12 @@ local Starfield = require("starfield")
 local Camera = require("camera")
 local Turret = require("turret")
 local Enemies = require("enemies")
+local Gladiator = require("gladiator")
 local Hud = require("hud")
 local Menu = require("menu")
 local Sfx = require("sfx")
 
-local ship, stars, fonts, camera, turret, enemies, hud
+local ship, stars, fonts, camera, turret, enemies, hud, gladiator
 local width, height, time = 1280, 800, 0
 local screen, selectedButton
 local focused = true
@@ -16,14 +17,14 @@ local gameOverHold = 1.25
 local displayFile = "fullscreen.txt"
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow = false, false, false
+local testCompact, testDamaged, testFlow, testGladiator = false, false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local weaponNames = { "PROJECTILE", "MISSILE", "LASER" }
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow) then return defaultErrorHandler(message) end
+    if not (testMode or testFlow or testGladiator) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
@@ -34,7 +35,7 @@ local function setScreen(nextScreen)
     if screen ~= "gameOver" then Sfx.stop() end
     love.mouse.setVisible(screen ~= "playing" and screen ~= "gameOver")
     if screen == "title" or screen == "results" then
-        ship, camera, turret, enemies = nil, nil, nil, nil
+        ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
     end
 end
 
@@ -43,7 +44,8 @@ local function startRun()
     camera = Camera.new(ship.x, ship.y)
     camera:update(0, ship, width, height)
     turret = Turret.new(ship.angle)
-    enemies = Enemies.new()
+    gladiator = Gladiator.new()
+    enemies = Enemies.new(nil, gladiator)
     input.turn, input.thrust, input.brake, input.boost = 0, false, false, false
     time = 0
     setScreen("playing")
@@ -55,6 +57,10 @@ local function showResults(reason)
     local shield = ship.maxShield - ship.shield
     local armor = ship.maxArmor - ship.armor
     local rows = {
+        {label = "글레디에이터 포인트", value = gladiator.total .. "점", heading = true},
+        {label = "적 파괴", value = string.format("%d회 · %d점", gladiator.destroy.count, gladiator.destroy.points)},
+        {label = "미사일 회피", value = string.format("%d회 · %d점", gladiator.missileDodge.count, gladiator.missileDodge.points)},
+        {label = "곡예비행", value = string.format("%d회 · %d점", gladiator.aerobatics.count, gladiator.aerobatics.points)},
         {label = "입은 피해", value = tostring(shield + armor), heading = true},
         {label = "실드 손실", value = tostring(shield)},
         {label = "장갑 손실", value = tostring(armor)},
@@ -120,12 +126,13 @@ function love.load(args)
     for _, arg in ipairs(args or {}) do
         if arg == "--test" then testMode = true end
         if arg == "--test-flow" then testFlow = true end
+        if arg == "--test-gladiator" then testGladiator = true end
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
     love.graphics.setBackgroundColor(0.018, 0.028, 0.055)
     love.graphics.setLineStyle("smooth")
-    if not (testMode or testFlow) and love.filesystem.getInfo(displayFile)
+    if not (testMode or testFlow or testGladiator) and love.filesystem.getInfo(displayFile)
         and love.filesystem.read(displayFile) == "1" then
         love.window.setFullscreen(true, "desktop")
     end
@@ -141,10 +148,15 @@ function love.load(args)
     }
     hud = Hud.new()
     stars = Starfield.new(width, height)
-    if not (testMode or testFlow) then Sfx.load() end
+    if not (testMode or testFlow or testGladiator) then Sfx.load() end
     setScreen("title")
+    if testGladiator then
+        require("tests.gladiator")(Ship, Enemies, Turret, Gladiator)
+        love.event.quit(0)
+        return
+    end
     if testFlow then
-        require("tests.flow")(function() return screen, ship, enemies, turret end)
+        require("tests.flow")(function() return screen, ship, enemies, turret, gladiator end)
         love.event.quit(0)
         return
     end
@@ -207,6 +219,7 @@ function love.update(dt)
     end
     local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
     turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height)
+    gladiator:update(dt)
 end
 
 local function label(text, x, y, alpha)
@@ -241,6 +254,24 @@ local function drawHud()
     g.setColor(0.83, 0.93, 0.97, 1)
     g.print("D R I F T", 32, 25)
     label("04  /  TACTICAL FLIGHT", 34, 66)
+    local gx, gw = math.floor(width / 2) - 110, 220
+    g.setFont(fonts.small)
+    g.setColor(0.53, 0.65, 0.75, 1)
+    g.printf("GLADIATOR POINTS", gx, 29, gw, "center")
+    g.setFont(fonts.title)
+    if gladiator.lastEvent then
+        g.setColor(1, 0.84, 0.44, 1)
+    else
+        g.setColor(0.92, 0.86, 0.68, 1)
+    end
+    g.printf(string.format("%04d", gladiator.total), gx, 46, gw, "center")
+    if gladiator.lastEvent then
+        local fade = math.max(0, 1 - gladiator.lastEvent.age / gladiator.noticeDuration)
+        g.setFont(fonts.small)
+        g.setColor(1, 0.82, 0.40, fade)
+        g.printf(string.format("+%d  %s", gladiator.lastEvent.points, gladiator.lastEvent.label),
+            gx, 82, gw, "center")
+    end
     local sx = width - 232
     label("HOSTILES  /  DESTROYED", sx, 29)
     g.setFont(fonts.title)

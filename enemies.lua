@@ -19,17 +19,20 @@ Enemies.types = {
         radius = 16, evadeSpeed = 94, turnSpeed = 3.2,
         thrust = 285, brake = 4.2, maxSpeed = 500,
         patrolMin = 55, patrolMax = 110, arrivalRadius = 32,
+        combatPower = 40,
     },
     {
         name = "EQUILATERAL", vertices = {0, -24, -12 * math.sqrt(3), 12, 12 * math.sqrt(3), 12},
         radius = 24, evadeSpeed = 78,
         turnSpeed = 2.8, thrust = 255, brake = 2.6, maxSpeed = 320,
         patrolMin = 120, patrolMax = 185, arrivalRadius = 40,
+        combatPower = 70,
     },
     {
         name = "OBTUSE", vertices = {0, -12, -26, 10, 26, 10},
         radius = 28, evadeSpeed = 62, turnSpeed = 1.4, thrust = 218, brake = 1.25, maxSpeed = 200,
         patrolMin = 195, patrolMax = 290, arrivalRadius = 48,
+        combatPower = 100,
     },
 }
 
@@ -58,12 +61,14 @@ local function limitVector(x, y, maxLen)
     return x, y
 end
 
-function Enemies.new(rng)
+function Enemies.new(rng, gladiator)
     return setmetatable({
         items = {}, kills = 0, killsByKind = {},
         spawnAccumulator = 0.5, rng = rng or math.random,
         view = {left = 0, top = 0, right = Arena.width, bottom = Arena.height},
         fire = EnemyFire.new(),
+        gladiator = gladiator,
+        playerCombatPower = Ship.combatPower,
     }, Enemies)
 end
 
@@ -97,6 +102,7 @@ function Enemies:spawn(ship, kindIndex, options)
         enemy.x, enemy.y = spawnPoint(self.rng, ship)
     end
     enemy.kind, enemy.radius = kind, definition.radius
+    enemy.combatPower = definition.combatPower
     enemy.maxSpeed, enemy.thrust, enemy.turnSpeed = definition.maxSpeed, definition.thrust, definition.turnSpeed
     enemy.brake = definition.brake
     -- Give lighter thrust the same time to build momentum out of low-speed drag.
@@ -372,7 +378,7 @@ local function wrappedDelta(distance, extent)
     return (distance + extent / 2) % extent - extent / 2
 end
 
-local function checkContact(enemy, ship, x, y, motion, elapsed, step)
+local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     if ship:isDestroyed() then return end
     local dx, dy = enemy.x - x, enemy.y - y
     local margin = enemy.radius
@@ -382,6 +388,7 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step)
     local first, last = math.max(0, near), math.min(1, far)
     if first > last then
         enemy.contactRadius = nil
+        if gladiator then gladiator:finishNearMiss(enemy, "aerobatics") end
         return
     end
 
@@ -392,13 +399,24 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step)
     local ry = wrappedDelta(y - shipY + vy * middle, Arena.height) - vy * middle
     local radius = enemy.contactRadius or ship:hitRadius() + margin
     local span = last - first
-    if not enemy.contactRadius and Collision.circleEntry(rx + vx * first, ry + vy * first, vx * span, vy * span, radius) then
+    local startRx, startRy = rx + vx * first, ry + vy * first
+    local segVx, segVy = vx * span, vy * span
+    local collided = enemy.contactRadius ~= nil
+    if not enemy.contactRadius and Collision.circleEntry(startRx, startRy, segVx, segVy, radius) then
         ship:takeDamage(contactDamage)
+        collided = true
     end
 
     -- Keep the contact latched until separation, even if the shield broke on impact.
     local endX, endY = rx + vx, ry + vy
-    enemy.contactRadius = last == 1 and endX * endX + endY * endY <= radius * radius and radius or nil
+    local endDistSq = endX * endX + endY * endY
+    enemy.contactRadius = last == 1 and endDistSq <= radius * radius and radius or nil
+    if gladiator and not ship:isDestroyed() then
+        local minDist = Collision.closestDistance(startRx, startRy, segVx, segVy)
+        local endDist = math.sqrt(endDistSq)
+        local relativeSpeed = step > 0 and math.sqrt(vx * vx + vy * vy) / step or 0
+        gladiator:trackNearMiss(enemy, minDist, endDist, radius, relativeSpeed, "aerobatics", collided)
+    end
 end
 
 local function move(group, enemy, dt, ship, aimAngle, motion)
@@ -431,7 +449,7 @@ local function move(group, enemy, dt, ship, aimAngle, motion)
                 end
             end
         end
-        if step > 0 then checkContact(enemy, ship, x, y, motion, motion.duration - dt, step) end
+        if step > 0 then checkContact(enemy, ship, x, y, motion, motion.duration - dt, step, group.gladiator) end
         dt = dt - step
     end
     return enemy.phase == "departing" and clearedExit(enemy, view, enemy.wave.exit.edge)
@@ -488,7 +506,8 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
         local wave = enemy.wave
         if enemy.wingman and wave.burst and wave.burst.remaining == 0 then wave.burst = nil end
     end
-    self.fire:update(dt, ship)
+    self.playerCombatPower = ship.combatPower or Ship.combatPower
+    self.fire:update(dt, ship, self.gladiator)
     computeSeparation(self.items)
     local x, y = ship.prevX or ship.x, ship.prevY or ship.y
     local motion = {x = x, y = y, duration = dt,
@@ -521,6 +540,7 @@ function Enemies:destroy(index)
     local enemy = self.items[index]
     if not enemy then return end
     enemy.dead = true
+    enemy.nearMiss = nil
     if enemy.wingman then
         enemy.wingman.wingman, enemy.wingman.goal = nil, nil
         enemy.wave.attacker, enemy.wave.burst = nil, nil
@@ -529,6 +549,12 @@ function Enemies:destroy(index)
     self.kills = self.kills + 1
     if enemy.kind then
         self.killsByKind[enemy.kind] = (self.killsByKind[enemy.kind] or 0) + 1
+    end
+    if self.gladiator then
+        local enemyPower = enemy.combatPower
+            or (enemy.kind and self.types[enemy.kind] and self.types[enemy.kind].combatPower)
+            or Ship.combatPower
+        self.gladiator:recordDestroy(enemyPower, self.playerCombatPower or Ship.combatPower)
     end
 end
 

@@ -28,4 +28,14 @@ function Collision.rectangleInterval(x, y, dx, dy, width, height)
     return math.max(nearX, nearY), math.min(farX, farY)
 end
 
+function Collision.closestDistance(rx, ry, vx, vy)
+    local a = vx * vx + vy * vy
+    local t = 0
+    if a > 0 then
+        t = math.max(0, math.min(1, -(rx * vx + ry * vy) / a))
+    end
+    local cx, cy = rx + vx * t, ry + vy * t
+    return math.sqrt(cx * cx + cy * cy), t
+end
+
 return Collision
