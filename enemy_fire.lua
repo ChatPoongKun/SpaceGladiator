@@ -43,9 +43,11 @@ function EnemyFire:shoot(enemy, ship)
     local targetX, targetY = ship.x, ship.y
     if enemy.kind == 1 then
         launchLinear(self, enemy, targetX, targetY, bullet, 0)
-        self.bursts[#self.bursts + 1] = {
+        local burst = {
             enemy = enemy, targetX = targetX, targetY = targetY, remaining = 2, delay = burstInterval,
         }
+        self.bursts[#self.bursts + 1] = burst
+        return burst
     elseif enemy.kind == 2 then
         launchLinear(self, enemy, targetX, targetY, laser, 0)
     else

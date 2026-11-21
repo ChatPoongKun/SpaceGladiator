@@ -83,30 +83,31 @@ return function(Ship, Enemies, Camera, check)
     do
         local ship, group = fixture()
         local squad = group:spawnSquad(ship)
-        local leader, wing = squad[1], squad[4]
+        local leader, escort, otherEscort = squad[1], squad[2], squad[3]
         group:update(leader.phaseRemaining + dt, ship)
-        for _, enemy in ipairs(squad) do
-            assert(isPatrolGoal(enemy, ship, group.view), "Each model must choose a goal in its own patrol range")
+        for _, enemy in ipairs({leader, escort, otherEscort}) do
+            assert(isPatrolGoal(enemy, ship, group.view), "Each independent patrol must use its hull's patrol range")
         end
-        check(wing.goal.y ~= squad[5].goal.y and length(wing.goal.x - ship.x, wing.goal.y - ship.y)
+        check((escort.goal.x ~= otherEscort.goal.x or escort.goal.y ~= otherEscort.goal.y)
+            and length(escort.goal.x - ship.x, escort.goal.y - ship.y)
             < length(leader.goal.x - ship.x, leader.goal.y - ship.y),
-            "Once deployed, WEDGE aircraft must choose their own goals closer to the player than OBTUSE")
+            "The escorts must choose distinct waypoints closer to the player than the OBTUSE")
 
         ship.y = ship.y + 80
-        local oldGoal, leaderGoal = wing.goal, leader.goal
+        local oldGoal, leaderGoal = escort.goal, leader.goal
         group:update(0.4, ship)
-        check(wing.goal == oldGoal and leader.goal == leaderGoal, "Unreached waypoints must stay fixed as the player moves")
+        check(escort.goal == oldGoal and leader.goal == leaderGoal, "Unreached waypoints must stay fixed as the player moves")
 
-        wing.x, wing.y = wing.goal.x, wing.goal.y
+        escort.x, escort.y = oldGoal.x, oldGoal.y
         group:update(dt, ship)
-        check(wing.goal ~= oldGoal and leader.goal == leaderGoal and isPatrolGoal(wing, ship, group.view),
-            "A WEDGE reaching its goal must choose a new one independently of the OBTUSE")
+        check(escort.goal ~= oldGoal and leader.goal == leaderGoal and isPatrolGoal(escort, ship, group.view),
+            "An escort reaching its goal must choose a new one independently of the OBTUSE")
         group:destroy(1)
-        oldGoal = wing.goal
-        wing.x, wing.y = wing.goal.x, wing.goal.y
+        oldGoal = escort.goal
+        escort.x, escort.y = oldGoal.x, oldGoal.y
         group:update(dt, ship)
-        check(wing.goal ~= oldGoal and isPatrolGoal(wing, ship, group.view),
-            "Surviving aircraft must continue their own patrol after the OBTUSE is destroyed")
+        check(escort.goal ~= oldGoal and isPatrolGoal(escort, ship, group.view),
+            "An escort must continue its own patrol after the OBTUSE is destroyed")
     end
 
     do
@@ -162,20 +163,87 @@ return function(Ship, Enemies, Camera, check)
             and leftWing.y < leftEscort.y and rightWing.y > rightEscort.y,
             "A squad must enter from one edge with an OBTUSE leader, two escorts and two flankers")
 
+        local patrol = {leader, leftEscort, rightEscort}
         local previousGoals, visits = {}, {}
+        local attackers, lastBurst = {}, nil
         for _ = 1, 10 * 60 do
             step(ship, group)
-            for _, enemy in ipairs(squad) do
-                if enemy.goal ~= previousGoals[enemy] then
-                    previousGoals[enemy] = enemy.goal
+            local burst = group.fire.bursts[1]
+            if burst and burst ~= lastBurst then
+                attackers[#attackers + 1], lastBurst = burst.enemy, burst
+                local partner = burst.enemy == leftWing and rightWing or leftWing
+                assert(length(partner.x - ship.x, partner.y - ship.y) > Enemies.types[1].patrolMax,
+                    "The next attacker must first pull back outside the WEDGE attack range")
+            end
+            for _, enemy in ipairs(patrol) do
+                local goal, previous = enemy.goal, previousGoals[enemy]
+                if goal and (not previous or goal.x ~= previous.x or goal.y ~= previous.y) then
+                    previousGoals[enemy] = {x = goal.x, y = goal.y}
                     visits[enemy] = (visits[enemy] or 0) + 1
                 end
             end
         end
-        for _, enemy in ipairs(squad) do
-            assert(visits[enemy] >= 3, "Every aircraft must keep reaching new waypoints with the player at rest")
+        for _, enemy in ipairs(patrol) do
+            assert((visits[enemy] or 0) >= 3, "Each independent patrol must visit several waypoints with the player at rest")
         end
-        check(true, "The stationary-player patrol must visit several distinct waypoints")
+        check(true, "The leader and both escorts must keep patrolling with the player at rest")
+        check(#attackers >= 3 and attackers[1] == leftWing, "The left WEDGE must open a repeating attack")
+        for i = 2, #attackers do
+            assert(attackers[i] ~= attackers[i - 1], "The WEDGE pair must alternate bursts")
+        end
+    end
+
+    do
+        local ship, group = fixture()
+        ship.x, ship.vx, ship.shield = 240, 85, 10000
+        local squad = group:spawnSquad(ship)
+        local left, right = squad[4], squad[5]
+        for _ = 1, 6 * 60 do
+            step(ship, group)
+            if #group.fire.bursts > 0 then break end
+        end
+        local burst = group.fire.bursts[1]
+        assert(burst and burst.enemy == left, "The left WEDGE must fire first against a moving player")
+        local x, y = right.goal.x, right.goal.y
+        check(x > ship.x and math.abs(y - ship.y) < 1e-6, "The wingman must lock a point ahead of the player's velocity")
+
+        -- Already lined up, the wingman must still wait for the last round.
+        right.angle = math.atan2(x - right.x, right.y - y)
+        right.vx, right.vy = 0, 0
+        ship.vx, ship.vy = 0, -80
+        for _ = 1, 14 do
+            step(ship, group)
+            assert(right.braking and not right.accelerating and right.goal.x == x and right.goal.y == y,
+                "The wingman must brake on its fixed intercept while the partner fires")
+        end
+        check(burst.remaining == 1, "Only the last round should still be pending")
+
+        -- The firing signal alone must not release a wingman facing away.
+        right.angle = right.angle + math.pi
+        step(ship, group)
+        assert(burst.remaining == 0 and right.braking, "The last round must leave before the wingman launches")
+        for _ = 1, 90 do
+            step(ship, group)
+            if right.accelerating then break end
+            assert(right.braking, "The wingman must keep braking through the turn")
+        end
+        local bearing = math.atan2(x - right.x, right.y - y)
+        check(right.accelerating and math.abs((right.angle - bearing + math.pi) % tau - math.pi) < math.rad(9)
+            and right.goal.x == x and right.goal.y == y, "Thrust must resume along the original intercept after alignment")
+
+        for _ = 1, 5 * 60 do
+            step(ship, group)
+            if #group.fire.bursts > 0 then break end
+        end
+        burst = group.fire.bursts[1]
+        assert(burst and burst.enemy == right, "The second WEDGE must finish its pass and fire")
+        group:destroy(5)
+        step(ship, group)
+        assert(isPatrolGoal(left, ship, group.view), "Losing a firing wingman must release the survivor to solo patrol")
+        left.x, left.y = left.goal.x, left.goal.y
+        step(ship, group)
+        check(#group.fire.bursts == 1 and group.fire.bursts[1].enemy == left,
+            "The surviving WEDGE must still fire at its own waypoint")
     end
 
     do
