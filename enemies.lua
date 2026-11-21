@@ -58,7 +58,8 @@ end
 
 function Enemies.new(rng)
     return setmetatable({
-        items = {}, kills = 0, spawnAccumulator = 0.5, rng = rng or math.random,
+        items = {}, kills = 0, killsByKind = {},
+        spawnAccumulator = 0.5, rng = rng or math.random,
         view = {left = 0, top = 0, right = Arena.width, bottom = Arena.height},
         fire = EnemyFire.new(),
     }, Enemies)
@@ -400,9 +401,13 @@ end
 
 function Enemies:destroy(index)
     local enemy = self.items[index]
-    if enemy then enemy.dead = true end
+    if not enemy then return end
+    enemy.dead = true
     table.remove(self.items, index)
     self.kills = self.kills + 1
+    if enemy.kind then
+        self.killsByKind[enemy.kind] = (self.killsByKind[enemy.kind] or 0) + 1
+    end
 end
 
 function Enemies:hitArea(x, y, radius, fraction)

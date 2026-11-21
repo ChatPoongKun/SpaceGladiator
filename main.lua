@@ -5,59 +5,153 @@ local Camera = require("camera")
 local Turret = require("turret")
 local Enemies = require("enemies")
 local Hud = require("hud")
+local Menu = require("menu")
 
 local ship, stars, fonts, camera, turret, enemies, hud
 local width, height, time = 1280, 800, 0
-local paused, focused = false, true
+local screen, selectedButton
+local focused = true
+local gameOverHold = 1.25
+local displayFile = "fullscreen.txt"
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged = false, false
+local testCompact, testDamaged, testFlow = false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local weaponNames = { "PROJECTILE", "MISSILE", "LASER" }
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not testMode then return defaultErrorHandler(message) end
+    if not (testMode or testFlow) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
 
-local function reset()
+local function setScreen(nextScreen)
+    screen, selectedButton = nextScreen, 1
+    input.boost, firing = false, false
+    love.mouse.setVisible(screen ~= "playing" and screen ~= "gameOver")
+    if screen == "title" or screen == "results" then
+        ship, camera, turret, enemies = nil, nil, nil, nil
+    end
+end
+
+local function startRun()
     ship = Ship.new(Arena.width, Arena.height)
     camera = Camera.new(ship.x, ship.y)
     camera:update(0, ship, width, height)
     turret = Turret.new(ship.angle)
     enemies = Enemies.new()
     input.turn, input.thrust, input.brake, input.boost = 0, false, false, false
-    firing = false
-    paused = false
+    time = 0
+    setScreen("playing")
 end
+
+local menus = {}
+
+local function showResults(reason)
+    local shield = ship.maxShield - ship.shield
+    local armor = ship.maxArmor - ship.armor
+    local hull = ship.maxHull - ship.hull
+    local rows = {
+        {label = "입은 피해", value = tostring(shield + armor + hull), heading = true},
+        {label = "실드 손실", value = tostring(shield)},
+        {label = "장갑 손실", value = tostring(armor)},
+        {label = "선체 손실", value = hull .. "칸"},
+        {label = "격추한 적", value = enemies.kills .. "기", heading = true},
+    }
+    for i, kind in ipairs(Enemies.types) do
+        rows[#rows + 1] = {label = kind.name, value = (enemies.killsByKind[i] or 0) .. "기", vertices = kind.vertices}
+    end
+    menus.results.subtitle, menus.results.rows = reason, rows
+    setScreen("results")
+end
+
+local function openSettings()
+    menus.settings.subtitle = nil
+    setScreen("settings")
+end
+
+local function closeSettings()
+    setScreen(ship and "pause" or "title")
+end
+
+local function fullscreenLabel()
+    return love.window.getFullscreen() and "전체 화면  ·  켜짐" or "전체 화면  ·  꺼짐"
+end
+
+local function toggleFullscreen()
+    local fullscreen = not love.window.getFullscreen()
+    if not love.window.setFullscreen(fullscreen, "desktop") then
+        menus.settings.subtitle = "화면 모드를 변경할 수 없습니다."
+        return
+    end
+    love.resize(love.graphics.getDimensions())
+    menus.settings.subtitle = nil
+    if not love.filesystem.write(displayFile, fullscreen and "1" or "0") then
+        menus.settings.subtitle = "화면 설정을 저장할 수 없습니다."
+    end
+end
+
+menus.title = {title = "DRIFT", buttons = {
+    {label = "게임 시작", action = startRun},
+    {label = "설정", action = openSettings},
+    {label = "게임 종료", action = function() love.event.quit() end},
+}}
+menus.pause = {title = "일시정지", buttons = {
+    {label = "계속하기", action = function() setScreen("playing") end},
+    {label = "설정", action = openSettings},
+    {label = "포기하기", action = function() showResults("전투 포기") end},
+    {label = "타이틀로 나가기", action = function() setScreen("title") end},
+}}
+menus.settings = {title = "설정", buttons = {
+    {label = fullscreenLabel, action = toggleFullscreen},
+    {label = "뒤로", action = closeSettings},
+}}
+menus.results = {title = "전투 정산", buttons = {
+    {label = "확인", action = function() setScreen("title") end},
+}}
+local gameOverMenu = {title = "GAME OVER", subtitle = "기체 파괴"}
+local unfocusedMenu = {title = "일시정지", subtitle = "게임 창으로 돌아오면 전투를 계속합니다."}
 
 function love.load(args)
     for _, arg in ipairs(args or {}) do
         if arg == "--test" then testMode = true end
+        if arg == "--test-flow" then testFlow = true end
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
     love.graphics.setBackgroundColor(0.018, 0.028, 0.055)
     love.graphics.setLineStyle("smooth")
-    love.mouse.setVisible(false)
+    if not (testMode or testFlow) and love.filesystem.getInfo(displayFile)
+        and love.filesystem.read(displayFile) == "1" then
+        love.window.setFullscreen(true, "desktop")
+    end
     width, height = love.graphics.getDimensions()
+    local menuFont = "assets/fonts/DriftMenu.ttf"
     fonts = {
         small = love.graphics.newFont(11),
         body = love.graphics.newFont(13),
         title = love.graphics.newFont(30),
+        menuTitle = love.graphics.newFont(menuFont, 34),
+        menuButton = love.graphics.newFont(menuFont, 18),
+        menuBody = love.graphics.newFont(menuFont, 15),
     }
     hud = Hud.new()
     stars = Starfield.new(width, height)
-    reset()
+    setScreen("title")
+    if testFlow then
+        require("tests.flow")(function() return screen, ship, enemies, turret end)
+        love.event.quit(0)
+        return
+    end
     if testCompact then
         love.window.updateMode(800, 600)
         love.resize(800, 600)
     end
     if testMode then
         require("tests.check")(Ship, Starfield, Camera, Turret, Enemies, Hud)
+        startRun()
         -- Exercise the real input, update, and draw callbacks in the arena.
         for frame = 1, 900 do
             if frame == 120 then love.keypressed("space") end
@@ -69,21 +163,32 @@ function love.load(args)
 end
 
 function love.update(dt)
-    if paused or (not focused and not testMode) then return end
+    if not focused and not testMode then return end
     dt = math.min(dt, 1 / 20)
     if dt <= 0 then return end
+    if not ship then
+        stars:update(dt, 12, -18, 0, width, height, 0)
+        return
+    end
+    if screen == "pause" or screen == "settings" then return end
     time = time + dt
+    if screen == "gameOver" then
+        ship:update(dt, input)
+        if ship.destructionAge >= Ship.destructionDuration + gameOverHold then
+            showResults("기체 파괴")
+        end
+        return
+    end
     input.turn = (love.keyboard.isDown("d") and 1 or 0)
         - (love.keyboard.isDown("a") and 1 or 0)
     input.thrust = love.keyboard.isDown("w")
     input.brake = love.keyboard.isDown("s")
     mouseX, mouseY = love.mouse.getPosition()
-    firing = love.mouse.isDown(1)
     if testMode then
         input.turn, input.thrust, input.brake = 0.55, true, false
         mouseX, mouseY, firing = width * 0.60, height * 0.24, true
     end
-    if ship:isDestroyed() then input.turn, input.thrust, input.brake, input.boost = 0, false, false, false end
+
     ship:update(dt, input)
     input.boost = false
     camera:update(dt, ship, width, height)
@@ -91,9 +196,12 @@ function love.update(dt)
     stars:update(dt, 120 + ship.vx * 2.8 + ship.boostX * surge,
         -290 + ship.vy * 2.8 + ship.boostY * surge,
         ship.accelerating and 1 or 0, width, height, ship.boostLevel)
-    local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
     enemies:update(dt, ship, turret.angle, camera, width, height)
-    firing = firing and not ship:isDestroyed()
+    if ship:isDestroyed() then
+        setScreen("gameOver")
+        return
+    end
+    local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
     turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height)
 end
 
@@ -147,29 +255,15 @@ local function drawHud()
 
     local mode = ship.braking and "BRAKING" or ship.accelerating and "THRUST" or "COAST"
     if ship.boostLevel > 0 then mode = "BOOST" end
-    if paused or not focused then mode = "PAUSED" end
+    if screen ~= "playing" or not focused then mode = "PAUSED" end
     if ship:isDestroyed() then mode = "DESTROYED" end
     local mx = width - 180
     g.setColor(0.38, 0.91, 0.78, 0.85)
     g.circle("fill", mx, y + 14, 3)
     label(mode, mx + 12, y + 8)
     label(string.format("ZOOM  %d%%", math.floor(camera.zoom * 100 + 0.5)), mx - 3, y + 59)
-    label("R  RESET     P  PAUSE", mx - 3, height - 63)
-    label("ESC  EXIT", mx - 3, height - 41)
-
-    local showDestroyed = ship:isDestroyed() and (ship.destructionAge or 0) >= Ship.destructionDuration
-    if showDestroyed or paused or (not focused and not testMode) then
-        g.setColor(0.018, 0.028, 0.055, 0.7)
-        g.rectangle("fill", 0, height / 2 - 48, width, 96)
-        g.setFont(fonts.title)
-        g.setColor(0.83, 0.93, 0.97, 1)
-        g.printf(showDestroyed and "SHIP DESTROYED" or "PAUSED", 0, height / 2 - 29, width, "center")
-        g.setFont(fonts.body)
-        g.setColor(0.53, 0.65, 0.75, 1)
-        local hint = focused and "Press P to resume flight" or "Return to the window to resume"
-        if showDestroyed then hint = "Press R to restart" end
-        g.printf(hint, 0, height / 2 + 12, width, "center")
-    end
+    label("R  RESET", mx - 3, height - 63)
+    label("ESC / P  PAUSE", mx - 3, height - 41)
 end
 
 local function wrapOffsets(position, extent, reach)
@@ -204,8 +298,7 @@ local function drawPlayer(originX, originY)
     g.pop()
 end
 
-function love.draw()
-    stars:draw()
+local function drawFlight()
     love.graphics.push()
     local originX, originY = camera:worldToScreen(0, 0, width, height)
     love.graphics.translate(originX, originY)
@@ -216,7 +309,7 @@ function love.draw()
     turret:drawEffects(camera, width, height)
     love.graphics.pop()
     drawHud()
-    if focused or testMode then
+    if screen == "playing" and (focused or testMode) then
         local g = love.graphics
         local x, y = love.mouse.getPosition()
         if testMode then x, y = mouseX, mouseY end
@@ -229,6 +322,18 @@ function love.draw()
         g.line(x, y - 12, x, y - 9)
         g.line(x, y + 9, x, y + 12)
     end
+end
+
+function love.draw()
+    stars:draw()
+    if ship then drawFlight() end
+    local menu = menus[screen]
+    if screen == "gameOver" and ship.destructionAge >= Ship.destructionDuration then
+        menu = gameOverMenu
+    elseif screen == "playing" and not focused and not testMode then
+        menu = unfocusedMenu
+    end
+    if menu then Menu.draw(menu, fonts, selectedButton, width, height, ship ~= nil) end
     if testMode and not captureRequested then
         captureRequested = true
         love.graphics.captureScreenshot(function(data)
@@ -244,24 +349,59 @@ function love.draw()
 end
 
 function love.keypressed(key, _, isRepeat)
-    if key == "escape" then love.event.quit()
-    elseif key == "r" then reset()
-    elseif key == "1" or key == "2" or key == "3" then turret.weapon = tonumber(key)
-    elseif key == "space" and not isRepeat and not paused and (focused or testMode) and not ship:isDestroyed() then
-        input.boost = true
-    elseif key == "p" then
-        paused = not paused
-        input.boost = false
+    if isRepeat then return end
+    if key == "escape" or key == "p" then
+        if screen == "playing" then setScreen("pause")
+        elseif screen == "pause" then setScreen("playing")
+        elseif screen == "settings" and key == "escape" then closeSettings() end
+        return
     end
+
+    local menu = menus[screen]
+    if menu then
+        if key == "up" then selectedButton = (selectedButton - 2) % #menu.buttons + 1
+        elseif key == "down" then selectedButton = selectedButton % #menu.buttons + 1
+        elseif key == "return" or key == "kpenter" then menu.buttons[selectedButton].action() end
+        return
+    end
+
+    if screen ~= "playing" then return end
+    if key == "r" then startRun()
+    elseif key == "1" or key == "2" or key == "3" then turret.weapon = tonumber(key)
+    elseif key == "space" and (focused or testMode) then input.boost = true end
+end
+
+function love.mousemoved(x, y)
+    local menu = menus[screen]
+    if menu then selectedButton = Menu.buttonAt(menu, width, height, x, y) or selectedButton end
+end
+
+function love.mousepressed(x, y, button)
+    if button ~= 1 then return end
+    if screen == "playing" then
+        firing = focused
+        return
+    end
+    local menu = menus[screen]
+    if not menu then return end
+    local index = Menu.buttonAt(menu, width, height, x, y)
+    if index then
+        selectedButton = index
+        menu.buttons[index].action()
+    end
+end
+
+function love.mousereleased(_, _, button)
+    if button == 1 then firing = false end
 end
 
 function love.focus(hasFocus)
     focused = hasFocus
-    if not focused then input.boost = false end
+    if not focused then input.boost, firing = false, false end
 end
 
 function love.resize(w, h)
     width, height = w, h
     stars:resize(w, h)
-    camera:update(0, ship, w, h)
+    if camera then camera:update(0, ship, w, h) end
 end
