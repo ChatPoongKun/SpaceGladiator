@@ -13,6 +13,13 @@ Gladiator.popupDuration = 1.05
 Gladiator.popupRise = 26
 Gladiator.hitLockoutDuration = 0.6
 Gladiator.missileSettleDuration = 0.25
+Gladiator.feverWindow = 1.0
+Gladiator.feverThreshold = 100
+Gladiator.feverMinDuration = 5.0
+Gladiator.feverSustainRate = 100
+Gladiator.feverCooldownDuration = 5.0
+Gladiator.feverMultiplier = 2
+Gladiator.feverFlashDuration = 0.75
 
 local categoryInfo = {
     destroy = { label = "DESTROY", color = { 1.0, 0.58, 0.32 } },
@@ -34,6 +41,20 @@ function Gladiator.new()
         missileSituation = nil,
         pendingEvasions = nil,
         batchEpoch = nil,
+        elapsed = 0,
+        recentGains = {},
+        feverActive = false,
+        feverDuration = 0,
+        feverPoints = 0,
+        feverCooldown = 0,
+        feverTotalTime = 0,
+        feverMaxDuration = 0,
+        feverFlash = 0,
+        feverAura = 0,
+        feverBursts = {},
+        feverSparks = {},
+        sparkAccumulator = 0,
+        sparkSeed = 0,
     }, Gladiator)
 end
 
@@ -54,7 +75,7 @@ function Gladiator.evasionPoints(clearance, margin, relativeSpeed)
     return math.max(Gladiator.evasionBase, math.floor(Gladiator.evasionBase * multiplier + 0.5))
 end
 
-function Gladiator:spawnPopup(category, points, x, y)
+function Gladiator:spawnPopup(category, points, x, y, fever)
     if not x or not y or not points or points <= 0 then return end
     local px, py = x, y
     for _, existing in ipairs(self.popups) do
@@ -69,18 +90,93 @@ function Gladiator:spawnPopup(category, points, x, y)
         y = py,
         age = 0,
         duration = self.popupDuration,
+        fever = fever or false,
     }
+end
+
+function Gladiator:pruneRecentGains()
+    local cutoff = self.elapsed - self.feverWindow - 1e-9
+    local write = 1
+    for read = 1, #self.recentGains do
+        local entry = self.recentGains[read]
+        if entry.time >= cutoff then
+            self.recentGains[write] = entry
+            write = write + 1
+        end
+    end
+    for i = write, #self.recentGains do
+        self.recentGains[i] = nil
+    end
+end
+
+function Gladiator:recentPoints()
+    self:pruneRecentGains()
+    local sum = 0
+    for _, entry in ipairs(self.recentGains) do
+        sum = sum + entry.points
+    end
+    return sum
+end
+
+function Gladiator:feverAverageRate()
+    if not self.feverActive or self.feverDuration <= 0 then return 0 end
+    return self.feverPoints / self.feverDuration
+end
+
+function Gladiator:spawnFeverSpark(x, y, vx, vy, duration, size, gold)
+    self.feverSparks[#self.feverSparks + 1] = {
+        x = x, y = y, vx = vx, vy = vy,
+        age = 0, duration = duration, size = size, gold = gold,
+    }
+end
+
+function Gladiator:startFever(x, y)
+    self.feverActive = true
+    self.feverDuration = 0
+    self.feverPoints = 0
+    self.recentGains = {}
+    self.feverFlash = 1
+    local bx, by = x, y
+    if bx and by then
+        self.feverBursts[#self.feverBursts + 1] = { x = bx, y = by, age = 0, duration = 0.85 }
+        for i = 1, 18 do
+            local angle = (i / 18) * math.pi * 2 + (i % 2) * 0.14
+            local speed = 120 + (i % 3) * 75
+            self:spawnFeverSpark(bx, by, math.cos(angle) * speed, math.sin(angle) * speed,
+                0.45 + (i % 3) * 0.14, 2.5 + (i % 2) * 1.5, i % 3 ~= 0)
+        end
+    end
+end
+
+function Gladiator:endFever()
+    if not self.feverActive then return end
+    self.feverMaxDuration = math.max(self.feverMaxDuration, self.feverDuration)
+    self.feverActive = false
+    self.feverDuration = 0
+    self.feverPoints = 0
+    self.feverCooldown = self.feverCooldownDuration
+    self.recentGains = {}
 end
 
 function Gladiator:award(category, points, label, x, y)
     if not points or points <= 0 then return 0 end
+    local isFever = self.feverActive
+    local awarded = isFever and (points * self.feverMultiplier) or points
     local bucket = self[category]
-    bucket.points = bucket.points + points
+    bucket.points = bucket.points + awarded
     bucket.count = bucket.count + 1
-    self.total = self.total + points
-    self.lastEvent = { category = category, points = points, label = label, age = 0 }
-    self:spawnPopup(category, points, x, y)
-    return points
+    self.total = self.total + awarded
+    self.lastEvent = { category = category, points = awarded, label = label, age = 0, fever = isFever }
+    self:spawnPopup(category, awarded, x, y, isFever)
+    if isFever then
+        self.feverPoints = self.feverPoints + awarded
+    elseif self.feverCooldown <= 0 then
+        self.recentGains[#self.recentGains + 1] = { time = self.elapsed, points = awarded }
+        if self:recentPoints() >= self.feverThreshold then
+            self:startFever(x, y)
+        end
+    end
+    return awarded
 end
 
 function Gladiator:recordDestroy(enemyPower, playerPower, x, y)
@@ -279,11 +375,77 @@ function Gladiator:trackNearMiss(entity, minDistance, endDistance, hitRadius, re
     return 0
 end
 
-function Gladiator:update(dt)
+function Gladiator:update(dt, ship)
     if dt <= 0 then return end
+    self.elapsed = self.elapsed + dt
     if self.evasionLockout > 0 then
         self.evasionLockout = math.max(0, self.evasionLockout - dt)
     end
+    if self.feverActive then
+        if ship and ship:isDestroyed() then
+            self:endFever()
+        else
+            local endDuration = math.max(self.feverMinDuration, self.feverPoints / self.feverSustainRate)
+            if self.feverDuration + dt <= endDuration + 1e-9 then
+                self.feverDuration = self.feverDuration + dt
+                self.feverTotalTime = self.feverTotalTime + dt
+                self.feverMaxDuration = math.max(self.feverMaxDuration, self.feverDuration)
+            else
+                local activeStep = math.max(0, endDuration - self.feverDuration)
+                local leftover = dt - activeStep
+                self.feverDuration = self.feverDuration + activeStep
+                self.feverTotalTime = self.feverTotalTime + activeStep
+                self.feverMaxDuration = math.max(self.feverMaxDuration, self.feverDuration)
+                self:endFever()
+                self.feverCooldown = math.max(0, self.feverCooldown - leftover)
+            end
+        end
+    elseif self.feverCooldown > 0 then
+        self.feverCooldown = math.max(0, self.feverCooldown - dt)
+    end
+    self:pruneRecentGains()
+
+    if self.feverFlash > 0 then
+        self.feverFlash = math.max(0, self.feverFlash - dt / self.feverFlashDuration)
+    end
+    local targetAura = self.feverActive and 1 or 0
+    local auraRate = self.feverActive and 6 or 3
+    self.feverAura = self.feverAura + (targetAura - self.feverAura) * math.min(1, dt * auraRate)
+    if not self.feverActive and self.feverAura < 0.005 then self.feverAura = 0 end
+
+    if self.feverActive and ship and not ship:isDestroyed() then
+        self.sparkAccumulator = self.sparkAccumulator + dt * 36
+        while self.sparkAccumulator >= 1 do
+            self.sparkAccumulator = self.sparkAccumulator - 1
+            self.sparkSeed = self.sparkSeed + 1
+            local angle = (self.sparkSeed * 2.399963) % (math.pi * 2)
+            local radius = ship:hitRadius() * (0.75 + (self.sparkSeed % 4) * 0.12)
+            local sx = ship.x + math.cos(angle) * radius
+            local sy = ship.y + math.sin(angle) * radius
+            local vx = -ship.vx * 0.35 + math.cos(angle) * 55
+            local vy = -ship.vy * 0.35 + math.sin(angle) * 55
+            self:spawnFeverSpark(sx, sy, vx, vy, 0.34 + (self.sparkSeed % 3) * 0.08,
+                2.0 + (self.sparkSeed % 2), self.sparkSeed % 3 ~= 0)
+        end
+    else
+        self.sparkAccumulator = 0
+    end
+
+    for i = #self.feverBursts, 1, -1 do
+        local burst = self.feverBursts[i]
+        burst.age = burst.age + dt
+        if burst.age >= burst.duration then table.remove(self.feverBursts, i) end
+    end
+    for i = #self.feverSparks, 1, -1 do
+        local spark = self.feverSparks[i]
+        spark.age = spark.age + dt
+        spark.x = spark.x + spark.vx * dt
+        spark.y = spark.y + spark.vy * dt
+        spark.vx = spark.vx * math.max(0, 1 - dt * 2.4)
+        spark.vy = spark.vy * math.max(0, 1 - dt * 2.4)
+        if spark.age >= spark.duration then table.remove(self.feverSparks, i) end
+    end
+
     if self.lastEvent then
         self.lastEvent.age = self.lastEvent.age + dt
         if self.lastEvent.age >= self.noticeDuration then
@@ -346,8 +508,8 @@ function Gladiator:drawPopups(camera, width, height, font)
         sy = sy - rise
 
         local info = categoryInfo[popup.category] or categoryInfo.aerobatics
-        local color = info.color
-        local text = "+" .. tostring(popup.points)
+        local color = popup.fever and { 1.0, 0.90, 0.44 } or info.color
+        local text = popup.fever and ("+" .. tostring(popup.points) .. " x2") or ("+" .. tostring(popup.points))
         local textW = activeFont:getWidth(text)
         local totalW = iconSize + gap + textW
         local left = math.floor(sx - totalW * 0.5)
@@ -364,6 +526,124 @@ function Gladiator:drawPopups(camera, width, height, font)
         g.print(text, textX + 1, textY + 1)
         g.setColor(color[1], color[2], color[3], alpha)
         g.print(text, textX, textY)
+    end
+    g.pop()
+end
+
+function Gladiator:drawFeverWorld(ship, time)
+    if self.feverAura <= 0 and #self.feverBursts == 0 and #self.feverSparks == 0 then return end
+    local g = love.graphics
+    local t = time or self.elapsed
+    g.push("all")
+    g.setLineStyle("smooth")
+
+    for _, burst in ipairs(self.feverBursts) do
+        local p = math.min(1, burst.age / burst.duration)
+        local fade = (1 - p) * (1 - p)
+        local outerR = 24 + 210 * (1 - (1 - p) * (1 - p))
+        local innerR = 14 + 135 * p
+        g.setColor(1.0, 0.78, 0.25, 0.16 * fade)
+        g.circle("fill", burst.x, burst.y, innerR * 0.65)
+        g.setLineWidth(3.2 * fade + 0.8)
+        g.setColor(1.0, 0.88, 0.38, 0.9 * fade)
+        g.circle("line", burst.x, burst.y, outerR)
+        g.setLineWidth(2.0 * fade + 0.5)
+        g.setColor(1.0, 0.34, 0.64, 0.75 * fade)
+        g.circle("line", burst.x, burst.y, innerR)
+        for i = 0, 11 do
+            local angle = i * math.pi / 6 + p * 0.6
+            local r1 = innerR * 0.72
+            local r2 = outerR * (i % 2 == 0 and 1.06 or 0.88)
+            g.setColor(1.0, 0.94, 0.62, 0.75 * fade)
+            g.setLineWidth(1.5)
+            g.line(burst.x + math.cos(angle) * r1, burst.y + math.sin(angle) * r1,
+                burst.x + math.cos(angle) * r2, burst.y + math.sin(angle) * r2)
+        end
+    end
+
+    for _, spark in ipairs(self.feverSparks) do
+        local fade = math.max(0, 1 - spark.age / spark.duration)
+        local s = spark.size * (0.4 + 0.6 * fade)
+        if spark.gold then
+            g.setColor(1.0, 0.88, 0.38, 0.92 * fade)
+        else
+            g.setColor(1.0, 0.42, 0.72, 0.88 * fade)
+        end
+        g.polygon("fill",
+            spark.x, spark.y - s * 1.4,
+            spark.x + s, spark.y,
+            spark.x, spark.y + s * 1.4,
+            spark.x - s, spark.y)
+    end
+
+    if self.feverAura > 0 and ship and not ship:isDestroyed() then
+        local aura = self.feverAura
+        local pulse = 0.85 + math.sin(t * 14) * 0.15
+        local baseR = ship:hitRadius() + 9 + math.sin(t * 10) * 2.5
+        g.setColor(1.0, 0.72, 0.22, 0.10 * aura * pulse)
+        g.circle("fill", ship.x, ship.y, baseR + 10)
+        g.setLineWidth(2.0)
+        for i = 0, 3 do
+            local start = t * 3.4 + i * (math.pi * 0.5)
+            g.setColor(1.0, 0.86, 0.34, 0.82 * aura)
+            g.arc("line", "open", ship.x, ship.y, baseR, start, start + 0.95)
+        end
+        g.setLineWidth(1.4)
+        for i = 0, 2 do
+            local start = -t * 2.6 + i * (math.pi * 2 / 3)
+            g.setColor(1.0, 0.38, 0.68, 0.68 * aura)
+            g.arc("line", "open", ship.x, ship.y, baseR + 6, start, start + 1.1)
+        end
+    end
+    g.pop()
+end
+
+function Gladiator:drawFeverOverlay(width, height, time)
+    if self.feverAura <= 0 and self.feverFlash <= 0 then return end
+    local g = love.graphics
+    local t = time or self.elapsed
+    g.push("all")
+    g.origin()
+    g.setLineStyle("smooth")
+
+    if self.feverFlash > 0 then
+        local f = self.feverFlash * self.feverFlash
+        g.setColor(1.0, 0.86, 0.36, 0.22 * f)
+        g.rectangle("fill", 0, 0, width, height)
+    end
+
+    if self.feverAura > 0 then
+        local aura = self.feverAura
+        local pulse = 0.75 + 0.25 * math.sin(t * 10)
+        -- Layered glowing vignette strips along screen edges.
+        for band = 1, 3 do
+            local thickness = band * 8
+            local alpha = (0.14 / band) * aura * pulse
+            g.setColor(1.0, 0.68 - band * 0.10, 0.24 + band * 0.12, alpha)
+            g.rectangle("fill", 0, 0, width, thickness)
+            g.rectangle("fill", 0, height - thickness, width, thickness)
+            g.rectangle("fill", 0, thickness, thickness, height - thickness * 2)
+            g.rectangle("fill", width - thickness, thickness, thickness, height - thickness * 2)
+        end
+
+        g.setLineWidth(2.5)
+        g.setColor(1.0, 0.84, 0.34, 0.78 * aura * pulse)
+        g.rectangle("line", 5, 5, width - 10, height - 10)
+        g.setLineWidth(1.2)
+        g.setColor(1.0, 0.38, 0.66, 0.55 * aura)
+        g.rectangle("line", 10, 10, width - 20, height - 20)
+
+        -- Animated corner brackets.
+        local span = 34 + math.sin(t * 12) * 4
+        g.setLineWidth(3)
+        g.setColor(1.0, 0.92, 0.52, 0.92 * aura)
+        for _, cx in ipairs({ 14, width - 14 }) do
+            local sx = cx == 14 and 1 or -1
+            for _, cy in ipairs({ 14, height - 14 }) do
+                local sy = cy == 14 and 1 or -1
+                g.line(cx + sx * span, cy, cx, cy, cx, cy + sy * span)
+            end
+        end
     end
     g.pop()
 end

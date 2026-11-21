@@ -503,5 +503,86 @@ return function(Ship, Enemies, Turret, Gladiator)
             "Dodging 10 missiles then getting hit 0.1s later must cancel the entire evasion situation")
     end
 
+    -- 16. Fever Time: 1s >= 100pt trigger, 2x multiplier, >= 5s minimum, >= 100pt/s sustain, 5s cooldown, stats & visuals.
+    do
+        local Camera = require("camera")
+        local gladiator = Gladiator.new()
+        local ship = Ship.new(Arena.width, Arena.height)
+
+        -- 60 + 50 spread over 1.1s (> 1s window) must NOT trigger Fever Time.
+        gladiator:award("destroy", 60, "DESTROY", ship.x, ship.y)
+        gladiator:update(1.1, ship)
+        gladiator:award("destroy", 50, "DESTROY", ship.x, ship.y)
+        check(not gladiator.feverActive, "Points spread over more than 1 second must not trigger Fever Time")
+
+        -- Adding 50 more within 0.5s reaches 100 in 1s and triggers Fever Time.
+        gladiator:update(0.5, ship)
+        gladiator:award("destroy", 50, "DESTROY", ship.x, ship.y)
+        check(gladiator.feverActive and gladiator.feverDuration == 0,
+            "Earning 100+ points within 1 second must activate Fever Time")
+
+        -- Points earned during Fever Time must be doubled (2x) and sustain beyond 5 seconds when avg >= 100/s.
+        local gained = gladiator:recordDestroy(100, 100, ship.x, ship.y)
+        check(gained == 20, "Enemy destruction points must be doubled during Fever Time")
+        gladiator:award("aerobatics", 290, "AEROBATICS", ship.x, ship.y) -- +580 => total 600 fever points
+
+        -- Advance to 4.9s and 5.5s: 600 / 5.5 = 109.1 >= 100, so Fever Time must stay active.
+        gladiator:update(4.9, ship)
+        check(gladiator.feverActive, "Fever Time must remain active before 5 seconds")
+        gladiator:update(0.6, ship)
+        check(gladiator.feverActive and math.abs(gladiator.feverDuration - 5.5) < 1e-6,
+            "Fever Time must continue past 5 seconds while average points/sec is at least 100")
+
+        -- Render all Fever visual effects cleanly while active.
+        local camera = Camera.new(ship.x, ship.y)
+        camera:update(0, ship, 1280, 800)
+        local font = love.graphics.newFont(11)
+        local ok, err = pcall(function()
+            Arena.draw(0.5, gladiator.feverAura)
+            gladiator:drawFeverWorld(ship, 1.5)
+            gladiator:drawFeverOverlay(1280, 800, 1.5)
+            gladiator:drawPopups(camera, 1280, 800, font)
+        end)
+        check(ok, "Fever Time world, overlay, arena, and popup effects must render cleanly: " .. tostring(err))
+
+        -- Advance 0.6s (from 5.5s to 6.1s): average drops below 100 at exact 6.0s, leaving 0.1s elapsed on 5s cooldown.
+        gladiator:update(0.6, ship)
+        check(not gladiator.feverActive
+            and math.abs(gladiator.feverTotalTime - 6.0) < 1e-6
+            and math.abs(gladiator.feverMaxDuration - 6.0) < 1e-6
+            and math.abs(gladiator.feverCooldown - 4.9) < 1e-6,
+            "Fever Time must end at the exact moment average drops below 100/s after 5s and enter 5s cooldown")
+
+        -- Earning 200 points during cooldown must NOT re-trigger Fever Time.
+        gladiator:award("destroy", 200, "DESTROY", ship.x, ship.y)
+        check(not gladiator.feverActive, "Fever Time must not trigger during the 5-second cooldown")
+        gladiator:update(4.8, ship)
+        gladiator:award("destroy", 200, "DESTROY", ship.x, ship.y)
+        check(not gladiator.feverActive, "Fever Time must stay locked until the full 5-second cooldown finishes")
+
+        -- After cooldown completes, 100+ points in 1s must trigger a second Fever Time lasting the 5s minimum.
+        gladiator:update(0.2, ship)
+        check(gladiator.feverCooldown == 0, "Cooldown must reach zero after 5 seconds")
+        gladiator:award("destroy", 100, "DESTROY", ship.x, ship.y)
+        check(gladiator.feverActive, "Fever Time must re-trigger after cooldown expires")
+        gladiator:update(4.9, ship)
+        check(gladiator.feverActive, "Second Fever Time must last at least 5 seconds even with 0 points")
+        gladiator:update(0.2, ship)
+        check(not gladiator.feverActive
+            and math.abs(gladiator.feverTotalTime - 11.0) < 1e-6
+            and math.abs(gladiator.feverMaxDuration - 6.0) < 1e-6,
+            "Total Fever Time must accumulate across activations while max duration tracks the longest single session")
+
+        -- Destroying the player ship mid-Fever must immediately stop Fever Time.
+        gladiator:update(5.0, ship)
+        gladiator:award("destroy", 100, "DESTROY", ship.x, ship.y)
+        gladiator:update(1.5, ship)
+        check(gladiator.feverActive, "Third Fever Time must be active before ship destruction")
+        ship.shield, ship.armor, ship.hull = 0, 0, 0
+        gladiator:update(1.0, ship)
+        check(not gladiator.feverActive and math.abs(gladiator.feverTotalTime - 12.5) < 1e-6,
+            "Destroying the ship must end Fever Time immediately without padding duration")
+    end
+
     print(string.format("PASS: %d Gladiator Points checks", checks))
 end

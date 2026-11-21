@@ -61,6 +61,8 @@ local function showResults(reason)
         {label = "적 파괴", value = string.format("%d회 · %d점", gladiator.destroy.count, gladiator.destroy.points)},
         {label = "미사일 회피", value = string.format("%d회 · %d점", gladiator.missileDodge.count, gladiator.missileDodge.points)},
         {label = "곡예비행", value = string.format("%d회 · %d점", gladiator.aerobatics.count, gladiator.aerobatics.points)},
+        {label = "피버타임 유지시간", value = string.format("%.1f초", gladiator.feverTotalTime)},
+        {label = "피버타임 최대 지속시간", value = string.format("%.1f초", gladiator.feverMaxDuration)},
         {label = "입은 피해", value = tostring(shield + armor), heading = true},
         {label = "실드 손실", value = tostring(shield)},
         {label = "장갑 손실", value = tostring(armor)},
@@ -189,7 +191,7 @@ function love.update(dt)
     time = time + dt
     if screen == "gameOver" then
         ship:update(dt, input)
-        gladiator:update(dt)
+        gladiator:update(dt, ship)
         if ship.destructionAge >= Ship.destructionDuration + gameOverHold then
             showResults("기체 파괴")
         end
@@ -220,7 +222,7 @@ function love.update(dt)
     end
     local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
     turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height)
-    gladiator:update(dt)
+    gladiator:update(dt, ship)
 end
 
 local function label(text, x, y, alpha)
@@ -255,23 +257,62 @@ local function drawHud()
     g.setColor(0.83, 0.93, 0.97, 1)
     g.print("D R I F T", 32, 25)
     label("04  /  TACTICAL FLIGHT", 34, 66)
-    local gx, gw = math.floor(width / 2) - 110, 220
+    local gx, gw = math.floor(width / 2) - 115, 230
     g.setFont(fonts.small)
-    g.setColor(0.53, 0.65, 0.75, 1)
-    g.printf("GLADIATOR POINTS", gx, 29, gw, "center")
-    g.setFont(fonts.title)
-    if gladiator.lastEvent then
-        g.setColor(1, 0.84, 0.44, 1)
-    else
-        g.setColor(0.92, 0.86, 0.68, 1)
-    end
-    g.printf(string.format("%04d", gladiator.total), gx, 46, gw, "center")
-    if gladiator.lastEvent then
-        local fade = math.max(0, 1 - gladiator.lastEvent.age / gladiator.noticeDuration)
+    if gladiator.feverActive then
+        local pulse = 0.78 + 0.22 * math.sin(time * 14)
+        g.setColor(1, 0.84, 0.34, pulse)
+        g.printf(string.format("FEVER TIME x2  /  %.1fS", gladiator.feverDuration), gx, 26, gw, "center")
+        g.setFont(fonts.title)
+        g.setColor(1, 0.92, 0.52, 1)
+        g.printf(string.format("%04d", gladiator.total), gx, 43, gw, "center")
+        local rate = gladiator:feverAverageRate()
+        local barW = 148
+        local barX, barY = math.floor(width / 2 - barW / 2), 82
+        local ratio = math.min(1, rate / gladiator.feverSustainRate)
+        g.setColor(0.18, 0.14, 0.22, 0.85)
+        g.rectangle("fill", barX, barY, barW, 5, 2, 2)
+        if gladiator.feverDuration < gladiator.feverMinDuration or rate >= gladiator.feverSustainRate then
+            g.setColor(1, 0.82, 0.32, 0.95)
+        else
+            g.setColor(1, 0.36, 0.48, 0.95)
+        end
+        g.rectangle("fill", barX, barY, math.max(3, barW * ratio), 5, 2, 2)
         g.setFont(fonts.small)
-        g.setColor(1, 0.82, 0.40, fade)
-        g.printf(string.format("+%d  %s", gladiator.lastEvent.points, gladiator.lastEvent.label),
-            gx, 82, gw, "center")
+        g.setColor(1, 0.88, 0.58, 0.9)
+        g.printf(string.format("%d / %d PTS/S", math.floor(rate + 0.5), gladiator.feverSustainRate),
+            gx, 89, gw, "center")
+    else
+        g.setColor(0.53, 0.65, 0.75, 1)
+        g.printf("GLADIATOR POINTS", gx, 29, gw, "center")
+        g.setFont(fonts.title)
+        if gladiator.lastEvent then
+            g.setColor(1, 0.84, 0.44, 1)
+        else
+            g.setColor(0.92, 0.86, 0.68, 1)
+        end
+        g.printf(string.format("%04d", gladiator.total), gx, 46, gw, "center")
+        if gladiator.feverCooldown > 0 then
+            g.setFont(fonts.small)
+            g.setColor(0.58, 0.66, 0.76, 0.82)
+            g.printf(string.format("FEVER COOLDOWN  %.1fS", gladiator.feverCooldown), gx, 82, gw, "center")
+        else
+            local recent = gladiator:recentPoints()
+            if recent > 0 then
+                local barW = 128
+                local barX, barY = math.floor(width / 2 - barW / 2), 84
+                g.setColor(0.12, 0.18, 0.24, 0.85)
+                g.rectangle("fill", barX, barY, barW, 4, 2, 2)
+                g.setColor(1, 0.78, 0.34, 0.9)
+                g.rectangle("fill", barX, barY, barW * math.min(1, recent / gladiator.feverThreshold), 4, 2, 2)
+            elseif gladiator.lastEvent then
+                local fade = math.max(0, 1 - gladiator.lastEvent.age / gladiator.noticeDuration)
+                g.setFont(fonts.small)
+                g.setColor(1, 0.82, 0.40, fade)
+                g.printf(string.format("+%d  %s", gladiator.lastEvent.points, gladiator.lastEvent.label),
+                    gx, 82, gw, "center")
+            end
+        end
     end
     local sx = width - 232
     label("HOSTILES  /  DESTROYED", sx, 29)
@@ -339,11 +380,13 @@ local function drawFlight()
     local originX, originY = camera:worldToScreen(0, 0, width, height)
     love.graphics.translate(originX, originY)
     love.graphics.scale(camera.zoom)
-    Arena.draw(ship.boostLevel)
+    Arena.draw(ship.boostLevel, gladiator.feverAura)
     enemies:draw(time)
+    gladiator:drawFeverWorld(ship, time)
     drawPlayer(originX, originY)
     turret:drawEffects(camera, width, height)
     love.graphics.pop()
+    gladiator:drawFeverOverlay(width, height, time)
     gladiator:drawPopups(camera, width, height, fonts.small)
     drawHud()
     if screen == "playing" and (focused or testMode) then
