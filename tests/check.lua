@@ -57,28 +57,28 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
         local bonus = sign * Ship.wrapBonusSpeed
         local crossing = Ship.new(width, height)
         local baseline = Ship.new(width, height)
-        local distance = crossing.radius + 2
+        local margin = crossing:hitRadius() + 1
+        local distance = margin + 1
         crossing[axis] = sign < 0 and distance or extent - distance
         crossing[velocity], baseline[velocity] = sign * Ship.driftThreshold / 2, sign * Ship.driftThreshold / 2
-        crossing:update(1 / 30, coast)
-        baseline:update(1 / 30, coast)
-        local approach = sign < 0 and crossing[axis] or extent - crossing[axis]
-        check(approach > 0 and approach < crossing.radius and near(crossing[velocity] - baseline[velocity], bonus),
-            "The first crossing frame must add the full signed velocity bonus")
-        local cleared = false
-        for _ = 1, 36 do
-            crossing:update(1 / 60, brake)
-            baseline:update(1 / 60, brake)
-            local difference = crossing[velocity] - baseline[velocity]
-            if near(difference, 0) then
-                cleared = true
-                break
-            end
-            assert(near(difference, bonus), "Braking must leave the full crossing bonus intact")
+        local function checkCrossingStep(dt, input, push)
+            local start, baselineStart = crossing[axis], baseline[axis]
+            crossing:update(dt, input)
+            baseline:update(dt, input)
+            local travel = baseline[axis] - baselineStart + push * dt
+            check(near(crossing[axis], (start + travel) % extent), "The crossing push must affect position")
+            check(near(crossing[velocity], baseline[velocity]) and near(crossing:speed(), baseline:speed()),
+                "The crossing push must leave flight velocity equal to the interior baseline")
         end
-        local arrival = sign < 0 and extent - crossing[axis] or crossing[axis]
-        check(cleared and arrival >= crossing.radius + 1 and arrival < extent / 2,
-            "The first clear frame must remove exactly the same bonus")
+        checkCrossingStep(1 / 30, coast, bonus)
+        local arrival
+        for _ = 1, 36 do
+            checkCrossingStep(1 / 60, brake, bonus)
+            arrival = sign < 0 and extent - crossing[axis] or crossing[axis]
+            if arrival >= margin and arrival < extent / 2 then break end
+        end
+        check(arrival >= margin and arrival < extent / 2, "The push must last until the hull clears the opposite edge")
+        checkCrossingStep(1 / 60, brake, 0)
         step(crossing, brake, 2, 60)
         check(crossing:speed() == 0, "Normal braking must resume once the hull clears the seam")
     end
@@ -148,11 +148,11 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     ship:update(1 / 60, boost)
     local travel = (Ship.boostSpeed / math.sqrt(2) + Ship.wrapBonusSpeed) / 60
     check(near(ship.x, width + 1 - travel) and near(ship.y, height + 1 - travel)
-        and near(ship:speed(), Ship.boostSpeed + math.sqrt(2) * Ship.wrapBonusSpeed) and ship.boostLevel > 0,
-        "Boosting through a corner must add the crossing bonus on both axes without capping it")
+        and near(ship:speed(), Ship.boostSpeed) and ship.boostLevel > 0,
+        "Boosting through a corner must apply the push on both axes and report the boost speed")
     step(ship, coast, 0.1, 60)
     check(near(ship:speed(), Ship.boostSpeed) and ship.boostLevel == 1,
-        "Clearing both sides of a corner must restore the original boost velocity")
+        "Boost speed must stay consistent after clearing the corner")
     for _, viewport in ipairs({{1280, 800}, {800, 600}}) do
         local w, h = unpack(viewport)
         camera:update(1 / 60, ship, w, h)

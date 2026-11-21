@@ -88,7 +88,8 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         missile.lifetime = distance / rocketAverageSpeed
         updateRocketPose(missile, camera, width, height)
     else
-        missile.vx, missile.vy = dx * self.missileSpeed + ship.vx, dy * self.missileSpeed + ship.vy
+        local vx, vy = ship:worldVelocity()
+        missile.vx, missile.vy = dx * self.missileSpeed + vx, dy * self.missileSpeed + vy
         missile.speed = math.sqrt(missile.vx ^ 2 + missile.vy ^ 2)
         missile.lifetime = self.missileLifetime
     end

@@ -38,6 +38,11 @@ function Ship:speed()
     return math.sqrt(self.vx * self.vx + self.vy * self.vy)
 end
 
+-- The wrap bonus is part of world motion and is kept separate from flight speed.
+function Ship:worldVelocity()
+    return self.vx + self.wrapVx, self.vy + self.wrapVy
+end
+
 function Ship:hasShield()
     return self.maxShield > 0 and self.shield > 0
 end
@@ -87,7 +92,7 @@ local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin,
     if velocity * bonus < 0 then velocity = 0 end
     position = (position + ((oldVelocity + velocity) * 0.5 + bonus) * dt) % extent
     if position >= margin and position <= extent - margin then bonus = 0 end
-    return position, velocity + bonus, bonus
+    return position, velocity, bonus
 end
 
 function Ship:turn(dt, direction)
@@ -124,9 +129,6 @@ function Ship:update(dt, input)
         self.destructionAge = (self.destructionAge or 0) + dt
         return
     end
-    -- Apply thrust, braking and speed limits to the base velocity alone.
-    self.vx = self.vx - self.wrapVx
-    self.vy = self.vy - self.wrapVy
     self:turn(dt, input.turn)
 
     if input.boost and not input.brake and self.boostRemaining == 0 and self.battery >= self.boostCost then

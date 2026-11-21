@@ -256,16 +256,17 @@ end
 
 local function wingWaypoint(group, enemy, ship, attacking)
     local definition = group.types[enemy.kind]
-    local speed = ship:speed()
-    if attacking and speed > 1 then
+    local vx, vy = ship:worldVelocity()
+    local moving = vx * vx + vy * vy > 1
+    if attacking and moving then
         local distance = math.sqrt((enemy.x - ship.x) ^ 2 + (enemy.y - ship.y) ^ 2)
         local lead = math.min(2.5, 0.6 + math.sqrt(2 * distance / enemy.thrust))
         local left, right, top, bottom = patrolBounds(group, enemy)
-        local _, edge = Collision.rectangleInterval(ship.x - left, ship.y - top, ship.vx, ship.vy, right - left, bottom - top)
+        local _, edge = Collision.rectangleInterval(ship.x - left, ship.y - top, vx, vy, right - left, bottom - top)
         lead = clamp(edge, 0, lead)
-        return {x = clamp(ship.x + ship.vx * lead, left, right), y = clamp(ship.y + ship.vy * lead, top, bottom)}
+        return {x = clamp(ship.x + vx * lead, left, right), y = clamp(ship.y + vy * lead, top, bottom)}
     end
-    local heading = speed > 1 and math.atan2(ship.vy, ship.vx) or enemy.wave.entryAngle - math.pi / 2
+    local heading = moving and math.atan2(vy, vx) or enemy.wave.entryAngle - math.pi / 2
     return chooseWaypoint(group, enemy, ship, definition, heading + enemy.slot * math.pi / 2,
         attacking and definition.patrolMin or wingSpread + wingTrail)
 end

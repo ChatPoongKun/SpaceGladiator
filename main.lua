@@ -196,8 +196,9 @@ function love.update(dt)
     input.boost = false
     camera:update(dt, ship, width, height)
     local surge = 1050 * ship.boostLevel
-    stars:update(dt, 120 + ship.vx * 2.8 + ship.boostX * surge,
-        -290 + ship.vy * 2.8 + ship.boostY * surge,
+    local vx, vy = ship:worldVelocity()
+    stars:update(dt, 120 + vx * 2.8 + ship.boostX * surge,
+        -290 + vy * 2.8 + ship.boostY * surge,
         ship.accelerating and 1 or 0, width, height, ship.boostLevel)
     enemies:update(dt, ship, turret.angle, camera, width, height)
     if ship:isDestroyed() then
