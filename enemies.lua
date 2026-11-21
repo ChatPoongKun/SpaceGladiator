@@ -404,6 +404,7 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     local collided = enemy.contactRadius ~= nil
     if not enemy.contactRadius and Collision.circleEntry(startRx, startRy, segVx, segVy, radius) then
         ship:takeDamage(contactDamage)
+        if gladiator then gladiator:syncPlayerDamage(ship) end
         collided = true
     end
 
@@ -513,6 +514,7 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
         if enemy.wingman and wave.burst and wave.burst.remaining == 0 then wave.burst = nil end
     end
     self.playerCombatPower = ship.combatPower or Ship.combatPower
+    if self.gladiator then self.gladiator:beginEvasionBatch(ship) end
     self.fire:update(dt, ship, self.gladiator)
     computeSeparation(self.items)
     local x, y = ship.prevX or ship.x, ship.prevY or ship.y
@@ -522,6 +524,7 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
 
     if #self.items + squadSize > self.maxCount then
         self.spawnAccumulator = 0
+        if self.gladiator then self.gladiator:endEvasionBatch(ship) end
         return
     end
     self.spawnAccumulator = self.spawnAccumulator + dt * self.spawnRate
@@ -535,6 +538,7 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
         -- A new arrival moves only for the portion of the frame after its birth.
         advance(self, first, slice, ship, aimAngle, motion)
     end
+    if self.gladiator then self.gladiator:endEvasionBatch(ship) end
 end
 
 local function positionAt(enemy, fraction)

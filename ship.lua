@@ -33,6 +33,7 @@ function Ship.new(width, height)
         hull = 3, maxHull = 3,
         battery = 100, maxBattery = 100,
         combatPower = Ship.combatPower,
+        damageCount = 0,
     }, Ship)
 end
 
@@ -59,6 +60,7 @@ end
 
 function Ship:takeDamage(amount)
     if amount <= 0 or self:isDestroyed() then return end
+    self.damageCount = (self.damageCount or 0) + 1
     Sfx.play("impact")
     if self:hasShield() then
         local absorbed = math.min(self.shield, amount)

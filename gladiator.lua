@@ -11,6 +11,7 @@ Gladiator.referenceSpeed = 250
 Gladiator.noticeDuration = 1.6
 Gladiator.popupDuration = 1.05
 Gladiator.popupRise = 26
+Gladiator.hitLockoutDuration = 0.6
 
 local categoryInfo = {
     destroy = { label = "DESTROY", color = { 1.0, 0.58, 0.32 } },
@@ -26,6 +27,11 @@ function Gladiator.new()
         aerobatics = { points = 0, count = 0 },
         lastEvent = nil,
         popups = {},
+        damageEpoch = 0,
+        lastDamageCount = nil,
+        evasionLockout = 0,
+        pendingEvasions = nil,
+        batchEpoch = nil,
     }, Gladiator)
 end
 
@@ -92,11 +98,66 @@ function Gladiator:recordAerobatics(clearance, relativeSpeed, x, y)
     return self:award("aerobatics", points, "AEROBATICS", x, y)
 end
 
+function Gladiator:onPlayerDamaged()
+    self.damageEpoch = self.damageEpoch + 1
+    self.evasionLockout = math.max(self.evasionLockout, self.hitLockoutDuration)
+    if self.pendingEvasions then
+        self.pendingEvasions = {}
+    end
+end
+
+function Gladiator:syncPlayerDamage(ship)
+    if not ship then return end
+    local count = ship.damageCount or 0
+    if self.lastDamageCount == nil then
+        self.lastDamageCount = count
+    elseif count > self.lastDamageCount then
+        self.lastDamageCount = count
+        self:onPlayerDamaged()
+    end
+end
+
+function Gladiator:beginEvasionBatch(ship)
+    self:syncPlayerDamage(ship)
+    self.pendingEvasions = {}
+    self.batchEpoch = self.damageEpoch
+end
+
+function Gladiator:endEvasionBatch(ship)
+    self:syncPlayerDamage(ship)
+    local pending = self.pendingEvasions
+    local batchEpoch = self.batchEpoch
+    self.pendingEvasions = nil
+    self.batchEpoch = nil
+    if not pending or #pending == 0 then return end
+    if (ship and ship:isDestroyed()) or self.damageEpoch ~= batchEpoch or self.evasionLockout > 0 then
+        return
+    end
+    for _, item in ipairs(pending) do
+        if item.category == "missileDodge" then
+            self:recordMissileDodge(item.clearance, item.relativeSpeed, item.x, item.y)
+        else
+            self:recordAerobatics(item.clearance, item.relativeSpeed, item.x, item.y)
+        end
+    end
+end
+
 function Gladiator:finishNearMiss(entity, category, x, y)
     local nearMiss = entity.nearMiss
     entity.nearMiss = nil
     if not nearMiss or nearMiss.collided then return 0 end
+    if nearMiss.epoch ~= self.damageEpoch or self.evasionLockout > 0 then return 0 end
     local px, py = nearMiss.x or x, nearMiss.y or y
+    if self.pendingEvasions then
+        self.pendingEvasions[#self.pendingEvasions + 1] = {
+            category = category,
+            clearance = nearMiss.minClearance,
+            relativeSpeed = nearMiss.relativeSpeed,
+            x = px,
+            y = py,
+        }
+        return 0
+    end
     if category == "missileDodge" then
         return self:recordMissileDodge(nearMiss.minClearance, nearMiss.relativeSpeed, px, py)
     end
@@ -108,21 +169,31 @@ function Gladiator:trackNearMiss(entity, minDistance, endDistance, hitRadius, re
     local margin = self[info.marginKey]
     local exitDistance = hitRadius + margin + self.exitHysteresis
 
-    if collided then
+    if collided or minDistance <= hitRadius + 1e-6 or self.evasionLockout > 0 then
         entity.nearMiss = endDistance > exitDistance and nil or { collided = true }
         return 0
     end
 
     local nearMiss = entity.nearMiss
-    if nearMiss and nearMiss.collided then
-        if endDistance > exitDistance then entity.nearMiss = nil end
+    if nearMiss and (nearMiss.collided or nearMiss.epoch ~= self.damageEpoch) then
+        if endDistance > exitDistance then
+            entity.nearMiss = nil
+        else
+            entity.nearMiss = { collided = true }
+        end
         return 0
     end
 
     local clearance = minDistance - hitRadius
     if clearance > 0 and clearance <= margin then
         if not nearMiss then
-            nearMiss = { minClearance = clearance, relativeSpeed = relativeSpeed or 0, x = x, y = y }
+            nearMiss = {
+                minClearance = clearance,
+                relativeSpeed = relativeSpeed or 0,
+                x = x,
+                y = y,
+                epoch = self.damageEpoch,
+            }
             entity.nearMiss = nearMiss
         elseif clearance < nearMiss.minClearance then
             nearMiss.minClearance = clearance
@@ -142,6 +213,9 @@ end
 
 function Gladiator:update(dt)
     if dt <= 0 then return end
+    if self.evasionLockout > 0 then
+        self.evasionLockout = math.max(0, self.evasionLockout - dt)
+    end
     if self.lastEvent then
         self.lastEvent.age = self.lastEvent.age + dt
         if self.lastEvent.age >= self.noticeDuration then

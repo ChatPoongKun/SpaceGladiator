@@ -302,5 +302,116 @@ return function(Ship, Enemies, Turret, Gladiator)
             "Destroy popup must spawn at the destroyed enemy's exact world position")
     end
 
+    -- 11. Partial missile salvo hit (and shield break) must cancel dodge points for accompanying missiles.
+    do
+        local ship = Ship.new(Arena.width, Arena.height)
+        ship.x, ship.y = 540, 270
+        ship.prevX, ship.prevY = ship.x, ship.y
+        ship.shield = 1 -- First missile breaks shield, shrinking hitRadius for the second missile.
+        local gladiator = Gladiator.new()
+        local group = Enemies.new(function() return 0.5 end, gladiator)
+        group.spawnRate = 0
+        local launcher = group:spawn(ship, 3, { x = 200, y = 270 })
+        group.fire:shoot(launcher, ship)
+        local hitter, grazer = group.fire.shots[1], group.fire.shots[2]
+        group.fire.shots = { hitter, grazer }
+
+        local speed, turnRate = 350, 3.35
+        local radius = speed / turnRate
+        local function setupStraight(rocket, yOffset)
+            local startX, endX = ship.x - 100, ship.x + 220
+            rocket.x, rocket.y = startX, ship.y + yOffset
+            rocket.vx, rocket.vy = speed, 0
+            rocket.age = 0
+            rocket.secondLeg = {
+                direction = 1, radius = radius, speed = speed, started = 0,
+                ramp = 0, sweep = 0, length = (endX - startX) / radius,
+                startX = startX, startY = ship.y + yOffset, heading = 0,
+                cx = startX, cy = ship.y + yOffset, radial = 0,
+                exitHeading = 0, exitX = startX, exitY = ship.y + yOffset,
+                x = endX, y = ship.y + yOffset,
+            }
+            rocket.lifetime = (endX - startX) / speed
+        end
+        setupStraight(hitter, 0)
+        -- Inside shield radius (29.9 + 5 = 34.9) but outside bare hull radius (23 + 5 = 28).
+        setupStraight(grazer, ship.radius + grazer.profile.radius + 3)
+
+        for _ = 1, 60 do
+            group:update(dt, ship)
+            gladiator:update(dt)
+        end
+        check(ship.shield == 0 and gladiator.missileDodge.count == 0 and gladiator.missileDodge.points == 0,
+            "Getting hit by a missile must not award dodge points for companion missiles in the salvo")
+    end
+
+    -- 12. Getting hit by an enemy bullet while flying near an enemy ship must not award aerobatics points.
+    do
+        local ship = Ship.new(Arena.width, Arena.height)
+        ship.x, ship.y = 320, 270
+        ship.prevX, ship.prevY = ship.x, ship.y
+        local gladiator = Gladiator.new()
+        local group = Enemies.new(function() return 0.5 end, gladiator)
+        group.spawnRate = 0
+        local hitDist = ship:hitRadius() + Enemies.types[1].radius
+        local enemy = group:spawn(ship, 1, { x = 540, y = 270 + hitDist + 10, entryTime = 10 })
+        enemy.thrust, enemy.vx, enemy.vy, enemy.maxSpeed = 0, 0, 0, 0
+
+        local fired = false
+        for _ = 1, 80 do
+            ship.prevX, ship.prevY = ship.x, ship.y
+            ship.x = ship.x + 360 * dt
+            if not fired and ship.x >= 520 then
+                fired = true
+                group.fire:shoot(enemy, ship)
+                group.fire.bursts = {}
+            end
+            group:update(dt, ship)
+            gladiator:update(dt)
+        end
+        check(ship.shield < ship.maxShield and gladiator.aerobatics.count == 0 and gladiator.aerobatics.points == 0,
+            "Taking enemy projectile damage during a close pass must cancel aerobatics points")
+    end
+
+    -- 13. Colliding with one enemy while grazing a second enemy must cancel aerobatics for both.
+    do
+        local ship = Ship.new(Arena.width, Arena.height)
+        ship.x, ship.y = 320, 270
+        ship.prevX, ship.prevY = ship.x, ship.y
+        local gladiator = Gladiator.new()
+        local group = Enemies.new(function() return 0.5 end, gladiator)
+        group.spawnRate = 0
+        local hitDist = ship:hitRadius() + Enemies.types[1].radius
+        local crashEnemy = group:spawn(ship, 1, { x = 540, y = 270, entryTime = 10 })
+        local grazeEnemy = group:spawn(ship, 1, { x = 540, y = 270 + hitDist + 10, entryTime = 10 })
+        crashEnemy.thrust, crashEnemy.vx, crashEnemy.vy, crashEnemy.maxSpeed = 0, 0, 0, 0
+        grazeEnemy.thrust, grazeEnemy.vx, grazeEnemy.vy, grazeEnemy.maxSpeed = 0, 0, 0, 0
+
+        for _ = 1, 80 do
+            ship.prevX, ship.prevY = ship.x, ship.y
+            ship.x = ship.x + 360 * dt
+            group:update(dt, ship)
+            gladiator:update(dt)
+        end
+        check(ship.shield < ship.maxShield and gladiator.aerobatics.count == 0 and gladiator.aerobatics.points == 0,
+            "Colliding with an enemy ship must cancel aerobatics points from nearby enemies")
+
+        -- After the post-hit lockout expires, a genuinely clean pass must award points again.
+        gladiator:update(Gladiator.hitLockoutDuration + 0.1)
+        ship.x, ship.y = 200, 270
+        ship.prevX, ship.prevY = ship.x, ship.y
+        group.items = {}
+        local cleanEnemy = group:spawn(ship, 1, { x = 420, y = 270 + hitDist + 10, entryTime = 10 })
+        cleanEnemy.thrust, cleanEnemy.vx, cleanEnemy.vy, cleanEnemy.maxSpeed = 0, 0, 0, 0
+        for _ = 1, 80 do
+            ship.prevX, ship.prevY = ship.x, ship.y
+            ship.x = ship.x + 360 * dt
+            group:update(dt, ship)
+            gladiator:update(dt)
+        end
+        check(gladiator.aerobatics.count == 1 and gladiator.aerobatics.points >= 10,
+            "Clean evasion after recovering from a hit must award aerobatics points")
+    end
+
     print(string.format("PASS: %d Gladiator Points checks", checks))
 end

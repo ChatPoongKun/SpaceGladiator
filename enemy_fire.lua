@@ -251,6 +251,7 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
         local hit = table.remove(contacts, first)
         impact(fire, hit.shot, hit.x, hit.y, ship:hasShield())
         ship:takeDamage(hit.shot.profile.damage)
+        if gladiator then gladiator:syncPlayerDamage(ship) end
         hit.shot.spent = true
 
         -- A broken shield exposes the smaller hull to the remaining shots in this step.
@@ -315,6 +316,7 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
 end
 
 function EnemyFire:update(dt, ship, gladiator)
+    if gladiator then gladiator:syncPlayerDamage(ship) end
     for i = #self.impacts, 1, -1 do
         local effect = self.impacts[i]
         effect.age = effect.age + dt
