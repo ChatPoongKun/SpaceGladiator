@@ -6,6 +6,7 @@ local Turret = require("turret")
 local Enemies = require("enemies")
 local Hud = require("hud")
 local Menu = require("menu")
+local Sfx = require("sfx")
 
 local ship, stars, fonts, camera, turret, enemies, hud
 local width, height, time = 1280, 800, 0
@@ -30,6 +31,7 @@ end
 local function setScreen(nextScreen)
     screen, selectedButton = nextScreen, 1
     input.boost, firing = false, false
+    if screen ~= "gameOver" then Sfx.stop() end
     love.mouse.setVisible(screen ~= "playing" and screen ~= "gameOver")
     if screen == "title" or screen == "results" then
         ship, camera, turret, enemies = nil, nil, nil, nil
@@ -139,6 +141,7 @@ function love.load(args)
     }
     hud = Hud.new()
     stars = Starfield.new(width, height)
+    if not (testMode or testFlow) then Sfx.load() end
     setScreen("title")
     if testFlow then
         require("tests.flow")(function() return screen, ship, enemies, turret end)
@@ -397,7 +400,10 @@ end
 
 function love.focus(hasFocus)
     focused = hasFocus
-    if not focused then input.boost, firing = false, false end
+    if not focused then
+        input.boost, firing = false, false
+        Sfx.stop()
+    end
 end
 
 function love.resize(w, h)

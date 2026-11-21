@@ -1,3 +1,4 @@
+local Sfx = require("sfx")
 local Turret = {}
 Turret.__index = Turret
 local tau = 2 * math.pi
@@ -61,7 +62,9 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
                     x + dx * exit, y + dy * exit, t, t)
             end
         end
+        Sfx.play("laser")
         if hitX then
+            Sfx.play("impact")
             self.explosions[#self.explosions + 1] = {
                 x = hitX, y = hitY, radius = 28, age = 0, lifetime = beamImpactLifetime,
                 colors = beamImpactColors,
@@ -90,6 +93,7 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         missile.lifetime = self.missileLifetime
     end
     self.missiles[#self.missiles + 1] = missile
+    Sfx.play(self.weapon == 2 and "missile" or "projectile")
     return missile
 end
 
@@ -149,6 +153,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                     local fraction = dt > 0 and (dt - remaining + flightTime) / dt or 0
                     enemies:hitArea(x, y, blastRadius, fraction)
                 end
+                if hitX or isRocket then Sfx.play("impact") end
                 if age < self.explosionLifetime then
                     self.explosions[#self.explosions + 1] = {
                         x = x, y = y, radius = isRocket and blastRadius,

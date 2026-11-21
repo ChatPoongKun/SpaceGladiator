@@ -1,5 +1,6 @@
 local Arena = require("arena")
 local Collision = require("collision")
+local Sfx = require("sfx")
 local EnemyFire = {}
 EnemyFire.__index = EnemyFire
 
@@ -36,6 +37,7 @@ local function launchLinear(fire, enemy, targetX, targetY, profile, delay)
     local shot = launch(fire, enemy, angle, profile, delay)
     shot.vx, shot.vy = shot.vx * profile.speed, shot.vy * profile.speed
     shot.lifetime = profile.lifetime
+    Sfx.play(profile == laser and "enemyLaser" or "enemyProjectile")
 end
 
 function EnemyFire:shoot(enemy, ship)
@@ -62,6 +64,7 @@ function EnemyFire:shoot(enemy, ship)
             shot.lifetime = lifetime
             shot.vx, shot.vy = shot.vx * 2 * reach / lifetime, shot.vy * 2 * reach / lifetime
         end
+        Sfx.play("enemyMissile")
     end
 end
 

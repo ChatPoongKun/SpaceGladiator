@@ -1,4 +1,5 @@
 local Arena = require("arena")
+local Sfx = require("sfx")
 local Ship = {}
 Ship.__index = Ship
 
@@ -51,6 +52,7 @@ end
 
 function Ship:takeDamage(amount)
     if amount <= 0 or self:isDestroyed() then return end
+    Sfx.play("impact")
     if self:hasShield() then
         local absorbed = math.min(self.shield, amount)
         self.shield = self.shield - absorbed
@@ -133,6 +135,7 @@ function Ship:update(dt, input)
         self.boostX, self.boostY = math.sin(self.angle), -math.cos(self.angle)
         self.vx, self.vy = self.boostX * self.boostSpeed, self.boostY * self.boostSpeed
         self.boostOriginX, self.boostOriginY = self.x, self.y
+        Sfx.play("boost")
     end
 
     local rechargeTime = math.max(0, dt - self.boostRemaining)
