@@ -167,15 +167,26 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
 
     ship = Ship.new(1280, 800)
     local turret = Turret.new(0)
+    local function explodedAt(x, y)
+        for _, explosion in ipairs(turret.explosions) do
+            if near(explosion.x, x) and near(explosion.y, y) then return true end
+        end
+        return false
+    end
     turret:update(0.125, ship, ship.x + 1000, ship.y, false)
     check(near(turret.angle, math.pi / 4), "Turret must turn at exactly 360 degrees per second")
     local missile = turret:fire(ship)
+    local left, right = turret.missiles[2], turret.missiles[3]
+    local spread = math.rad(5)
+    check(#turret.missiles == 3 and turret.shotsFired == 1
+        and near(math.atan2(left.vx, -left.vy), turret.angle - spread)
+        and near(math.atan2(right.vx, -right.vy), turret.angle + spread),
+        "One shot must launch three projectiles with a symmetric spread")
     local shotX, shotY = missile.x, missile.y
     turret:update(0.1, ship, ship.x + 1000, ship.y, false)
     check(near(missile.x - shotX, Turret.missileSpeed * 0.1 / math.sqrt(2))
         and near(missile.y - shotY, -Turret.missileSpeed * 0.1 / math.sqrt(2)),
         "Missile must follow the current barrel direction even before the turret reaches its target")
-    check(#turret.missiles == 1, "One fire call must create one missile")
     turret:update(1, ship, ship.x + 1000, ship.y, false)
     check(near(turret.angle, math.pi / 2), "Turret must stop at the mouse angle without overshooting")
 
@@ -191,18 +202,18 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     missile = turret:fire(ship)
     shotX, shotY = missile.x, missile.y
     turret:update(Turret.missileLifetime - 0.01, ship, ship.x + 1000, ship.y, false)
-    check(#turret.missiles == 1, "A missile must remain alive until its lifetime expires")
+    check(#turret.missiles == 3, "All projectiles must remain alive until their lifetime expires")
     turret:update(0.02, ship, ship.x + 1000, ship.y, false)
-    check(#turret.missiles == 0 and #turret.explosions == 1,
-        "Missiles must expire on time and create exactly one explosion")
-    local explosion = turret.explosions[1]
-    check(near(explosion.x - shotX, Turret.missileSpeed * Turret.missileLifetime)
-        and near(explosion.y, shotY), "Explosion position must use velocity times lifetime")
+    check(#turret.missiles == 0 and #turret.explosions == 3,
+        "All projectiles must expire on time and each create an explosion")
+    check(explodedAt(shotX + Turret.missileSpeed * Turret.missileLifetime, shotY),
+        "Explosion position must use velocity times lifetime")
     turret:update(2, ship, ship.x + 1000, ship.y, false)
     check(#turret.explosions == 0, "Explosions must clean themselves up")
     turret = Turret.new(0)
     for _ = 1, 12 do turret:update(1 / 60, ship, ship.x, ship.y - 1000, true) end
-    check(#turret.missiles >= 2, "Holding the left mouse button must repeat fire")
+    check(turret.shotsFired == 2 and #turret.missiles == 6,
+        "Holding the left mouse button must repeat fire and count each volley once")
     local count = #turret.missiles
     turret:update(0.1, ship, ship.x, ship.y - 1000, false)
     check(#turret.missiles == count, "Releasing fire must stop creating missiles")
@@ -223,30 +234,26 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     ship.vx, ship.vy = 500, -300
     turret = Turret.new(math.pi / 2)
     missile = turret:fire(ship)
-    local totalSpeed = math.sqrt(missile.vx ^ 2 + missile.vy ^ 2)
     shotX, shotY = missile.x, missile.y
     turret:update(Turret.missileLifetime + 0.001, ship, ship.x + 1000, ship.y, false)
-    check(#turret.missiles == 0 and #turret.explosions == 1,
+    check(#turret.missiles == 0 and #turret.explosions == 3,
         "Inherited velocity must not change missile expiry time")
-    explosion = turret.explosions[1]
-    local ex, ey = explosion.x - shotX, explosion.y - shotY
-    check(near(math.sqrt(ex * ex + ey * ey), totalSpeed * Turret.missileLifetime)
-        and near(ex, missile.vx * Turret.missileLifetime) and near(ey, missile.vy * Turret.missileLifetime),
+    check(explodedAt(shotX + missile.vx * Turret.missileLifetime, shotY + missile.vy * Turret.missileLifetime),
         "Faster missiles must travel farther over the same lifetime")
 
     for _, shipVelocity in ipairs({ -760, 760 }) do
         ship.vx, ship.vy = shipVelocity, 0
         turret = Turret.new(math.pi / 2)
         missile = turret:fire(ship)
-        shotX = missile.x
+        shotX, shotY = missile.x, missile.y
         turret:update(0.1, ship, ship.x + 1000, ship.y, false)
         check(near(missile.x - shotX, (900 + shipVelocity) * 0.1),
             "Same-direction and opposite-direction firing must add ship velocity without clamping")
         turret:update(Turret.missileLifetime - 0.101, ship, ship.x + 1000, ship.y, false)
-        check(#turret.missiles == 1, "Fast and slow missiles must both survive until the same expiry time")
+        check(#turret.missiles == 3, "Fast and slow projectiles must both survive until the same expiry time")
         turret:update(0.002, ship, ship.x + 1000, ship.y, false)
-        check(#turret.missiles == 0 and #turret.explosions == 1
-            and near(turret.explosions[1].x - shotX, (900 + shipVelocity) * Turret.missileLifetime),
+        check(#turret.missiles == 0 and #turret.explosions == 3
+            and explodedAt(shotX + (900 + shipVelocity) * Turret.missileLifetime, shotY),
             "Fast and slow missiles must expire together at their respective time-based endpoints")
     end
     turret:drawEffects()
@@ -256,8 +263,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     missile = turret:fire(ship)
     shotX, shotY = missile.x, missile.y
     turret:update(Turret.missileLifetime + 0.001, ship, ship.x, ship.y - 1000, false)
-    check(#turret.missiles == 0 and #turret.explosions == 1
-        and near(turret.explosions[1].x, shotX) and near(turret.explosions[1].y, shotY),
+    check(#turret.missiles == 0 and #turret.explosions == 3 and explodedAt(shotX, shotY),
         "A zero-velocity missile must still expire and explode on time")
     turret = Turret.new(0)
     turret:fire(ship)
@@ -275,8 +281,12 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
         local tail, head
         love.graphics.line = function(x1, y1, x2, y2)
             local r, g, b = love.graphics.getColor()
-            if near(r, 1) and near(g, 0.42) and near(b, 0.12) then tail = { x1, y1, x2, y2 } end
-            if near(r, 1) and near(g, 0.87) and near(b, 0.46) then head = { x1, y1, x2, y2 } end
+            if near(r, 1) and near(g, 0.42) and near(b, 0.12) and near(x1, missile.x) and near(y1, missile.y) then
+                tail = { x1, y1, x2, y2 }
+            end
+            if near(r, 1) and near(g, 0.87) and near(b, 0.46) and near(x2, missile.x) and near(y2, missile.y) then
+                head = { x1, y1, x2, y2 }
+            end
             return originalLine(x1, y1, x2, y2)
         end
         local ok, message = pcall(function() turret:drawEffects() end)
@@ -388,14 +398,15 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     hits = Enemies.new()
     hits.items = { target(missile.x + 40, missile.y) }
     turret:update(0.1, ship, ship.x + 1000, ship.y, false, hits)
-    check(#hits.items == 0 and hits.kills == 1 and #turret.missiles == 0 and #turret.explosions == 1,
-        "One player missile hit must destroy an enemy and consume the missile with an explosion")
+    check(#hits.items == 0 and hits.kills == 1 and #turret.missiles == 2 and #turret.explosions == 1
+        and turret.shotsHit == 1,
+        "One projectile hit must count the shot and consume only the projectile that collided")
     turret = Turret.new(math.pi / 2)
     missile = turret:fire(ship)
     hits.items = { target(missile.x + 900, missile.y) }
     turret:update(1, ship, ship.x + 1000, ship.y, false, hits)
-    check(#hits.items == 1 and #turret.missiles == 0,
-        "A missile must not hit enemies beyond its lifetime endpoint")
+    check(#hits.items == 1 and #turret.missiles == 0 and turret.shotsHit == 0,
+        "Projectiles must not hit enemies beyond their lifetime endpoints")
 
     -- Switch weapons during held fire while the missile is still in flight.
     ship, turret, hits = Ship.new(0, 0), Turret.new(0), Enemies.new()
@@ -414,12 +425,14 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     turret:update(0.02, ship, 50, 0, true, hits, combatView, 800, 600)
     local impact = turret.explosions[1]
     check(hits.kills == 1 and hits.items[1] == far and turret.beam and near(turret.beam.hitX, 88)
+        and turret.shotsFired == 2 and turret.shotsHit == 1
         and impact and impact.x == turret.beam.hitX and impact.y == turret.beam.hitY,
         "The laser must stop at the first hull beyond the cursor and show an effect at the hit")
     turret:drawEffects(combatView, 800, 600)
     turret.weapon = 1
     turret:update(0.5, ship, -400, 0, false, hits, combatView, 800, 600)
     check(hits.kills == 3 and #hits.items == 2 and hits.items[1] == far and hits.items[2] == outside
+        and turret.shotsFired == 2 and turret.shotsHit == 2
         and #turret.explosions == 1 and near(turret.explosions[1].x, 400),
         "After switching, the missile must explode at its original target and hit each hull in range")
 
@@ -442,11 +455,11 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
             and near(movingRocket.y - stillRocket.y, movingShip.y)
 
         view.x, view.y, view.zoom = 210, -160, 0.85
-        moving:update(0.35, movingShip, -400, 0, false, nil, view, 800, 600)
+        moving:update(0.35, movingShip, -400, 0, false, Enemies.new(), view, 800, 600)
         local blast = moving.explosions[1]
         local screenX, screenY = view:worldToScreen(blast.x, blast.y, 800, 600)
-        check(carriesVelocity and near(screenX, cursorX) and near(screenY, cursorY),
-            "A missile must carry ship velocity and hit the original screen point after pan and zoom")
+        check(carriesVelocity and near(screenX, cursorX) and near(screenY, cursorY) and moving.shotsHit == 0,
+            "A missile must reach the original target after pan and zoom, and miss if no enemy is there")
     end
 
     do
@@ -466,7 +479,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
         end
         local ok, message = pcall(laser.drawEffects, laser, view, 1280, 600)
         love.graphics.line = originalLine
-        check(ok and enemies.kills == 0 and endX and endX > 0 and endX < 1280 and near(endY, 0),
+        check(ok and enemies.kills == 0 and laser.shotsHit == 0 and endX and endX > 0 and endX < 1280 and near(endY, 0),
             "The laser must leave offscreen targets intact and follow the current screen edge: " .. tostring(message))
     end
     enemyGroup:draw(1)

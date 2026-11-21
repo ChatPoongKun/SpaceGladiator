@@ -56,10 +56,14 @@ return function(state)
     assert(screen == "playing" and not love.mouse.isVisible())
     love.update(0.05)
     assert(#turret.missiles == 0, "Starting the run must not also fire a weapon")
+    local function fireVolley()
+        love.mousepressed(0, 0, 1)
+        love.update(0.05)
+        love.mousereleased(0, 0, 1)
+        assert(#turret.missiles == 3, "Weapon 1 must fire three projectiles per volley")
+    end
     love.mousereleased(0, 0, 1)
-    love.mousepressed(0, 0, 1)
-    love.update(0.05)
-    assert(#turret.missiles == 1)
+    fireVolley()
 
     local shot, spawnAccumulator = turret.missiles[1], enemies.spawnAccumulator
     local age = shot.age
@@ -79,12 +83,36 @@ return function(state)
     love.update(0.05)
     assert(state() == "playing" and shot.age > age and ship.battery == ship.maxBattery)
 
+    enemies.spawnRate = 0
+    local function placeTarget(kind, projectile, flightTime)
+        local enemy = enemies:spawn(ship, kind, {
+            x = projectile.startX + projectile.vx * flightTime,
+            y = projectile.startY + projectile.vy * flightTime,
+            entryTime = 1,
+        })
+        enemy.thrust = 0
+    end
+    local function finishVolley(hits)
+        local kills = enemies.kills
+        for _ = 1, 6 do love.update(0.05) end
+        assert(enemies.kills - kills == hits and #turret.missiles == 3 - hits,
+            "Expected " .. hits .. " projectile hits in the volley")
+        for _ = 1, 8 do love.update(0.05) end
+        assert(#turret.missiles == 0, "The volley must resolve before the next shot")
+    end
+
+    -- Give one side projectile enough separation to hit alone.
+    placeTarget(1, turret.missiles[2], 0.27)
+    finishVolley(1)
+    fireVolley()
+    -- Stagger the impacts from this volley across updates.
+    placeTarget(2, turret.missiles[2], 0.15)
+    placeTarget(2, turret.missiles[3], 0.27)
+    finishVolley(2)
+    fireVolley()
+    finishVolley(0)
+
     ship:takeDamage(119)
-    local x, y = ship.x + 100, ship.y
-    for _, kind in ipairs({1, 2, 2}) do enemies:spawn(ship, kind, {x = x, y = y}) end
-    enemies:hitArea(x, y, 1, 1)
-    enemies:destroy(1)
-    assert(enemies.kills == 3)
     key("escape")
     click("포기하기")
     assert(state() == "results")
@@ -94,6 +122,7 @@ return function(state)
     checkRow(points, values, "실드 손실", "100")
     checkRow(points, values, "장갑 손실", "19")
     assert(not points["선체 손실"])
+    checkRow(points, values, "명중률", "66.7%")
     checkRow(points, values, "격추한 적", "3기")
     checkRow(points, values, "WEDGE", "1기")
     checkRow(points, values, "EQUILATERAL", "2기")
@@ -126,6 +155,7 @@ return function(state)
     assert(points["기체 파괴"] and points["전투 정산"])
     assert(not points["선체 손실"])
     checkRow(points, values, "입은 피해", "200")
+    checkRow(points, values, "명중률", "0.0%")
     checkRow(points, values, "격추한 적", "0기")
     key("return")
     assert(state() == "title")

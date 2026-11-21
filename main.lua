@@ -63,6 +63,8 @@ local function showResults(reason)
     for i, kind in ipairs(Enemies.types) do
         rows[#rows + 1] = {label = kind.name, value = (enemies.killsByKind[i] or 0) .. "기", vertices = kind.vertices}
     end
+    local accuracy = turret.shotsFired > 0 and 100 * turret.shotsHit / turret.shotsFired or 0
+    rows[#rows + 1] = {label = "명중률", value = string.format("%.1f%%", accuracy), heading = true}
     menus.results.subtitle, menus.results.rows = reason, rows
     setScreen("results")
 end

@@ -533,13 +533,16 @@ function Enemies:destroy(index)
 end
 
 function Enemies:hitArea(x, y, radius, fraction)
+    local hit = false
     for i = #self.items, 1, -1 do
         local enemy = self.items[i]
         local ex, ey = positionAt(enemy, fraction)
         if (ex - x) ^ 2 + (ey - y) ^ 2 <= (radius + enemy.radius) ^ 2 then
             self:destroy(i)
+            hit = true
         end
     end
+    return hit
 end
 
 function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction)

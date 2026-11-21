@@ -8,6 +8,8 @@ local rocketAverageSpeed = 600
 local rocketMaxBend = 38
 local beamLifetime = 0.10
 local beamImpactLifetime = 0.22
+local projectileSpread = math.rad(5)
+local projectileOffsets = {0, -projectileSpread, projectileSpread}
 local explosionColors = { glow = {1, 0.38, 0.10}, ring = {1, 0.76, 0.32}, core = {1, 0.94, 0.66} }
 local beamImpactColors = { glow = {0.12, 0.68, 1}, ring = {0.30, 0.92, 1}, core = {0.83, 0.98, 1} }
 
@@ -21,6 +23,7 @@ function Turret.new(initialAngle)
     return setmetatable({
         angle = (initialAngle or 0) % tau,
         weapon = 1, launchSide = 1, cooldown = 0, missiles = {}, explosions = {},
+        shotsFired = 0, shotsHit = 0,
     }, Turret)
 end
 
@@ -49,6 +52,7 @@ local function updateRocketPose(rocket, camera, width, height)
 end
 
 function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, width, height)
+    self.shotsFired = self.shotsFired + 1
     local dx, dy = math.sin(self.angle), -math.cos(self.angle)
     local x, y = ship.x + dx * muzzleLength, ship.y + dy * muzzleLength
     if self.weapon == 3 then
@@ -64,6 +68,7 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         end
         Sfx.play("laser")
         if hitX then
+            self.shotsHit = self.shotsHit + 1
             Sfx.play("impact")
             self.explosions[#self.explosions + 1] = {
                 x = hitX, y = hitY, radius = 28, age = 0, lifetime = beamImpactLifetime,
@@ -74,11 +79,12 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         return self.beam
     end
 
-    local missile = {
-        x = x, y = y, startX = x, startY = y,
-        owner = ship, angle = self.angle, distance = 0, age = 0,
-    }
+    local shot = { hit = false }
     if self.weapon == 2 then
+        local missile = {
+            x = x, y = y, startX = x, startY = y,
+            owner = ship, angle = self.angle, distance = 0, age = 0, shot = shot,
+        }
         local distance = math.sqrt((targetX - x) ^ 2 + (targetY - y) ^ 2)
         local bend = self.launchSide * math.min(rocketMaxBend, distance * 0.18)
         self.launchSide = -self.launchSide
@@ -87,15 +93,26 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         missile.targetScreenX, missile.targetScreenY = camera:worldToScreen(targetX, targetY, width, height)
         missile.lifetime = distance / rocketAverageSpeed
         updateRocketPose(missile, camera, width, height)
-    else
-        local vx, vy = ship:worldVelocity()
-        missile.vx, missile.vy = dx * self.missileSpeed + vx, dy * self.missileSpeed + vy
-        missile.speed = math.sqrt(missile.vx ^ 2 + missile.vy ^ 2)
-        missile.lifetime = self.missileLifetime
+        self.missiles[#self.missiles + 1] = missile
+        Sfx.play("missile")
+        return missile
     end
-    self.missiles[#self.missiles + 1] = missile
-    Sfx.play(self.weapon == 2 and "missile" or "projectile")
-    return missile
+
+    local vx, vy = ship:worldVelocity()
+    local first = #self.missiles + 1
+    for _, offset in ipairs(projectileOffsets) do
+        local angle = (self.angle + offset) % tau
+        local shotVx = math.sin(angle) * self.missileSpeed + vx
+        local shotVy = -math.cos(angle) * self.missileSpeed + vy
+        self.missiles[#self.missiles + 1] = {
+            x = x, y = y, startX = x, startY = y,
+            owner = ship, angle = angle, distance = 0, age = 0, shot = shot,
+            vx = shotVx, vy = shotVy, speed = math.sqrt(shotVx ^ 2 + shotVy ^ 2),
+            lifetime = self.missileLifetime,
+        }
+    end
+    Sfx.play("projectile")
+    return self.missiles[first]
 end
 
 function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, camera, width, height)
@@ -150,9 +167,14 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
             if hitX or elapsed >= missile.lifetime then
                 local age = hitX and step - flightTime * hitTime or elapsed - missile.lifetime
                 local x, y = hitX or missile.x, hitY or missile.y
+                local hit = hitX ~= nil
                 if enemies and isRocket then
                     local fraction = dt > 0 and (dt - remaining + flightTime) / dt or 0
-                    enemies:hitArea(x, y, blastRadius, fraction)
+                    hit = enemies:hitArea(x, y, blastRadius, fraction)
+                end
+                if hit and not missile.shot.hit then
+                    missile.shot.hit = true
+                    self.shotsHit = self.shotsHit + 1
                 end
                 if hitX or isRocket then Sfx.play("impact") end
                 if age < self.explosionLifetime then
