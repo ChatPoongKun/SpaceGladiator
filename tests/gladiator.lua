@@ -236,17 +236,70 @@ return function(Ship, Enemies, Turret, Gladiator)
             "Stationary proximity must not award aerobatics points")
     end
 
-    -- 9. Event notice expiration and total consistency.
+    -- 9. Floating popups spawn at the exact event position, stack on overlap, render cleanly, and expire.
     do
+        local Camera = require("camera")
         local gladiator = Gladiator.new()
-        gladiator:recordDestroy(40, 100)
-        gladiator:recordMissileDodge(10, 300)
-        gladiator:recordAerobatics(8, 400)
+        local p1 = gladiator:recordDestroy(40, 100, 310, 220)
+        local p2 = gladiator:recordMissileDodge(10, 300, 310, 220)
+        local p3 = gladiator:recordAerobatics(8, 400, 520, 180)
         check(gladiator.total == gladiator.destroy.points + gladiator.missileDodge.points + gladiator.aerobatics.points,
             "Total Gladiator Points must equal the sum of all category points")
-        check(gladiator.lastEvent ~= nil, "Scoring must populate lastEvent for HUD feedback")
+        check(#gladiator.popups == 3, "Each scoring event with coordinates must spawn a floating popup")
+        check(gladiator.popups[1].x == 310 and gladiator.popups[1].y == 220
+            and gladiator.popups[2].y < gladiator.popups[1].y
+            and gladiator.popups[3].x == 520 and gladiator.popups[3].y == 180,
+            "Popups must appear at the earned world position and stagger when overlapping")
+
+        local viewShip = Ship.new(Arena.width, Arena.height)
+        local camera = Camera.new(viewShip.x, viewShip.y)
+        camera:update(0, viewShip, 1280, 800)
+        local font = love.graphics.newFont(11)
+        local printed = {}
+        local originalPrint = love.graphics.print
+        love.graphics.print = function(text, ...)
+            printed[text] = true
+            return originalPrint(text, ...)
+        end
+        local ok, err = pcall(function() gladiator:drawPopups(camera, 1280, 800, font) end)
+        love.graphics.print = originalPrint
+        check(ok and printed["+" .. p1] and printed["+" .. p2] and printed["+" .. p3],
+            "Drawing popups must render each category icon and earned point text: " .. tostring(err))
+
+        gladiator:update(Gladiator.popupDuration)
+        check(#gladiator.popups == 0, "Popups must expire after popupDuration")
         gladiator:update(Gladiator.noticeDuration)
         check(gladiator.lastEvent == nil, "HUD notice must expire after noticeDuration")
+    end
+
+    -- 10. Integration check: world popup coordinates match destroy, missile graze, and aerobatics graze positions.
+    do
+        local ship = Ship.new(Arena.width, Arena.height)
+        ship.x, ship.y = 320, 270
+        ship.prevX, ship.prevY = ship.x, ship.y
+        local gladiator = Gladiator.new()
+        local group = Enemies.new(function() return 0.5 end, gladiator)
+        group.spawnRate = 0
+        local hitDist = ship:hitRadius() + Enemies.types[1].radius
+        local enemyY = 270 + hitDist + 10
+        local enemy = group:spawn(ship, 1, { x = 540, y = enemyY, entryTime = 10 })
+        enemy.thrust, enemy.vx, enemy.vy, enemy.maxSpeed = 0, 0, 0, 0
+        for _ = 1, 80 do
+            ship.prevX, ship.prevY = ship.x, ship.y
+            ship.x = ship.x + 360 * dt
+            group:update(dt, ship)
+        end
+        check(#gladiator.popups == 1 and gladiator.popups[1].category == "aerobatics"
+            and math.abs(gladiator.popups[1].x - 540) < 10
+            and math.abs(gladiator.popups[1].y - (270 + enemyY) * 0.5) < 4,
+            "Aerobatics popup must spawn right at the grazing midpoint between player and enemy")
+
+        local target = group:spawn(ship, 2, { x = 760, y = 190 })
+        group:destroy(#group.items)
+        local killPopup = gladiator.popups[#gladiator.popups]
+        check(killPopup and killPopup.category == "destroy"
+            and killPopup.x == target.x and killPopup.y == target.y,
+            "Destroy popup must spawn at the destroyed enemy's exact world position")
     end
 
     print(string.format("PASS: %d Gladiator Points checks", checks))

@@ -189,6 +189,7 @@ function love.update(dt)
     time = time + dt
     if screen == "gameOver" then
         ship:update(dt, input)
+        gladiator:update(dt)
         if ship.destructionAge >= Ship.destructionDuration + gameOverHold then
             showResults("기체 파괴")
         end
@@ -343,6 +344,7 @@ local function drawFlight()
     drawPlayer(originX, originY)
     turret:drawEffects(camera, width, height)
     love.graphics.pop()
+    gladiator:drawPopups(camera, width, height, fonts.small)
     drawHud()
     if screen == "playing" and (focused or testMode) then
         local g = love.graphics

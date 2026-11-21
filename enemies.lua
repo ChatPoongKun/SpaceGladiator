@@ -388,7 +388,7 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     local first, last = math.max(0, near), math.min(1, far)
     if first > last then
         enemy.contactRadius = nil
-        if gladiator then gladiator:finishNearMiss(enemy, "aerobatics") end
+        if gladiator then gladiator:finishNearMiss(enemy, "aerobatics", ship.x, ship.y - ship:hitRadius() - 8) end
         return
     end
 
@@ -412,10 +412,16 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     local endDistSq = endX * endX + endY * endY
     enemy.contactRadius = last == 1 and endDistSq <= radius * radius and radius or nil
     if gladiator and not ship:isDestroyed() then
-        local minDist = Collision.closestDistance(startRx, startRy, segVx, segVy)
+        local minDist, minT = Collision.closestDistance(startRx, startRy, segVx, segVy)
         local endDist = math.sqrt(endDistSq)
         local relativeSpeed = step > 0 and math.sqrt(vx * vx + vy * vy) / step or 0
-        gladiator:trackNearMiss(enemy, minDist, endDist, radius, relativeSpeed, "aerobatics", collided)
+        local at = elapsed + step * (first + span * minT)
+        local px = (motion.x + motion.vx * at) % Arena.width
+        local py = (motion.y + motion.vy * at) % Arena.height
+        local grazeX = px + (startRx + segVx * minT) * 0.5
+        local grazeY = py + (startRy + segVy * minT) * 0.5
+        gladiator:trackNearMiss(enemy, minDist, endDist, radius, relativeSpeed, "aerobatics", collided,
+            grazeX, grazeY)
     end
 end
 
@@ -554,7 +560,7 @@ function Enemies:destroy(index)
         local enemyPower = enemy.combatPower
             or (enemy.kind and self.types[enemy.kind] and self.types[enemy.kind].combatPower)
             or Ship.combatPower
-        self.gladiator:recordDestroy(enemyPower, self.playerCombatPower or Ship.combatPower)
+        self.gladiator:recordDestroy(enemyPower, self.playerCombatPower or Ship.combatPower, enemy.x, enemy.y)
     end
 end
 

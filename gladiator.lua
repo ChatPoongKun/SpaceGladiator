@@ -9,10 +9,13 @@ Gladiator.exitHysteresis = 10
 Gladiator.minRelativeSpeed = 20
 Gladiator.referenceSpeed = 250
 Gladiator.noticeDuration = 1.6
+Gladiator.popupDuration = 1.05
+Gladiator.popupRise = 26
 
 local categoryInfo = {
-    missileDodge = { marginKey = "missileMargin", label = "MISSILE DODGE" },
-    aerobatics = { marginKey = "aerobaticsMargin", label = "AEROBATICS" },
+    destroy = { label = "DESTROY", color = { 1.0, 0.58, 0.32 } },
+    missileDodge = { marginKey = "missileMargin", label = "MISSILE DODGE", color = { 0.42, 0.90, 1.0 } },
+    aerobatics = { marginKey = "aerobaticsMargin", label = "AEROBATICS", color = { 1.0, 0.85, 0.38 } },
 }
 
 function Gladiator.new()
@@ -22,6 +25,7 @@ function Gladiator.new()
         missileDodge = { points = 0, count = 0 },
         aerobatics = { points = 0, count = 0 },
         lastEvent = nil,
+        popups = {},
     }, Gladiator)
 end
 
@@ -42,44 +46,64 @@ function Gladiator.evasionPoints(clearance, margin, relativeSpeed)
     return math.max(Gladiator.evasionBase, math.floor(Gladiator.evasionBase * multiplier + 0.5))
 end
 
-function Gladiator:award(category, points, label)
+function Gladiator:spawnPopup(category, points, x, y)
+    if not x or not y or not points or points <= 0 then return end
+    local px, py = x, y
+    for _, existing in ipairs(self.popups) do
+        if existing.age < 0.45 and math.abs(existing.x - px) < 42 and math.abs(existing.y - py) < 22 then
+            py = existing.y - 22
+        end
+    end
+    self.popups[#self.popups + 1] = {
+        category = category,
+        points = points,
+        x = px,
+        y = py,
+        age = 0,
+        duration = self.popupDuration,
+    }
+end
+
+function Gladiator:award(category, points, label, x, y)
     if not points or points <= 0 then return 0 end
     local bucket = self[category]
     bucket.points = bucket.points + points
     bucket.count = bucket.count + 1
     self.total = self.total + points
     self.lastEvent = { category = category, points = points, label = label, age = 0 }
+    self:spawnPopup(category, points, x, y)
     return points
 end
 
-function Gladiator:recordDestroy(enemyPower, playerPower)
+function Gladiator:recordDestroy(enemyPower, playerPower, x, y)
     local points = Gladiator.killPoints(enemyPower, playerPower)
-    return self:award("destroy", points, "DESTROY")
+    return self:award("destroy", points, "DESTROY", x, y)
 end
 
-function Gladiator:recordMissileDodge(clearance, relativeSpeed)
+function Gladiator:recordMissileDodge(clearance, relativeSpeed, x, y)
     if (relativeSpeed or 0) < self.minRelativeSpeed then return 0 end
     local points = Gladiator.evasionPoints(clearance, self.missileMargin, relativeSpeed)
-    return self:award("missileDodge", points, "MISSILE DODGE")
+    return self:award("missileDodge", points, "MISSILE DODGE", x, y)
 end
 
-function Gladiator:recordAerobatics(clearance, relativeSpeed)
+function Gladiator:recordAerobatics(clearance, relativeSpeed, x, y)
     if (relativeSpeed or 0) < self.minRelativeSpeed then return 0 end
     local points = Gladiator.evasionPoints(clearance, self.aerobaticsMargin, relativeSpeed)
-    return self:award("aerobatics", points, "AEROBATICS")
+    return self:award("aerobatics", points, "AEROBATICS", x, y)
 end
 
-function Gladiator:finishNearMiss(entity, category)
+function Gladiator:finishNearMiss(entity, category, x, y)
     local nearMiss = entity.nearMiss
     entity.nearMiss = nil
     if not nearMiss or nearMiss.collided then return 0 end
+    local px, py = nearMiss.x or x, nearMiss.y or y
     if category == "missileDodge" then
-        return self:recordMissileDodge(nearMiss.minClearance, nearMiss.relativeSpeed)
+        return self:recordMissileDodge(nearMiss.minClearance, nearMiss.relativeSpeed, px, py)
     end
-    return self:recordAerobatics(nearMiss.minClearance, nearMiss.relativeSpeed)
+    return self:recordAerobatics(nearMiss.minClearance, nearMiss.relativeSpeed, px, py)
 end
 
-function Gladiator:trackNearMiss(entity, minDistance, endDistance, hitRadius, relativeSpeed, category, collided)
+function Gladiator:trackNearMiss(entity, minDistance, endDistance, hitRadius, relativeSpeed, category, collided, x, y)
     local info = categoryInfo[category]
     local margin = self[info.marginKey]
     local exitDistance = hitRadius + margin + self.exitHysteresis
@@ -98,28 +122,108 @@ function Gladiator:trackNearMiss(entity, minDistance, endDistance, hitRadius, re
     local clearance = minDistance - hitRadius
     if clearance > 0 and clearance <= margin then
         if not nearMiss then
-            nearMiss = { minClearance = clearance, relativeSpeed = relativeSpeed or 0 }
+            nearMiss = { minClearance = clearance, relativeSpeed = relativeSpeed or 0, x = x, y = y }
             entity.nearMiss = nearMiss
         elseif clearance < nearMiss.minClearance then
             nearMiss.minClearance = clearance
             nearMiss.relativeSpeed = relativeSpeed or 0
+            nearMiss.x, nearMiss.y = x, y
         elseif clearance == nearMiss.minClearance and (relativeSpeed or 0) > nearMiss.relativeSpeed then
             nearMiss.relativeSpeed = relativeSpeed
+            nearMiss.x, nearMiss.y = x, y
         end
     end
 
     if nearMiss and endDistance > exitDistance then
-        return self:finishNearMiss(entity, category)
+        return self:finishNearMiss(entity, category, x, y)
     end
     return 0
 end
 
 function Gladiator:update(dt)
-    if not self.lastEvent or dt <= 0 then return end
-    self.lastEvent.age = self.lastEvent.age + dt
-    if self.lastEvent.age >= self.noticeDuration then
-        self.lastEvent = nil
+    if dt <= 0 then return end
+    if self.lastEvent then
+        self.lastEvent.age = self.lastEvent.age + dt
+        if self.lastEvent.age >= self.noticeDuration then
+            self.lastEvent = nil
+        end
     end
+    for i = #self.popups, 1, -1 do
+        local popup = self.popups[i]
+        popup.age = popup.age + dt
+        if popup.age >= popup.duration then
+            table.remove(self.popups, i)
+        end
+    end
+end
+
+local function drawPopupIcon(g, category, cx, cy, color, alpha)
+    local r, gr, b = color[1], color[2], color[3]
+    if category == "destroy" then
+        g.setColor(r, gr, b, alpha)
+        g.setLineWidth(1.2)
+        g.circle("line", cx, cy, 3.5)
+        g.line(cx - 5.2, cy, cx - 2.3, cy)
+        g.line(cx + 2.3, cy, cx + 5.2, cy)
+        g.line(cx, cy - 5.2, cx, cy - 2.3)
+        g.line(cx, cy + 2.3, cx, cy + 5.2)
+    elseif category == "missileDodge" then
+        g.setColor(1.0, 0.42, 0.36, alpha)
+        g.polygon("fill", cx + 4.4, cy - 4.0, cx - 2.4, cy - 1.0, cx + 0.6, cy + 2.0)
+        g.setColor(r, gr, b, alpha)
+        g.setLineWidth(1.3)
+        g.arc("line", "open", cx - 0.8, cy + 0.8, 4.9, math.pi * 0.15, math.pi * 1.15)
+    else
+        g.setColor(r, gr, b, alpha)
+        g.setLineWidth(1.4)
+        g.line(cx - 4.5, cy + 0.6, cx, cy - 4.0, cx + 4.5, cy + 0.6)
+        g.setLineWidth(1.1)
+        g.line(cx - 3.3, cy + 4.0, cx, cy + 0.2, cx + 3.3, cy + 4.0)
+    end
+end
+
+function Gladiator:drawPopups(camera, width, height, font)
+    if #self.popups == 0 then return end
+    local g = love.graphics
+    g.push("all")
+    g.origin()
+    g.setLineStyle("smooth")
+    if font then g.setFont(font) end
+    local activeFont = g.getFont()
+    local textH = activeFont:getHeight()
+    local iconSize, gap = 10, 4
+
+    for _, popup in ipairs(self.popups) do
+        local t = math.max(0, math.min(1, popup.age / popup.duration))
+        local alpha = t < 0.12 and (t / 0.12) or (t > 0.62 and (1 - t) / 0.38 or 1)
+        local rise = self.popupRise * (1 - (1 - t) * (1 - t))
+        local sx, sy = popup.x, popup.y
+        if camera then
+            sx, sy = camera:worldToScreen(popup.x, popup.y, width, height)
+        end
+        sy = sy - rise
+
+        local info = categoryInfo[popup.category] or categoryInfo.aerobatics
+        local color = info.color
+        local text = "+" .. tostring(popup.points)
+        local textW = activeFont:getWidth(text)
+        local totalW = iconSize + gap + textW
+        local left = math.floor(sx - totalW * 0.5)
+        local centerY = math.floor(sy)
+        local iconX = left + iconSize * 0.5
+        local textX = left + iconSize + gap
+        local textY = math.floor(centerY - textH * 0.5)
+
+        -- Subtle drop shadow keeps floating numbers legible over explosions and bright lines.
+        drawPopupIcon(g, popup.category, iconX + 1, centerY + 1, { 0.02, 0.03, 0.06 }, alpha * 0.7)
+        drawPopupIcon(g, popup.category, iconX, centerY, color, alpha)
+
+        g.setColor(0.02, 0.03, 0.06, alpha * 0.8)
+        g.print(text, textX + 1, textY + 1)
+        g.setColor(color[1], color[2], color[3], alpha)
+        g.print(text, textX, textY)
+    end
+    g.pop()
 end
 
 return Gladiator

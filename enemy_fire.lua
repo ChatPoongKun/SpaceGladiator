@@ -265,22 +265,28 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
         end
     end
 
+    local popupX, popupY = ship.x, ship.y
     if missileSteps and not ship:isDestroyed() then
         for _, entry in ipairs(missileSteps) do
             local shot = entry.shot
             if not shot.spent then
-                local rx, ry, vx, vy, _, _, _, _, _, span = playerRelativeSegment(
+                local rx, ry, vx, vy, _, _, _, _, start, span = playerRelativeSegment(
                     shot, motion, entry.oldX, entry.oldY, entry.start, entry.step)
                 if rx then
-                    local minDist = Collision.closestDistance(rx, ry, vx, vy)
+                    local minDist, minT = Collision.closestDistance(rx, ry, vx, vy)
                     local endX, endY = rx + vx, ry + vy
                     local endDist = math.sqrt(endX * endX + endY * endY)
                     local spanStep = entry.step * span
                     local relativeSpeed = spanStep > 0 and math.sqrt(vx * vx + vy * vy) / spanStep or 0
+                    local at = start + spanStep * minT
+                    local px = (motion.x + motion.vx * at) % Arena.width
+                    local py = (motion.y + motion.vy * at) % Arena.height
+                    local grazeX = px + (rx + vx * minT) * 0.5
+                    local grazeY = py + (ry + vy * minT) * 0.5
                     gladiator:trackNearMiss(shot, minDist, endDist, hitRadius + shot.profile.radius,
-                        relativeSpeed, "missileDodge", false)
+                        relativeSpeed, "missileDodge", false, grazeX, grazeY)
                 else
-                    gladiator:finishNearMiss(shot, "missileDodge")
+                    gladiator:finishNearMiss(shot, "missileDodge", popupX, popupY)
                 end
             end
         end
@@ -298,7 +304,7 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
             else
                 if shot.profile == missile then
                     if gladiator and not ship:isDestroyed() then
-                        gladiator:finishNearMiss(shot, "missileDodge")
+                        gladiator:finishNearMiss(shot, "missileDodge", popupX, popupY)
                     end
                     impact(fire, shot, shot.x, shot.y)
                 end
