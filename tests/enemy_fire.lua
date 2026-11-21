@@ -2,6 +2,10 @@ return function(Ship, Enemies, Camera, check)
     local Arena = require("arena")
     local dt = 1 / 60
 
+    local function headingChange(ax, ay, bx, by)
+        return math.abs(math.atan2(ax * by - ay * bx, ax * bx + ay * by))
+    end
+
     local function fixture(kind, x, y)
         local ship = Ship.new(Arena.width, Arena.height)
         ship.x, ship.y = 650, 270
@@ -84,7 +88,13 @@ return function(Ship, Enemies, Camera, check)
         end
 
         ship.x, ship.y = 200, 50
-        group.fire:update(0.12, ship)
+        group.fire:update(dt, ship)
+        for i, rocket in ipairs(group.fire.shots) do
+            local old = velocities[i]
+            assert(headingChange(old[1], old[2], rocket.vx, rocket.vy) < 0.02,
+                "Missiles must ease into a heavy turn without an abrupt first-frame rotation")
+        end
+        group.fire:update(0.12 - dt, ship)
         local turned = false
         for i, rocket in ipairs(group.fire.shots) do
             local speed = math.sqrt(rocket.vx ^ 2 + rocket.vy ^ 2)
@@ -100,6 +110,30 @@ return function(Ship, Enemies, Camera, check)
             assert(math.abs(impact.x - secondX) < 1e-6 and math.abs(impact.y - secondY) < 1e-6,
                 "The second waypoint must be the final detonation point for all missiles")
         end
+    end
+
+    do
+        local ship, group, enemy = fixture(3)
+        group.fire:shoot(enemy, ship)
+        local rocket = group.fire.shots[1]
+        group.fire.shots = {rocket}
+        ship.x, ship.y = 560, 440
+        group.fire:update(rocket.lifetime, ship)
+        local leg = rocket.secondLeg
+        ship.x, ship.y = 200, 50
+        local turnEnd = (2 * leg.ramp + leg.sweep) * leg.radius / leg.speed
+        group.fire:update(turnEnd - 2 * dt, ship)
+        local vx, vy = rocket.vx, rocket.vy
+        group.fire:update(dt, ship)
+        local bank = headingChange(vx, vy, rocket.vx, rocket.vy)
+        vx, vy = rocket.vx, rocket.vy
+        group.fire:update(dt, ship)
+        local taper = headingChange(vx, vy, rocket.vx, rocket.vy)
+        vx, vy = rocket.vx, rocket.vy
+        group.fire:update(dt, ship)
+        check(leg.ramp > 0 and bank > taper and taper > 0
+            and headingChange(vx, vy, rocket.vx, rocket.vy) < 1e-8,
+            "The missile must ease out of the turn before flying straight into the target")
     end
 
     do
@@ -146,11 +180,15 @@ return function(Ship, Enemies, Camera, check)
         group.fire:shoot(enemy, ship)
         group.fire:shoot(enemy, ship)
         local direct, glancing = unpack(group.fire.shots)
-        direct.x = ship.x - ship:hitRadius() - direct.profile.radius - 1
-        glancing.x, glancing.y = ship.x - 14, ship.y + ship.radius + glancing.profile.radius + 1
+        local shieldRadius = ship:hitRadius() + direct.profile.radius
+        local hullRadius = ship.radius + glancing.profile.radius
+        local grazingOffset = (shieldRadius + hullRadius) / 2
+        local grazingContactX = math.sqrt(shieldRadius ^ 2 - grazingOffset ^ 2)
+        direct.x = ship.x - shieldRadius - 1
+        glancing.x, glancing.y = ship.x - grazingContactX - 4, ship.y + grazingOffset
         group.fire:update(dt, ship)
         local impact = group.fire.impacts[1]
-        check(impact and impact.shield and math.abs(ship.x - impact.x - ship.radius * 1.1 - direct.profile.radius) < 1e-6
+        check(impact and impact.shield and math.abs(ship.x - impact.x - shieldRadius) < 1e-6
             and ship.shield == 0 and ship.armor == 95,
             "One shield point must intercept a projectile at the outer ring and show a shield impact")
         check(#group.fire.shots == 1 and group.fire.shots[1] == glancing,
@@ -196,7 +234,7 @@ return function(Ship, Enemies, Camera, check)
             return originalPrint(label, ...)
         end
         g.circle = function(mode, x, y, radius, ...)
-            if mode == "line" and math.abs(radius - ship.radius * 1.1) < 1e-6 then rings = rings + 1 end
+            if mode == "line" and math.abs(radius - ship.radius * ship.shieldMargin) < 1e-6 then rings = rings + 1 end
             return originalCircle(mode, x, y, radius, ...)
         end
         local ok, message = pcall(function()
