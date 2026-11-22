@@ -140,6 +140,13 @@ local function beginStageClear()
     local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
     lastGladiatorTotal = gladiator.total or 0
     coinWallet = coinWallet + delta
+    if ship then
+        lastWrapEvents = ship.wrapEvents or 0
+        lastDamageCount = ship.damageCount or 0
+    end
+    if gladiator then
+        lastEvasionCount = gladiator.evasionCount or 0
+    end
     if enemies then
         enemies.items = {}
         if enemies.fire then enemies.fire:beginHarmlessExpiry() end
@@ -199,6 +206,7 @@ local function enterWarpSelect(keepExistingGates)
         if ship then
             ship.x, ship.y = Arena.width * 0.5, Arena.height * 0.5
             ship.vx, ship.vy, ship.wrapVx, ship.wrapVy = 0, 0, 0, 0
+            ship.invulnTimer = 0
             ship.boostRemaining, ship.boostLevel = 0, 0
             ship.accelerating, ship.braking = false, false
         end
@@ -227,6 +235,15 @@ local function completeWarpAndStartStage(gate)
     stage:configureEnemies(enemies)
     warpState = nil
     warpGates = nil
+    if ship then
+        ship.invulnTimer = 0
+        lastWrapEvents = ship.wrapEvents or 0
+        lastDamageCount = ship.damageCount or 0
+    end
+    if gladiator then
+        lastEvasionCount = gladiator.evasionCount or 0
+    end
+    wrapTriggerCooldown, shockwaveCooldown = 0, 0
     if camera and ship then
         camera.pullback = 0
         camera:update(0, ship, width, height)
@@ -435,7 +452,9 @@ function love.load(args)
         return
     end
     if testFlow then
-        require("tests.flow")(function() return screen, ship, enemies, turret, gladiator, beginStageClear end)
+        require("tests.flow")(function()
+            return screen, ship, enemies, turret, gladiator, beginStageClear, inventory, warpGates, syncInventoryBuild
+        end)
         love.event.quit(0)
         return
     end
@@ -496,7 +515,7 @@ function love.update(dt)
     if screen == "pause" or screen == "settings" or screen == "inventory" then return end
     time = time + dt
     if screen == "stageClear" then
-        ship:update(dt, { turn = 0, thrust = false, brake = true, boost = false })
+        ship:update(dt, { turn = 0, thrust = false, brake = true, boost = false }, { disableWrapDetection = true })
         if enemies and enemies.fire then
             enemies.fire:updateHarmless(dt)
         end
@@ -539,7 +558,7 @@ function love.update(dt)
             beginWarpToNextStage(preGate)
             return
         end
-        ship:update(dt, input)
+        ship:update(dt, input, { disableWrapDetection = true })
         input.boost = false
         local postGate = StageTransition.checkGateTrigger(warpGates, ship)
         if postGate then

@@ -203,7 +203,7 @@ function Ship:updateVelocity(dt, thrust, brake, cap, coastDt)
     return oldVx, oldVy
 end
 
-function Ship:update(dt, input)
+function Ship:update(dt, input, options)
     if dt <= 0 then return end
     self.prevX, self.prevY = self.x, self.y
     if self:isDestroyed() then
@@ -231,10 +231,12 @@ function Ship:update(dt, input)
 
     self.invulnTimer = math.max(0, (self.invulnTimer or 0) - dt)
     local margin = self:hitRadius() + 1
+    local detectWrap = not (options and options.disableWrapDetection)
+    local wrapBonusSpeed = detectWrap and self.wrapBonusSpeed or Ship.wrapBonusSpeed
     local wrappedX, wrappedY
-    self.x, self.vx, self.wrapVx, wrappedX = crossEdge(self.x, oldVx, self.vx, self.wrapVx, Arena.width, margin, dt, self.wrapBonusSpeed)
-    self.y, self.vy, self.wrapVy, wrappedY = crossEdge(self.y, oldVy, self.vy, self.wrapVy, Arena.height, margin, dt, self.wrapBonusSpeed)
-    if wrappedX or wrappedY then
+    self.x, self.vx, self.wrapVx, wrappedX = crossEdge(self.x, oldVx, self.vx, self.wrapVx, Arena.width, margin, dt, wrapBonusSpeed)
+    self.y, self.vy, self.wrapVy, wrappedY = crossEdge(self.y, oldVy, self.vy, self.wrapVy, Arena.height, margin, dt, wrapBonusSpeed)
+    if detectWrap and (wrappedX or wrappedY) then
         self.wrapEvents = (self.wrapEvents or 0) + 1
         if (self.wrapInvulnDuration or 0) > 0 then
             self.invulnTimer = math.max(self.invulnTimer, self.wrapInvulnDuration)

@@ -297,7 +297,15 @@ local function runTests(Inventory, Ship, Turret, Gladiator)
         local phaseBuild = starter:computeBuild(false)
         ship:applyBuild(phaseBuild)
         assert(ship.wrapBonusSpeed > Ship.wrapBonusSpeed and ship.wrapInvulnDuration > 0)
-        ship.x, ship.vx = 5, -180
+        -- Suppressing wrap detection (used during stage transitions) must wrap position without triggering wrap events/invuln
+        ship.x, ship.vx, ship.wrapVx, ship.invulnTimer = 5, -180, 0, 0
+        local wrapEventsBefore = ship.wrapEvents
+        ship:update(0.1, { turn = 0, thrust = false, brake = false, boost = false }, { disableWrapDetection = true })
+        assert(ship.x > 900, "Suppressed wrap detection must still wrap ship coordinates across arena edge")
+        assert(ship.wrapEvents == wrapEventsBefore and ship.invulnTimer == 0,
+            "Suppressed wrap detection must not increment wrapEvents or grant wrap invulnerability")
+        -- Normal combat wrap detection still increments wrapEvents and grants invulnerability
+        ship.x, ship.vx, ship.wrapVx = 5, -180, 0
         ship:update(0.1, { turn = 0, thrust = false, brake = false, boost = false })
         assert(ship.wrapEvents >= 1 and ship.invulnTimer > 0, "Wrapping with Wrap Phase must grant invulnerability")
         local armorBefore = ship.armor

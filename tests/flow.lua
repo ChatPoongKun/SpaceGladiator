@@ -222,5 +222,45 @@ return function(state)
     key("return")
     assert(state() == "title")
 
+    -- Stage transition movement must not register boundary crossing or fire Wrapping Condenser on next stage start.
+    click("게임 시작")
+    local _, wrapShip, _, wrapTurret, _, triggerWrapStageClear, wrapInv, _, syncBuild = state()
+    assert(wrapInv:equipChip(wrapInv.placed[1], 1, wrapInv:createChip("wrap_trigger")),
+        "Wrapping Condenser must equip on starter projectile module")
+    syncBuild()
+    -- Cross boundary while braking during stageClear
+    wrapShip.x, wrapShip.vx = 5, -180
+    triggerWrapStageClear()
+    assert(state() == "stageClear")
+    for _ = 1, 45 do love.update(0.05) end
+    assert(state() == "plinko")
+    assert(wrapShip.wrapEvents == 0, "Boundary movement during stageClear must not trigger wrapEvents")
+    for _ = 1, 10 do love.update(0.05) end
+    key("return")
+    assert(state() == "warpSelect")
+    -- Advance past warp gate readyDelay, cross boundary during warpSelect, then fly into a warp gate
+    for _ = 1, 8 do love.update(0.05) end
+    local _, _, _, _, _, _, _, gatesState = state()
+    local gate = gatesState.gates[1]
+    wrapShip.x, wrapShip.y = gate.x - gate.dirX * 49, gate.y - gate.dirY * 49
+    wrapShip.vx, wrapShip.vy = gate.dirX * 420, gate.dirY * 420
+    love.update(0.05)
+    assert(state() == "warping", "Flying into warp gate must start warping")
+    assert(wrapShip.wrapEvents == 0, "Crossing boundary during warpSelect must not trigger wrapEvents")
+    for _ = 1, 60 do love.update(0.05) end
+    assert(state() == "playing", "Completing warp must start the next stage")
+    love.update(0.05)
+    assert(#wrapTurret.missiles == 0 and wrapTurret.shotsFired == 0,
+        "Wrapping Condenser must not fire immediately on starting the next stage")
+    -- In active combat on the new stage, genuine boundary crossing must still trigger Wrapping Condenser
+    wrapShip.x, wrapShip.vx, wrapShip.wrapVx = 5, -180, 0
+    love.update(0.05)
+    assert(wrapShip.wrapEvents == 1 and #wrapTurret.missiles > 0,
+        "Wrapping Condenser must still fire on genuine boundary crossing during combat")
+    key("escape")
+    key("up")
+    key("return")
+    assert(state() == "title")
+
     print("PASS: title, settings, pause, combat input, abandonment, destruction, and run summary")
 end
