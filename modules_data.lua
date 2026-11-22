@@ -119,6 +119,7 @@ ModulesData.list = {
 
 ModulesData.byId = {}
 for _, def in ipairs(ModulesData.list) do
+    def.image = def.image or ("assets/items/modules/" .. def.id .. ".png")
     ModulesData.byId[def.id] = def
 end
 

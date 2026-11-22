@@ -166,8 +166,25 @@ local function runTests(Inventory, Ship, Turret, Gladiator)
     ui:mousepressed(uiInv, sockX + 50, sockY + 50, 2, { stageEndMode = true })
     assert(ui.dragging == nil and projMod.sockets[1] == rewardChip, "Right-click must cancel drag and restore chip to socket")
 
-    -- Smoke-test actual LÖVE rendering in both stage-end mode (with drag) and combat mode
+    -- Smoke-test actual LÖVE rendering and verify every item image loads with exact grid aspect ratio
     if love and love.graphics then
+        local ModulesData = require("modules_data")
+        local ChipsData = require("chips_data")
+        for _, def in ipairs(ModulesData.list) do
+            assert(def.image, "Module missing image path: " .. def.id)
+            local img = love.graphics.newImage(def.image)
+            local iw, ih = img:getDimensions()
+            assert(iw == def.w * 128 and ih == def.h * 128,
+                string.format("Module %s image (%dx%d) must match grid size %dx%d", def.id, iw, ih, def.w * 128, def.h * 128))
+        end
+        for _, def in ipairs(ChipsData.list) do
+            assert(def.image, "Chip missing image path: " .. def.id)
+            local img = love.graphics.newImage(def.image)
+            local iw, ih = img:getDimensions()
+            assert(iw == def.w * 128 and ih == def.h * 128,
+                string.format("Chip %s image (%dx%d) must match grid size %dx%d", def.id, iw, ih, def.w * 128, def.h * 128))
+        end
+
         local menuFont = "assets/fonts/DriftMenu.ttf"
         local testFonts = {
             small = love.graphics.newFont(11),

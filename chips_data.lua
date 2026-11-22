@@ -173,6 +173,7 @@ for _, def in ipairs(ChipsData.list) do
     def.w = def.w or 1
     def.h = def.h or 1
     def.shape = def.shape or { { 0, 0 } }
+    def.image = def.image or ("assets/items/chips/" .. def.id .. ".png")
     ChipsData.byId[def.id] = def
 end
 
