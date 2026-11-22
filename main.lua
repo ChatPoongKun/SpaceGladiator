@@ -8,8 +8,14 @@ local Gladiator = require("gladiator")
 local Hud = require("hud")
 local Menu = require("menu")
 local Sfx = require("sfx")
+local Inventory = require("inventory")
+local InventoryUI = require("inventory_ui")
 
 local ship, stars, fonts, camera, turret, enemies, hud, gladiator
+local inventory, inventoryUI, currentBuild
+local permanentUnlocksFile = "grid_unlocks.txt"
+local lastFeverState, lastEvasionCount, lastWrapEvents, lastDamageCount = false, 0, 0, 0
+local wrapTriggerCooldown, shockwaveCooldown = 0, 0
 local width, height, time = 1280, 800, 0
 local screen, selectedButton
 local focused = true
@@ -17,14 +23,14 @@ local gameOverHold = 1.25
 local displayFile = "fullscreen.txt"
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow, testGladiator = false, false, false, false
+local testCompact, testDamaged, testFlow, testGladiator, testInventory = false, false, false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local weaponNames = { "PROJECTILE", "MISSILE", "LASER" }
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow or testGladiator) then return defaultErrorHandler(message) end
+    if not (testMode or testFlow or testGladiator or testInventory) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
@@ -36,7 +42,21 @@ local function setScreen(nextScreen)
     love.mouse.setVisible(screen ~= "playing" and screen ~= "gameOver")
     if screen == "title" or screen == "results" then
         ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
+        currentBuild = nil
     end
+end
+
+local function syncInventoryBuild()
+    if not inventory or not ship or not gladiator then return end
+    currentBuild = inventory:computeBuild(gladiator.feverActive)
+    ship:applyBuild(currentBuild)
+    gladiator.scoreMultiplier = currentBuild.scoreMultiplier or 1
+    lastFeverState = gladiator.feverActive
+end
+
+local function savePermanentUnlocks()
+    if not inventory or testMode or testFlow or testGladiator or testInventory then return end
+    pcall(love.filesystem.write, permanentUnlocksFile, inventory:serializeUnlockedCells())
 end
 
 local function startRun()
@@ -46,6 +66,15 @@ local function startRun()
     turret = Turret.new(ship.angle)
     gladiator = Gladiator.new()
     enemies = Enemies.new(nil, gladiator)
+    inventory = Inventory.newStarter()
+    if not (testMode or testFlow or testGladiator or testInventory)
+        and love.filesystem.getInfo(permanentUnlocksFile) then
+        inventory:loadUnlockedCells(love.filesystem.read(permanentUnlocksFile))
+    end
+    inventoryUI = InventoryUI.new()
+    lastEvasionCount, lastWrapEvents, lastDamageCount = 0, 0, 0
+    wrapTriggerCooldown, shockwaveCooldown = 0, 0
+    syncInventoryBuild()
     input.turn, input.thrust, input.brake, input.boost = 0, false, false, false
     time = 0
     setScreen("playing")
@@ -129,12 +158,13 @@ function love.load(args)
         if arg == "--test" then testMode = true end
         if arg == "--test-flow" then testFlow = true end
         if arg == "--test-gladiator" then testGladiator = true end
+        if arg == "--test-inventory" then testInventory = true end
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
     love.graphics.setBackgroundColor(0.018, 0.028, 0.055)
     love.graphics.setLineStyle("smooth")
-    if not (testMode or testFlow or testGladiator) and love.filesystem.getInfo(displayFile)
+    if not (testMode or testFlow or testGladiator or testInventory) and love.filesystem.getInfo(displayFile)
         and love.filesystem.read(displayFile) == "1" then
         love.window.setFullscreen(true, "desktop")
     end
@@ -150,10 +180,15 @@ function love.load(args)
     }
     hud = Hud.new()
     stars = Starfield.new(width, height)
-    if not (testMode or testFlow or testGladiator) then Sfx.load() end
+    if not (testMode or testFlow or testGladiator or testInventory) then Sfx.load() end
     setScreen("title")
     if testGladiator then
         require("tests.gladiator")(Ship, Enemies, Turret, Gladiator)
+        love.event.quit(0)
+        return
+    end
+    if testInventory then
+        require("tests.inventory")(Inventory, Ship, Turret, Gladiator)
         love.event.quit(0)
         return
     end
@@ -187,7 +222,7 @@ function love.update(dt)
         stars:update(dt, 12, -18, 0, width, height, 0)
         return
     end
-    if screen == "pause" or screen == "settings" then return end
+    if screen == "pause" or screen == "settings" or screen == "inventory" then return end
     time = time + dt
     if screen == "gameOver" then
         ship:update(dt, input)
@@ -221,8 +256,74 @@ function love.update(dt)
         return
     end
     local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
-    turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height)
+    if currentBuild and gladiator.feverActive ~= lastFeverState then
+        syncInventoryBuild()
+    end
+    local activeWeaponBuild = currentBuild and currentBuild.weapons[turret.weapon] or nil
+    turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeaponBuild)
     gladiator:update(dt, ship)
+
+    if currentBuild then
+        wrapTriggerCooldown = math.max(0, wrapTriggerCooldown - dt)
+        shockwaveCooldown = math.max(0, shockwaveCooldown - dt)
+
+        -- On-dodge triggers & dodge battery recharge
+        if (gladiator.evasionCount or 0) > lastEvasionCount then
+            lastEvasionCount = gladiator.evasionCount
+            if (currentBuild.onDodgeBattery or 0) > 0 then
+                ship:rechargeBattery(currentBuild.onDodgeBattery)
+            end
+            for w = 1, 3 do
+                local wCfg = currentBuild.weapons[w]
+                if wCfg.installed and wCfg.triggerOnDodge then
+                    turret:fireTriggered(w, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
+                        free = wCfg.autoBatteryZero,
+                    })
+                end
+            end
+        end
+
+        -- On-wrap triggers
+        if (ship.wrapEvents or 0) > lastWrapEvents then
+            lastWrapEvents = ship.wrapEvents
+            if wrapTriggerCooldown <= 0 then
+                for w = 1, 3 do
+                    local wCfg = currentBuild.weapons[w]
+                    if wCfg.installed and wCfg.triggerOnWrap then
+                        turret:fireTriggered(w, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
+                            free = true, areaMult = wCfg.areaMult,
+                        })
+                        wrapTriggerCooldown = wCfg.wrapTriggerCooldown or 1.5
+                    end
+                end
+            end
+        end
+
+        -- On-hit triggers (counter fire + shockwave bullet clear)
+        if (ship.damageCount or 0) > lastDamageCount then
+            lastDamageCount = ship.damageCount
+            if currentBuild.shockwaveOnHit and shockwaveCooldown <= 0 and enemies and enemies.fire and enemies.fire.items then
+                local rSq = (currentBuild.shockwaveRadius or 180) ^ 2
+                for bi = #enemies.fire.items, 1, -1 do
+                    local b = enemies.fire.items[bi]
+                    local bdx, bdy = (b.x or 0) - ship.x, (b.y or 0) - ship.y
+                    if bdx * bdx + bdy * bdy <= rSq then
+                        table.remove(enemies.fire.items, bi)
+                    end
+                end
+                shockwaveCooldown = currentBuild.shockwaveCooldown or 4.0
+            end
+            for w = 1, 3 do
+                local wCfg = currentBuild.weapons[w]
+                if wCfg.installed and wCfg.triggerOnHit and (ship.battery or 0) >= (wCfg.hitTriggerBattery or 15) then
+                    ship.battery = ship.battery - (wCfg.hitTriggerBattery or 15)
+                    turret:fireTriggered(w, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
+                        radialCount = wCfg.radialCount or 6,
+                    })
+                end
+            end
+        end
+    end
 end
 
 local function label(text, x, y, alpha)
@@ -339,6 +440,7 @@ local function drawHud()
     g.circle("fill", mx, y + 14, 3)
     label(mode, mx + 12, y + 8)
     label(string.format("ZOOM  %d%%", math.floor(camera.zoom * 100 + 0.5)), mx - 3, y + 59)
+    label("TAB / I  GRID", mx - 3, height - 85)
     label("R  RESET", mx - 3, height - 63)
     label("ESC / P  PAUSE", mx - 3, height - 41)
 end
@@ -413,7 +515,11 @@ function love.draw()
     elseif screen == "playing" and not focused and not testMode then
         menu = unfocusedMenu
     end
-    if menu then Menu.draw(menu, fonts, selectedButton, width, height, ship ~= nil) end
+    if screen == "inventory" and inventory and inventoryUI then
+        inventoryUI:draw(inventory, fonts, width, height, gladiator and gladiator.feverActive)
+    elseif menu then
+        Menu.draw(menu, fonts, selectedButton, width, height, ship ~= nil)
+    end
     if testMode and not captureRequested then
         captureRequested = true
         love.graphics.captureScreenshot(function(data)
@@ -430,6 +536,30 @@ end
 
 function love.keypressed(key, _, isRepeat)
     if isRepeat then return end
+    if key == "tab" or key == "i" then
+        if screen == "playing" then
+            setScreen("inventory")
+            return
+        elseif screen == "inventory" then
+            syncInventoryBuild()
+            savePermanentUnlocks()
+            setScreen("playing")
+            return
+        end
+    end
+    if screen == "inventory" then
+        if key == "escape" then
+            syncInventoryBuild()
+            savePermanentUnlocks()
+            setScreen("playing")
+        elseif inventoryUI and inventory then
+            if inventoryUI:keypressed(inventory, key) == "changed" then
+                syncInventoryBuild()
+                savePermanentUnlocks()
+            end
+        end
+        return
+    end
     if key == "escape" or key == "p" then
         if screen == "playing" then setScreen("pause")
         elseif screen == "pause" then setScreen("playing")
@@ -458,6 +588,18 @@ end
 
 function love.mousepressed(x, y, button)
     if button ~= 1 then return end
+    if screen == "inventory" and inventory and inventoryUI then
+        local action = inventoryUI:mousepressed(inventory, x, y, button)
+        if action == "close" then
+            syncInventoryBuild()
+            savePermanentUnlocks()
+            setScreen("playing")
+        elseif action == "changed" then
+            syncInventoryBuild()
+            savePermanentUnlocks()
+        end
+        return
+    end
     if screen == "playing" then
         firing = focused
         return
