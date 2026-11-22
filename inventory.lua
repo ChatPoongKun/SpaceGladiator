@@ -1,5 +1,9 @@
--- 3x3 -> 5x5 Diamond Grid Inventory with Core Socket & Link Activation.
+-- 4x4 -> 6x6 Diamond Grid Inventory with Core Socket & Link Activation.
 -- Pure Lua logic (no LÖVE graphics dependency) so it can be unit-tested cleanly.
+-- No permanent separate stash exists for modules or support chips: every item
+-- has a grid shape and must fit inside the main diamond inventory (or a module
+-- socket for support chips). Post-stage rewards sit in a temporary pending tray
+-- and are discarded if not placed into the main inventory before the next stage.
 
 local ModulesData = require("modules_data")
 local ChipsData = require("chips_data")
@@ -7,10 +11,10 @@ local ChipsData = require("chips_data")
 local Inventory = {}
 Inventory.__index = Inventory
 
-Inventory.GRID_SIZE = 5
-Inventory.CENTER = 3
-Inventory.START_RADIUS = 1 -- 3x3 diamond (5 cells)
-Inventory.MAX_RADIUS = 2   -- 5x5 diamond (13 cells)
+Inventory.GRID_SIZE = 6
+Inventory.CENTER = 3.5
+Inventory.START_RADIUS = 2 -- 4x4 diamond (12 cells: 2+4+4+2)
+Inventory.MAX_RADIUS = 3   -- 6x6 diamond (24 cells: 2+4+6+6+4+2)
 
 local function cellKey(r, c)
     return r .. "," .. c
@@ -21,12 +25,90 @@ local function edgeKey(a, b)
     return a .. "-" .. b
 end
 
+local function removeFromList(list, item)
+    for i = 1, #list do
+        if list[i] == item then
+            table.remove(list, i)
+            return true
+        end
+    end
+    return false
+end
+
 function Inventory.isInDiamond(r, c, radius)
     if r < 1 or r > Inventory.GRID_SIZE or c < 1 or c > Inventory.GRID_SIZE then
         return false
     end
     local dist = math.abs(r - Inventory.CENTER) + math.abs(c - Inventory.CENTER)
-    return dist <= (radius or Inventory.MAX_RADIUS)
+    return dist <= (radius or Inventory.MAX_RADIUS) + 1e-6
+end
+
+function Inventory.normalizeRotation(rot)
+    if type(rot) == "boolean" then
+        return rot and 1 or 0
+    end
+    local n = math.floor(tonumber(rot) or 0)
+    return ((n % 4) + 4) % 4
+end
+
+-- Returns rotated 0-indexed cell coordinates {{dr, dc}, ...}, bounding width w,
+-- and bounding height h for a module/chip instance or its definition.
+-- Preserves cell ordering so index i maps directly to socket i on modules.
+function Inventory.getShapeCells(itemOrDef, rotation)
+    local def = (itemOrDef and itemOrDef.def) or itemOrDef
+    if not def then return {}, 0, 0 end
+
+    local rot
+    if rotation ~= nil then
+        rot = Inventory.normalizeRotation(rotation)
+    elseif itemOrDef.rotation ~= nil then
+        rot = Inventory.normalizeRotation(itemOrDef.rotation)
+    else
+        rot = Inventory.normalizeRotation(itemOrDef.rotated)
+    end
+
+    local cells = {}
+    if def.shape and #def.shape > 0 then
+        for i, coord in ipairs(def.shape) do
+            cells[i] = { coord[1], coord[2] }
+        end
+    else
+        local baseW = def.w or 1
+        local baseH = def.h or 1
+        for dr = 0, baseH - 1 do
+            for dc = 0, baseW - 1 do
+                cells[#cells + 1] = { dr, dc }
+            end
+        end
+    end
+
+    for _ = 1, rot do
+        local maxR = 0
+        for _, coord in ipairs(cells) do
+            if coord[1] > maxR then maxR = coord[1] end
+        end
+        for _, coord in ipairs(cells) do
+            local nr = coord[2]
+            local nc = maxR - coord[1]
+            coord[1], coord[2] = nr, nc
+        end
+        local minR, minC = math.huge, math.huge
+        for _, coord in ipairs(cells) do
+            if coord[1] < minR then minR = coord[1] end
+            if coord[2] < minC then minC = coord[2] end
+        end
+        for _, coord in ipairs(cells) do
+            coord[1] = coord[1] - minR
+            coord[2] = coord[2] - minC
+        end
+    end
+
+    local maxR, maxC = 0, 0
+    for _, coord in ipairs(cells) do
+        if coord[1] > maxR then maxR = coord[1] end
+        if coord[2] > maxC then maxC = coord[2] end
+    end
+    return cells, maxC + 1, maxR + 1
 end
 
 function Inventory.new(opts)
@@ -35,10 +117,10 @@ function Inventory.new(opts)
         gridSize = Inventory.GRID_SIZE,
         center = Inventory.CENTER,
         unlocked = {},
-        cells = {},        -- cells[r][c] = moduleInstance or nil
-        placed = {},       -- list of placed moduleInstances
-        stashModules = {}, -- unplaced moduleInstances
-        stashChips = {},   -- unequipped chipInstances
+        cells = {},          -- cells[r][c] = placed module or placed chip or nil
+        placed = {},         -- list of placed moduleInstances
+        placedChips = {},    -- list of unequipped chipInstances stored directly on grid cells
+        pendingRewards = {}, -- temporary post-stage reward items (discarded if not placed)
         nextId = 1,
         metaPoints = opts.metaPoints or 0,
         expandCost = opts.expandCost or 100,
@@ -90,7 +172,7 @@ function Inventory:maxCellCount()
     return count
 end
 
--- Permanent expansion: can unlock any locked cell inside the 5x5 diamond
+-- Permanent expansion: can unlock any locked cell inside the 6x6 diamond
 -- that is orthogonally adjacent to an already-unlocked cell.
 function Inventory:canUnlockCell(r, c)
     if not Inventory.isInDiamond(r, c, Inventory.MAX_RADIUS) then
@@ -136,12 +218,15 @@ function Inventory:createModule(defId, opts)
     for _, edge in ipairs(initialLinks) do
         links[edgeKey(edge[1], edge[2])] = { edge[1], edge[2] }
     end
+    local _, w, h = Inventory.getShapeCells(def, 0)
     local mod = {
+        kind = "module",
         id = self.nextId,
         defId = def.id,
         def = def,
-        w = def.w,
-        h = def.h,
+        w = w,
+        h = h,
+        rotation = 0,
         rotated = false,
         row = nil,
         col = nil,
@@ -156,114 +241,199 @@ end
 function Inventory:createChip(chipId)
     local def = ChipsData.get(chipId)
     assert(def, "Unknown chip id: " .. tostring(chipId))
+    local _, w, h = Inventory.getShapeCells(def, 0)
     local chip = {
+        kind = "chip",
         id = self.nextId,
         defId = def.id,
         def = def,
+        w = w,
+        h = h,
+        rotation = 0,
+        rotated = false,
+        row = nil,
+        col = nil,
     }
     self.nextId = self.nextId + 1
     return chip
 end
 
-function Inventory:addModuleToStash(defId, opts)
+-- Post-stage temporary reward queue (not a permanent stash).
+-- Anything remaining here when advancing to the next stage is discarded.
+function Inventory:addPendingModule(defId, opts)
     local mod = type(defId) == "table" and defId or self:createModule(defId, opts)
-    self.stashModules[#self.stashModules + 1] = mod
+    self.pendingRewards[#self.pendingRewards + 1] = mod
     return mod
 end
 
-function Inventory:addChipToStash(chipId)
+function Inventory:addPendingChip(chipId)
     local chip = type(chipId) == "table" and chipId or self:createChip(chipId)
-    self.stashChips[#self.stashChips + 1] = chip
+    self.pendingRewards[#self.pendingRewards + 1] = chip
     return chip
 end
 
-local function removeFromList(list, item)
-    for i = 1, #list do
-        if list[i] == item then
-            table.remove(list, i)
-            return true
+function Inventory:addPendingItem(item)
+    if not item then return nil end
+    for i = 1, #self.pendingRewards do
+        if self.pendingRewards[i] == item then return item end
+    end
+    self.pendingRewards[#self.pendingRewards + 1] = item
+    return item
+end
+
+function Inventory:removePendingItem(item)
+    return removeFromList(self.pendingRewards, item)
+end
+
+function Inventory:pendingCount()
+    return #self.pendingRewards
+end
+
+function Inventory:discardPendingRewards()
+    local discarded = #self.pendingRewards
+    self.pendingRewards = {}
+    return discarded
+end
+
+function Inventory:moduleDimensions(item, rotation)
+    local _, w, h = Inventory.getShapeCells(item, rotation)
+    return w, h
+end
+
+function Inventory:getItemCells(item, row, col, rotation)
+    local r0 = row or item.row
+    local c0 = col or item.col
+    if not r0 or not c0 then return {} end
+    local shapeCells = Inventory.getShapeCells(item, rotation)
+    local result = {}
+    for i, coord in ipairs(shapeCells) do
+        result[i] = { r = r0 + coord[1], c = c0 + coord[2] }
+    end
+    return result
+end
+
+function Inventory:getSocketAtGridCell(mod, r, c)
+    if not mod or mod.kind ~= "module" or not mod.row or not mod.col then
+        return nil
+    end
+    local shapeCells = Inventory.getShapeCells(mod, mod.rotation)
+    for i, coord in ipairs(shapeCells) do
+        if mod.row + coord[1] == r and mod.col + coord[2] == c then
+            if i <= (mod.maxSockets or 0) then
+                return i
+            end
         end
     end
-    return false
+    return nil
 end
 
-function Inventory:moduleDimensions(mod, rotated)
-    local rot = rotated
-    if rot == nil then rot = mod.rotated end
-    if rot then
-        return mod.def.h, mod.def.w
+function Inventory:findEquippedChip(chip)
+    if not chip then return nil, nil end
+    for _, mod in ipairs(self.placed) do
+        for i = 1, mod.maxSockets do
+            if mod.sockets[i] == chip then
+                return mod, i
+            end
+        end
     end
-    return mod.def.w, mod.def.h
+    return nil, nil
 end
 
-function Inventory:canPlace(mod, row, col, rotated)
-    if not mod then return false, "invalid_module" end
-    local w, h = self:moduleDimensions(mod, rotated)
-    for dr = 0, h - 1 do
-        for dc = 0, w - 1 do
-            local r, c = row + dr, col + dc
-            if not self:isUnlocked(r, c) then
-                return false, "locked_or_out_of_bounds"
-            end
-            local occupant = self.cells[r][c]
-            if occupant and occupant ~= mod then
-                return false, "occupied"
-            end
+function Inventory:canPlace(item, row, col, rotation)
+    if not item or not row or not col then return false, "invalid_item" end
+    local shapeCells = Inventory.getShapeCells(item, rotation)
+    if #shapeCells == 0 then return false, "invalid_shape" end
+    for _, coord in ipairs(shapeCells) do
+        local r, c = row + coord[1], col + coord[2]
+        if not self:isUnlocked(r, c) then
+            return false, "locked_or_out_of_bounds"
+        end
+        local occupant = self.cells[r][c]
+        if occupant and occupant ~= item then
+            return false, "occupied"
         end
     end
     return true
 end
 
-function Inventory:removeModule(mod, toStash)
-    if not mod or not mod.row then return false end
+function Inventory:removeItem(item, toPending)
+    if not item or not item.row then return false end
     for r = 1, self.gridSize do
         for c = 1, self.gridSize do
-            if self.cells[r][c] == mod then
+            if self.cells[r][c] == item then
                 self.cells[r][c] = nil
             end
         end
     end
-    mod.row, mod.col = nil, nil
-    removeFromList(self.placed, mod)
-    if toStash ~= false then
-        self.stashModules[#self.stashModules + 1] = mod
+    item.row, item.col = nil, nil
+    if item.kind == "chip" then
+        removeFromList(self.placedChips, item)
+    else
+        removeFromList(self.placed, item)
+    end
+    if toPending == true then
+        self:addPendingItem(item)
     end
     return true
 end
 
-function Inventory:placeModule(mod, row, col, rotated)
-    local rot = rotated
-    if rot == nil then rot = mod.rotated end
-    local ok, reason = self:canPlace(mod, row, col, rot)
+function Inventory:removeModule(mod, toPending)
+    return self:removeItem(mod, toPending)
+end
+
+function Inventory:placeItem(item, row, col, rotation)
+    if not item then return false, "invalid_item" end
+    local rot = rotation ~= nil and Inventory.normalizeRotation(rotation) or (item.rotation or 0)
+    local ok, reason = self:canPlace(item, row, col, rot)
     if not ok then return false, reason end
 
-    if mod.row then
-        self:removeModule(mod, false)
+    if item.row then
+        self:removeItem(item, false)
     else
-        removeFromList(self.stashModules, mod)
-    end
-
-    local w, h = self:moduleDimensions(mod, rot)
-    mod.rotated = rot
-    mod.w, mod.h = w, h
-    mod.row, mod.col = row, col
-    for dr = 0, h - 1 do
-        for dc = 0, w - 1 do
-            self.cells[row + dr][col + dc] = mod
+        removeFromList(self.pendingRewards, item)
+        if item.kind == "chip" then
+            local hostMod, hostIdx = self:findEquippedChip(item)
+            if hostMod and hostIdx then
+                hostMod.sockets[hostIdx] = nil
+            end
         end
     end
-    self.placed[#self.placed + 1] = mod
+
+    local shapeCells, w, h = Inventory.getShapeCells(item, rot)
+    item.rotation = rot
+    item.rotated = (rot % 2 == 1)
+    item.w, item.h = w, h
+    item.row, item.col = row, col
+    for _, coord in ipairs(shapeCells) do
+        self.cells[row + coord[1]][col + coord[2]] = item
+    end
+    if item.kind == "chip" then
+        self.placedChips[#self.placedChips + 1] = item
+    else
+        self.placed[#self.placed + 1] = item
+    end
     return true
 end
 
-function Inventory:rotateModule(mod)
-    if not mod then return false, "invalid_module" end
-    if not mod.row then
-        mod.rotated = not mod.rotated
-        mod.w, mod.h = self:moduleDimensions(mod, mod.rotated)
+function Inventory:placeModule(mod, row, col, rotation)
+    return self:placeItem(mod, row, col, rotation)
+end
+
+function Inventory:rotateItem(item, steps)
+    if not item then return false, "invalid_item" end
+    local nextRot = Inventory.normalizeRotation((item.rotation or 0) + (steps or 1))
+    if not item.row then
+        local _, w, h = Inventory.getShapeCells(item, nextRot)
+        item.rotation = nextRot
+        item.rotated = (nextRot % 2 == 1)
+        item.w, item.h = w, h
         return true
     end
-    return self:placeModule(mod, mod.row, mod.col, not mod.rotated)
+    return self:placeItem(item, item.row, item.col, nextRot)
+end
+
+function Inventory:rotateModule(mod, steps)
+    return self:rotateItem(mod, steps)
 end
 
 -- Core Socket & Link Activation (BFS starting from Core Socket 1)
@@ -357,11 +527,21 @@ function Inventory:equipChip(mod, socketIndex, chip)
         return false, "incompatible_target"
     end
     local previous = mod.sockets[socketIndex]
-    removeFromList(self.stashChips, chip)
-    mod.sockets[socketIndex] = chip
-    if previous then
-        self.stashChips[#self.stashChips + 1] = previous
+    if previous == chip then
+        return true, nil
     end
+
+    removeFromList(self.pendingRewards, chip)
+    if chip.row then
+        self:removeItem(chip, false)
+    else
+        local oldMod, oldIdx = self:findEquippedChip(chip)
+        if oldMod and oldIdx then
+            oldMod.sockets[oldIdx] = nil
+        end
+    end
+
+    mod.sockets[socketIndex] = chip
     return true, previous
 end
 
@@ -370,7 +550,6 @@ function Inventory:unequipChip(mod, socketIndex)
     local chip = mod.sockets[socketIndex]
     if not chip then return nil end
     mod.sockets[socketIndex] = nil
-    self.stashChips[#self.stashChips + 1] = chip
     return chip
 end
 
@@ -463,7 +642,6 @@ function Inventory:computeBuild(feverActive)
         local wCfg = def.weaponIndex and build.weapons[def.weaponIndex] or nil
         if wCfg then
             wCfg.installed = true
-            -- Base weapon battery cost only applies if non-zero or modified by chips
             wCfg.batteryCost = wCfg.batteryCost + (def.baseBatteryCost or 0)
         end
 
@@ -554,31 +732,12 @@ function Inventory:computeBuild(feverActive)
     return build
 end
 
--- Create a default starter inventory on the 3x3 diamond that preserves baseline
--- stats while giving the player starter stash modules & chips to test immediately.
+-- Create a default starter inventory on the 4x4 diamond (expandable to 6x6)
+-- with the baseline projectile turret installed and NO separate stash.
 function Inventory.newStarter(opts)
     local inv = Inventory.new(opts)
-    -- Starter weapon fits cleanly in the 3x3 diamond center column: (2,3)-(3,3)
     local proj = inv:createModule("projectile")
-    inv:placeModule(proj, 2, 3, false)
-
-    -- Populate test-bench stash with additional modules & chips for prototyping
-    inv:addModuleToStash("thruster")
-    inv:addModuleToStash("shield")
-    inv:addModuleToStash("battery")
-    inv:addModuleToStash("missile")
-    inv:addModuleToStash("laser")
-    inv:addModuleToStash("armor")
-
-    inv:addChipToStash("splitter")
-    inv:addChipToStash("burst")
-    inv:addChipToStash("dodge_trigger")
-    inv:addChipToStash("wrap_trigger")
-    inv:addChipToStash("fever_overdrive")
-    inv:addChipToStash("dodge_charge")
-    inv:addChipToStash("shockwave")
-    inv:addChipToStash("wrap_phase")
-    inv:addChipToStash("limiter_off")
+    inv:placeModule(proj, 3, 3, 0)
     return inv
 end
 

@@ -1,6 +1,6 @@
--- Support chip definitions that plug into active (core-linked) module sockets.
--- Chips do not occupy ship grid cells; instead they modify their host module's
--- behavior, triggers, and battery consumption.
+-- Support chip definitions (1x1 grid items).
+-- Chips can be dropped directly onto a compatible module's active socket to
+-- modify its behavior, or stored as a 1x1 item on an empty diamond grid cell.
 
 local ChipsData = {}
 
@@ -170,6 +170,9 @@ ChipsData.list = {
 
 ChipsData.byId = {}
 for _, def in ipairs(ChipsData.list) do
+    def.w = def.w or 1
+    def.h = def.h or 1
+    def.shape = def.shape or { { 0, 0 } }
     ChipsData.byId[def.id] = def
 end
 

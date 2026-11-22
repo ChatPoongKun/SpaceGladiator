@@ -234,14 +234,15 @@ end
 function Plinko:grantReward(slot, inventory, ship)
     local spec = slot.reward.spec
     if spec.kind == "module" and inventory then
-        local mod = inventory:addModuleToStash(spec.id)
+        local mod = inventory:addPendingModule(spec.id)
         for _ = 1, (spec.extraLinks or 0) do
             inventory:unlockNextLink(mod)
         end
     elseif spec.kind == "chip" and inventory then
-        inventory:addChipToStash(spec.id)
+        inventory:addPendingChip(spec.id)
     elseif spec.kind == "link_token" and inventory then
-        -- Auto-unlock one link on the first placed module with missing links, or store as bonus
+        -- Auto-unlock one link on the first placed module with missing links,
+        -- falling back to any pending reward module.
         local unlocked = false
         for _, mod in ipairs(inventory.placed) do
             if inventory:unlockNextLink(mod) then
@@ -250,8 +251,8 @@ function Plinko:grantReward(slot, inventory, ship)
             end
         end
         if not unlocked then
-            for _, mod in ipairs(inventory.stashModules) do
-                if inventory:unlockNextLink(mod) then
+            for _, item in ipairs(inventory.pendingRewards or {}) do
+                if item.kind == "module" and inventory:unlockNextLink(item) then
                     break
                 end
             end

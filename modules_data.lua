@@ -1,6 +1,7 @@
--- Module definitions for the 3x3 -> 5x5 diamond ship grid inventory.
--- Each module has a grid footprint (w x h), a socket layout with Socket 1 as the
--- Core Socket, and an initial set of linked edges. Only sockets reachable from
+-- Module definitions for the 4x4 -> 6x6 diamond ship grid inventory.
+-- Each module has a grid shape (list of 0-indexed {dr, dc} cells), a bounding
+-- box (w x h), a socket layout with Socket 1 as the Core Socket (1 socket per
+-- cell), and an initial set of linked edges. Only sockets reachable from
 -- Socket 1 via unlocked links activate their equipped support chips.
 
 local ModulesData = {}
@@ -14,6 +15,7 @@ ModulesData.list = {
         weaponIndex = 1,
         w = 1,
         h = 2,
+        shape = { { 0, 0 }, { 1, 0 } },
         maxSockets = 2,
         defaultLinks = { { 1, 2 } },
         allLinks = { { 1, 2 } },
@@ -29,6 +31,7 @@ ModulesData.list = {
         weaponIndex = 2,
         w = 2,
         h = 2,
+        shape = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 1, 0 } },
         maxSockets = 4,
         defaultLinks = { { 1, 2 } },
         allLinks = { { 1, 2 }, { 2, 3 }, { 3, 4 }, { 1, 4 } },
@@ -44,6 +47,7 @@ ModulesData.list = {
         weaponIndex = 3,
         w = 1,
         h = 3,
+        shape = { { 0, 0 }, { 1, 0 }, { 2, 0 } },
         maxSockets = 3,
         defaultLinks = { { 1, 2 } },
         allLinks = { { 1, 2 }, { 2, 3 } },
@@ -58,6 +62,7 @@ ModulesData.list = {
         category = "defense",
         w = 2,
         h = 1,
+        shape = { { 0, 0 }, { 0, 1 } },
         maxSockets = 2,
         defaultLinks = { { 1, 2 } },
         allLinks = { { 1, 2 } },
@@ -72,6 +77,7 @@ ModulesData.list = {
         category = "defense",
         w = 1,
         h = 2,
+        shape = { { 0, 0 }, { 1, 0 } },
         maxSockets = 2,
         defaultLinks = { { 1, 2 } },
         allLinks = { { 1, 2 } },
@@ -86,6 +92,7 @@ ModulesData.list = {
         category = "battery",
         w = 1,
         h = 2,
+        shape = { { 0, 0 }, { 1, 0 } },
         maxSockets = 2,
         defaultLinks = { { 1, 2 } },
         allLinks = { { 1, 2 } },
@@ -100,6 +107,7 @@ ModulesData.list = {
         category = "thruster",
         w = 1,
         h = 1,
+        shape = { { 0, 0 } },
         maxSockets = 1,
         defaultLinks = {},
         allLinks = {},

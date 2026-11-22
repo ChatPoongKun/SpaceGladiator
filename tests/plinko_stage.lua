@@ -1,4 +1,3 @@
-++ b/tests/plinko_stage.lua
 -- Unit and integration tests for Stage progression and the 5-slot full-width
 -- random-drop Gladiator Coin Plinko machine.
 -- Runnable via `love . --test-plinko` or standalone `luajit tests/plinko_stage.lua`.
@@ -62,7 +61,7 @@ local function runTests(Stage, Plinko, Inventory, Ship, Enemies)
     end
     assert(totalLanded == 180, "All 180 dropped coins must land in a slot")
     assert(claimedCount >= 1 and #p.claimedLog == claimedCount, "Claimed log must match claimed slots without duplicates")
-    assert((#inv.stashModules + #inv.stashChips) >= 1 or claimedCount >= 1)
+    assert(inv:pendingCount() >= 1 or claimedCount >= 1)
 
     -- 6. Default discard of unclaimed slots vs future permanent carryover hook
     local pDiscard = Plinko.new({ stageNumber = 1, coins = 15, seed = 9001, carryoverEnabled = false })

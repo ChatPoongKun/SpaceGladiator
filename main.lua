@@ -22,6 +22,7 @@ local stage, plinko, plinkoUI
 local replay, activeExporter
 local coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
 local inventoryReturnScreen = "playing"
+local inventoryStageEndMode = false
 local permanentUnlocksFile = "grid_unlocks.txt"
 local lastFeverState, lastEvasionCount, lastWrapEvents, lastDamageCount = false, 0, 0, 0
 local wrapTriggerCooldown, shockwaveCooldown = 0, 0
@@ -108,6 +109,7 @@ local function startRun()
     plinko = nil
     coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
     inventoryReturnScreen = "playing"
+    inventoryStageEndMode = false
     stage = Stage.new(1)
     if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then
         stage:configureEnemies(enemies)
@@ -136,6 +138,42 @@ local function enterPlinkoStageEnd()
     Sfx.play("stage_clear")
 end
 
+local function launchNextStage()
+    if inventoryUI and inventory then
+        inventoryUI:cancelDrag(inventory)
+    end
+    if inventory then
+        inventory:discardPendingRewards()
+    end
+    inventoryStageEndMode = false
+    inventoryReturnScreen = "playing"
+    stage = stage and stage:nextStage() or Stage.new(2)
+    enemies.items = {}
+    if enemies.fire then enemies.fire.items = {} end
+    enemies.spawnAccumulator = 0.5
+    stage:configureEnemies(enemies)
+    syncInventoryBuild()
+    savePermanentUnlocks()
+    setScreen("playing")
+end
+
+local function closeInventoryScreen()
+    if inventoryUI and inventory then
+        inventoryUI:cancelDrag(inventory)
+    end
+    syncInventoryBuild()
+    savePermanentUnlocks()
+    if inventoryReturnScreen == "nextStage" then
+        launchNextStage()
+        return
+    end
+    local target = inventoryReturnScreen or "playing"
+    if target ~= "plinko" then
+        inventoryStageEndMode = false
+    end
+    setScreen(target)
+end
+
 local function advanceToNextStage()
     if plinko then
         plinko:resolveAll(inventory, ship)
@@ -143,13 +181,13 @@ local function advanceToNextStage()
         carriedPlinkoSlots = plinko:exportCarryoverSlots()
         plinko = nil
     end
-    stage = stage and stage:nextStage() or Stage.new(2)
-    enemies.items = {}
-    if enemies.fire then enemies.fire.items = {} end
-    enemies.spawnAccumulator = 0.5
-    stage:configureEnemies(enemies)
-    syncInventoryBuild()
-    setScreen("playing")
+    if inventory and inventory:pendingCount() > 0 then
+        inventoryReturnScreen = "nextStage"
+        inventoryStageEndMode = true
+        setScreen("inventory")
+        return
+    end
+    launchNextStage()
 end
 
 local menus = {}
@@ -686,9 +724,12 @@ function love.draw()
         menu = unfocusedMenu
     end
     if screen == "plinko" and plinko and plinkoUI then
-        plinkoUI:draw(plinko, stage, fonts, width, height)
+        plinkoUI:draw(plinko, stage, fonts, width, height, inventory and inventory:pendingCount() or 0)
     elseif screen == "inventory" and inventory and inventoryUI then
-        inventoryUI:draw(inventory, fonts, width, height, gladiator and gladiator.feverActive)
+        inventoryUI:draw(inventory, fonts, width, height, gladiator and gladiator.feverActive, {
+            stageEndMode = inventoryStageEndMode,
+            returnTarget = inventoryReturnScreen,
+        })
     elseif menu then
         Menu.draw(menu, fonts, selectedButton, width, height, ship ~= nil)
     end
@@ -723,12 +764,11 @@ function love.keypressed(key, _, isRepeat)
     if key == "tab" or key == "i" then
         if screen == "playing" or screen == "plinko" then
             inventoryReturnScreen = screen
+            inventoryStageEndMode = (screen == "plinko")
             setScreen("inventory")
             return
         elseif screen == "inventory" then
-            syncInventoryBuild()
-            savePermanentUnlocks()
-            setScreen(inventoryReturnScreen or "playing")
+            closeInventoryScreen()
             return
         end
     end
@@ -742,9 +782,14 @@ function love.keypressed(key, _, isRepeat)
     end
     if screen == "inventory" then
         if key == "escape" then
-            syncInventoryBuild()
-            savePermanentUnlocks()
-            setScreen(inventoryReturnScreen or "playing")
+            if inventoryUI and inventory and inventoryUI.dragging then
+                inventoryUI:cancelDrag(inventory)
+                Sfx.play("ui_click")
+            else
+                closeInventoryScreen()
+            end
+        elseif (key == "return" or key == "kpenter") and inventoryReturnScreen == "nextStage" then
+            closeInventoryScreen()
         elseif inventoryUI and inventory then
             if inventoryUI:keypressed(inventory, key) == "changed" then
                 syncInventoryBuild()
@@ -800,6 +845,18 @@ function love.mousemoved(x, y)
 end
 
 function love.mousepressed(x, y, button)
+    if screen == "inventory" and inventory and inventoryUI then
+        local action = inventoryUI:mousepressed(inventory, x, y, button, {
+            stageEndMode = inventoryStageEndMode,
+        })
+        if action == "close" then
+            closeInventoryScreen()
+        elseif action == "changed" then
+            syncInventoryBuild()
+            savePermanentUnlocks()
+        end
+        return
+    end
     if button ~= 1 then return end
     if screen == "replay" and replay then
         local action = replay:buttonAt(x, y)
@@ -818,21 +875,10 @@ function love.mousepressed(x, y, button)
         local action = plinkoUI:mousepressed(plinko, x, y, button)
         if action == "openInventory" then
             inventoryReturnScreen = "plinko"
+            inventoryStageEndMode = true
             setScreen("inventory")
         elseif action == "nextStage" then
             advanceToNextStage()
-        end
-        return
-    end
-    if screen == "inventory" and inventory and inventoryUI then
-        local action = inventoryUI:mousepressed(inventory, x, y, button)
-        if action == "close" then
-            syncInventoryBuild()
-            savePermanentUnlocks()
-            setScreen(inventoryReturnScreen or "playing")
-        elseif action == "changed" then
-            syncInventoryBuild()
-            savePermanentUnlocks()
         end
         return
     end
@@ -850,7 +896,19 @@ function love.mousepressed(x, y, button)
     end
 end
 
-function love.mousereleased(_, _, button)
+function love.mousereleased(x, y, button)
+    if screen == "inventory" and inventory and inventoryUI then
+        local action = inventoryUI:mousereleased(inventory, x, y, button, {
+            stageEndMode = inventoryStageEndMode,
+        })
+        if action == "close" then
+            closeInventoryScreen()
+        elseif action == "changed" then
+            syncInventoryBuild()
+            savePermanentUnlocks()
+        end
+        return
+    end
     if button == 1 then firing = false end
 end
 

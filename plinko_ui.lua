@@ -22,7 +22,8 @@ function PlinkoUI:addRegion(x, y, w, h, action)
     self.hitRegions[#self.hitRegions + 1] = { x = x, y = y, w = w, h = h, action = action }
 end
 
-function PlinkoUI:draw(plinko, stage, fonts, width, height)
+function PlinkoUI:draw(plinko, stage, fonts, width, height, pendingCount)
+    pendingCount = pendingCount or 0
     local g = love.graphics
     self.hitRegions = {}
 
@@ -207,13 +208,28 @@ function PlinkoUI:draw(plinko, stage, fonts, width, height)
     local actY = py + panelH - 58
     local halfW = math.floor((rw - 10) / 2)
 
-    g.setColor(0.10, 0.20, 0.28, 0.95)
+    if pendingCount > 0 then
+        g.setFont(fonts.menuBody)
+        g.setColor(1.0, 0.80, 0.36, 0.95)
+        g.printf("미배치 보상 " .. pendingCount .. "개 · 인벤토리에 넣지 않으면 소멸", rx, actY - 24, rw, "center")
+    end
+
+    if pendingCount > 0 then
+        g.setColor(0.24, 0.22, 0.08, 0.96)
+    else
+        g.setColor(0.10, 0.20, 0.28, 0.95)
+    end
     g.rectangle("fill", rx, actY, halfW, 40, 6, 6)
-    g.setColor(0.42, 0.84, 0.94, 0.8)
+    if pendingCount > 0 then
+        g.setColor(1.0, 0.82, 0.36, 0.95)
+    else
+        g.setColor(0.42, 0.84, 0.94, 0.8)
+    end
     g.rectangle("line", rx, actY, halfW, 40, 6, 6)
     g.setFont(fonts.menuBody)
-    g.setColor(0.92, 0.98, 1, 1)
-    g.printf("인벤토리 (I)", rx, actY + 11, halfW, "center")
+    g.setColor(0.96, 0.98, 1, 1)
+    local invLabel = pendingCount > 0 and ("장비 배치 (" .. pendingCount .. ")") or "인벤토리 (I)"
+    g.printf(invLabel, rx, actY + 11, halfW, "center")
     self:addRegion(rx, actY, halfW, 40, { type = "openInventory" })
 
     local nx = rx + halfW + 10
