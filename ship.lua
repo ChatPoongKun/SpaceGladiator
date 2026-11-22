@@ -41,6 +41,8 @@ function Ship.new(width, height)
         wrapInvulnDuration = 0, invulnTimer = 0, wrapEvents = 0,
         combatPower = Ship.combatPower,
         damageCount = 0,
+        shieldDamageTaken = 0,
+        armorDamageTaken = 0,
     }, Ship)
 end
 
@@ -104,10 +106,12 @@ function Ship:takeDamage(amount)
     if self:hasShield() then
         local absorbed = math.min(self.shield, amount)
         self.shield = self.shield - absorbed
+        self.shieldDamageTaken = (self.shieldDamageTaken or 0) + absorbed
         amount = amount - absorbed
     end
     local absorbed = math.min(self.armor, amount)
     self.armor = self.armor - absorbed
+    self.armorDamageTaken = (self.armorDamageTaken or 0) + absorbed
     if amount <= absorbed then return end
 
     self.hull = math.max(0, self.hull - 1)

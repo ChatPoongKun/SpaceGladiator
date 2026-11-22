@@ -123,6 +123,9 @@ return function(state)
     gladiator:endFever()
 
     ship:takeDamage(119)
+    -- Enabling a noShield build after taking shield damage must not erase recorded shield loss in results.
+    ship:applyBuild({ noShield = true })
+    assert(ship.maxShield == 0 and ship.shield == 0)
     key("escape")
     click("포기하기")
     assert(state() == "results")

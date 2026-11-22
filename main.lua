@@ -300,8 +300,8 @@ end
 
 local function showResults(reason)
     if replay then replay:finalizeStage() end
-    local shield = ship.maxShield - ship.shield
-    local armor = ship.maxArmor - ship.armor
+    local shield = ship.shieldDamageTaken or 0
+    local armor = ship.armorDamageTaken or 0
     local rows = {
         {label = "글레디에이터 포인트", value = gladiator.total .. "점", heading = true},
         {label = "적 파괴", value = string.format("%d회 · %d점", gladiator.destroy.count, gladiator.destroy.points)},
