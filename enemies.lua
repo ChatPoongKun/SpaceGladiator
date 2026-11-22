@@ -522,6 +522,11 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
         vx = wrappedDelta(ship.x - x, Arena.width) / dt, vy = wrappedDelta(ship.y - y, Arena.height) / dt}
     advance(self, 1, dt, ship, aimAngle, motion)
 
+    if self.squadsRemaining ~= nil and self.squadsRemaining <= 0 then
+        self.spawnAccumulator = 0
+        if self.gladiator then self.gladiator:endEvasionBatch(ship) end
+        return
+    end
     if #self.items + squadSize > self.maxCount then
         self.spawnAccumulator = 0
         if self.gladiator then self.gladiator:endEvasionBatch(ship) end
@@ -532,8 +537,12 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
     self.spawnAccumulator = math.max(0, self.spawnAccumulator - count)
     for i = 1, count do
         if #self.items + squadSize > self.maxCount then break end
+        if self.squadsRemaining ~= nil and self.squadsRemaining <= 0 then break end
         local first = #self.items + 1
         self:spawnSquad(ship)
+        if self.squadsRemaining ~= nil then
+            self.squadsRemaining = math.max(0, self.squadsRemaining - 1)
+        end
         local slice = (count - i + self.spawnAccumulator) / self.spawnRate
         -- A new arrival moves only for the portion of the frame after its birth.
         advance(self, first, slice, ship, aimAngle, motion)

@@ -10,9 +10,15 @@ local Menu = require("menu")
 local Sfx = require("sfx")
 local Inventory = require("inventory")
 local InventoryUI = require("inventory_ui")
+local Stage = require("stage")
+local Plinko = require("plinko")
+local PlinkoUI = require("plinko_ui")
 
 local ship, stars, fonts, camera, turret, enemies, hud, gladiator
 local inventory, inventoryUI, currentBuild
+local stage, plinko, plinkoUI
+local coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
+local inventoryReturnScreen = "playing"
 local permanentUnlocksFile = "grid_unlocks.txt"
 local lastFeverState, lastEvasionCount, lastWrapEvents, lastDamageCount = false, 0, 0, 0
 local wrapTriggerCooldown, shockwaveCooldown = 0, 0
@@ -23,14 +29,14 @@ local gameOverHold = 1.25
 local displayFile = "fullscreen.txt"
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow, testGladiator, testInventory = false, false, false, false, false
+local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko = false, false, false, false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local weaponNames = { "PROJECTILE", "MISSILE", "LASER" }
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow or testGladiator or testInventory) then return defaultErrorHandler(message) end
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
@@ -42,7 +48,8 @@ local function setScreen(nextScreen)
     love.mouse.setVisible(screen ~= "playing" and screen ~= "gameOver")
     if screen == "title" or screen == "results" then
         ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
-        currentBuild = nil
+        currentBuild, stage, plinko = nil, nil, nil
+        coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
     end
 end
 
@@ -55,7 +62,7 @@ local function syncInventoryBuild()
 end
 
 local function savePermanentUnlocks()
-    if not inventory or testMode or testFlow or testGladiator or testInventory then return end
+    if not inventory or testMode or testFlow or testGladiator or testInventory or testPlinko then return end
     pcall(love.filesystem.write, permanentUnlocksFile, inventory:serializeUnlockedCells())
 end
 
@@ -67,16 +74,54 @@ local function startRun()
     gladiator = Gladiator.new()
     enemies = Enemies.new(nil, gladiator)
     inventory = Inventory.newStarter()
-    if not (testMode or testFlow or testGladiator or testInventory)
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko)
         and love.filesystem.getInfo(permanentUnlocksFile) then
         inventory:loadUnlockedCells(love.filesystem.read(permanentUnlocksFile))
     end
     inventoryUI = InventoryUI.new()
+    plinkoUI = PlinkoUI.new()
+    plinko = nil
+    coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
+    inventoryReturnScreen = "playing"
+    stage = Stage.new(1)
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then
+        stage:configureEnemies(enemies)
+    end
     lastEvasionCount, lastWrapEvents, lastDamageCount = 0, 0, 0
     wrapTriggerCooldown, shockwaveCooldown = 0, 0
     syncInventoryBuild()
     input.turn, input.thrust, input.brake, input.boost = 0, false, false, false
     time = 0
+    setScreen("playing")
+end
+
+local function enterPlinkoStageEnd()
+    local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
+    lastGladiatorTotal = gladiator.total or 0
+    coinWallet = coinWallet + delta
+    if enemies and enemies.fire then enemies.fire.items = {} end
+    plinko = Plinko.new({
+        stageNumber = stage and stage.number or 1,
+        coins = coinWallet,
+        carriedSlots = carriedPlinkoSlots,
+        carryoverEnabled = false,
+    })
+    setScreen("plinko")
+end
+
+local function advanceToNextStage()
+    if plinko then
+        plinko:resolveAll(inventory, ship)
+        coinWallet = plinko.coins
+        carriedPlinkoSlots = plinko:exportCarryoverSlots()
+        plinko = nil
+    end
+    stage = stage and stage:nextStage() or Stage.new(2)
+    enemies.items = {}
+    if enemies.fire then enemies.fire.items = {} end
+    enemies.spawnAccumulator = 0.5
+    stage:configureEnemies(enemies)
+    syncInventoryBuild()
     setScreen("playing")
 end
 
@@ -159,12 +204,13 @@ function love.load(args)
         if arg == "--test-flow" then testFlow = true end
         if arg == "--test-gladiator" then testGladiator = true end
         if arg == "--test-inventory" then testInventory = true end
+        if arg == "--test-plinko" then testPlinko = true end
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
     love.graphics.setBackgroundColor(0.018, 0.028, 0.055)
     love.graphics.setLineStyle("smooth")
-    if not (testMode or testFlow or testGladiator or testInventory) and love.filesystem.getInfo(displayFile)
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko) and love.filesystem.getInfo(displayFile)
         and love.filesystem.read(displayFile) == "1" then
         love.window.setFullscreen(true, "desktop")
     end
@@ -180,7 +226,7 @@ function love.load(args)
     }
     hud = Hud.new()
     stars = Starfield.new(width, height)
-    if not (testMode or testFlow or testGladiator or testInventory) then Sfx.load() end
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then Sfx.load() end
     setScreen("title")
     if testGladiator then
         require("tests.gladiator")(Ship, Enemies, Turret, Gladiator)
@@ -189,6 +235,11 @@ function love.load(args)
     end
     if testInventory then
         require("tests.inventory")(Inventory, Ship, Turret, Gladiator)
+        love.event.quit(0)
+        return
+    end
+    if testPlinko then
+        require("tests.plinko_stage")(Stage, Plinko, Inventory, Ship, Enemies)
         love.event.quit(0)
         return
     end
@@ -220,6 +271,11 @@ function love.update(dt)
     if dt <= 0 then return end
     if not ship then
         stars:update(dt, 12, -18, 0, width, height, 0)
+        return
+    end
+    if screen == "plinko" then
+        if plinko then plinko:update(dt, inventory, ship) end
+        stars:update(dt, 18, -24, 0, width, height, 0)
         return
     end
     if screen == "pause" or screen == "settings" or screen == "inventory" then return end
@@ -262,6 +318,18 @@ function love.update(dt)
     local activeWeaponBuild = currentBuild and currentBuild.weapons[turret.weapon] or nil
     turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeaponBuild)
     gladiator:update(dt, ship)
+
+    -- Sync 1:1 Gladiator Coins and check stage completion (timer or all squads cleared)
+    if gladiator and (gladiator.total or 0) > lastGladiatorTotal then
+        coinWallet = coinWallet + (gladiator.total - lastGladiatorTotal)
+        lastGladiatorTotal = gladiator.total
+    end
+    if stage and not (testMode or testFlow or testGladiator or testInventory or testPlinko) then
+        if stage:update(dt, enemies) then
+            enterPlinkoStageEnd()
+            return
+        end
+    end
 
     if currentBuild then
         wrapTriggerCooldown = math.max(0, wrapTriggerCooldown - dt)
@@ -357,7 +425,7 @@ local function drawHud()
     g.setFont(fonts.title)
     g.setColor(0.83, 0.93, 0.97, 1)
     g.print("D R I F T", 32, 25)
-    label("04  /  TACTICAL FLIGHT", 34, 66)
+    label(stage and string.format("STAGE %02d  /  %.1fS", stage.number, stage:remainingTime()) or "04  /  TACTICAL FLIGHT", 34, 66)
     local gx, gw = math.floor(width / 2) - 115, 230
     g.setFont(fonts.small)
     if gladiator.feverActive then
@@ -385,7 +453,7 @@ local function drawHud()
             gx, 89, gw, "center")
     else
         g.setColor(0.53, 0.65, 0.75, 1)
-        g.printf("GLADIATOR POINTS", gx, 29, gw, "center")
+        g.printf("GLADIATOR COINS", gx, 29, gw, "center")
         g.setFont(fonts.title)
         if gladiator.lastEvent then
             g.setColor(1, 0.84, 0.44, 1)
@@ -515,7 +583,9 @@ function love.draw()
     elseif screen == "playing" and not focused and not testMode then
         menu = unfocusedMenu
     end
-    if screen == "inventory" and inventory and inventoryUI then
+    if screen == "plinko" and plinko and plinkoUI then
+        plinkoUI:draw(plinko, stage, fonts, width, height)
+    elseif screen == "inventory" and inventory and inventoryUI then
         inventoryUI:draw(inventory, fonts, width, height, gladiator and gladiator.feverActive)
     elseif menu then
         Menu.draw(menu, fonts, selectedButton, width, height, ship ~= nil)
@@ -537,21 +607,30 @@ end
 function love.keypressed(key, _, isRepeat)
     if isRepeat then return end
     if key == "tab" or key == "i" then
-        if screen == "playing" then
+        if screen == "playing" or screen == "plinko" then
+            inventoryReturnScreen = screen
             setScreen("inventory")
             return
         elseif screen == "inventory" then
             syncInventoryBuild()
             savePermanentUnlocks()
-            setScreen("playing")
+            setScreen(inventoryReturnScreen or "playing")
             return
         end
+    end
+    if screen == "plinko" then
+        if key == "space" and plinko then
+            plinko:invest(10)
+        elseif key == "return" or key == "kpenter" then
+            advanceToNextStage()
+        end
+        return
     end
     if screen == "inventory" then
         if key == "escape" then
             syncInventoryBuild()
             savePermanentUnlocks()
-            setScreen("playing")
+            setScreen(inventoryReturnScreen or "playing")
         elseif inventoryUI and inventory then
             if inventoryUI:keypressed(inventory, key) == "changed" then
                 syncInventoryBuild()
@@ -588,12 +667,22 @@ end
 
 function love.mousepressed(x, y, button)
     if button ~= 1 then return end
+    if screen == "plinko" and plinko and plinkoUI then
+        local action = plinkoUI:mousepressed(plinko, x, y, button)
+        if action == "openInventory" then
+            inventoryReturnScreen = "plinko"
+            setScreen("inventory")
+        elseif action == "nextStage" then
+            advanceToNextStage()
+        end
+        return
+    end
     if screen == "inventory" and inventory and inventoryUI then
         local action = inventoryUI:mousepressed(inventory, x, y, button)
         if action == "close" then
             syncInventoryBuild()
             savePermanentUnlocks()
-            setScreen("playing")
+            setScreen(inventoryReturnScreen or "playing")
         elseif action == "changed" then
             syncInventoryBuild()
             savePermanentUnlocks()
