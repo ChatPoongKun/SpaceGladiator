@@ -279,7 +279,51 @@ function ReplayExport.mixAudioToWav(clip, wavPath, baseDir)
     return true, mixedCount
 end
 
-local function resolveOutputDir()
+local function getDocumentsDir()
+    if isWindows() then
+        local pipe = io.popen('powershell -NoProfile -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; [Environment]::GetFolderPath(\'MyDocuments\')"')
+        if pipe then
+            local line = pipe:read("*l")
+            pipe:close()
+            if line then
+                line = line:gsub("^%s+", ""):gsub("%s+$", "")
+                if line ~= "" then return line end
+            end
+        end
+        local onedrive = os.getenv("OneDrive")
+        if onedrive and onedrive ~= "" then
+            return onedrive .. "\\Documents"
+        end
+        local profile = os.getenv("USERPROFILE")
+        if profile and profile ~= "" then
+            return profile .. "\\Documents"
+        end
+    else
+        local home = os.getenv("HOME")
+        if home and home ~= "" then
+            return home .. "/Documents"
+        end
+    end
+    return nil
+end
+
+local function ensureDir(path)
+    local nullDev = isWindows() and "NUL" or "/dev/null"
+    local cmd = isWindows()
+        and ("mkdir " .. quotePath(path) .. " >" .. nullDev .. " 2>&1")
+        or ("mkdir -p " .. quotePath(path) .. " >" .. nullDev .. " 2>&1")
+    os.execute(cmd)
+end
+
+function ReplayExport.resolveOutputDir()
+    local docs = getDocumentsDir()
+    if docs and docs ~= "" then
+        local sep = isWindows() and "\\" or "/"
+        local cleanDocs = docs:gsub("[/\\]+$", "")
+        local targetDir = cleanDocs .. sep .. "SpaceGladiator"
+        ensureDir(targetDir)
+        return targetDir
+    end
     if love and love.filesystem then
         love.filesystem.createDirectory("replays")
         return love.filesystem.getSaveDirectory() .. "/replays"
@@ -295,11 +339,12 @@ function ReplayExport.start(clip, fonts)
         return nil, "FFmpeg를 찾을 수 없습니다. PATH에 ffmpeg를 설치해 주세요."
     end
 
-    local outDir = resolveOutputDir()
+    local outDir = ReplayExport.resolveOutputDir()
+    local sep = isWindows() and "\\" or "/"
     local stamp = os.date("%Y%m%d_%H%M%S")
     local filename = string.format("highlight_stage%02d_%s.mp4", clip.stageNumber or 1, stamp)
-    local mp4Path = outDir .. "/" .. filename
-    local wavPath = outDir .. "/_temp_highlight_audio.wav"
+    local mp4Path = outDir .. sep .. filename
+    local wavPath = outDir .. sep .. "_temp_highlight_audio.wav"
 
     local okWav, wavErr = ReplayExport.mixAudioToWav(clip, wavPath)
     if not okWav then
