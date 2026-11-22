@@ -163,6 +163,22 @@ function Gladiator:endFever()
     self.recentGains = {}
 end
 
+function Gladiator:clearFever()
+    if self.feverActive then
+        self.feverMaxDuration = math.max(self.feverMaxDuration, self.feverDuration)
+    end
+    self.feverActive = false
+    self.feverDuration = 0
+    self.feverPoints = 0
+    self.feverCooldown = 0
+    self.recentGains = {}
+    self.feverFlash = 0
+    self.feverAura = 0
+    self.feverBursts = {}
+    self.feverSparks = {}
+    self.sparkAccumulator = 0
+end
+
 function Gladiator:award(category, points, label, x, y)
     if not points or points <= 0 then return 0 end
     local isFever = self.feverActive

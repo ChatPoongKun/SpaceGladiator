@@ -153,6 +153,12 @@ local function enterPlinkoStageEnd()
     local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
     lastGladiatorTotal = gladiator.total or 0
     coinWallet = coinWallet + delta
+    if gladiator then
+        gladiator:clearFever()
+        gladiator.popups = {}
+        gladiator.lastEvent = nil
+    end
+    syncInventoryBuild()
     if enemies and enemies.fire then enemies.fire:clear() end
     plinko = Plinko.new({
         stageNumber = stage and stage.number or 1,
@@ -429,7 +435,7 @@ function love.load(args)
         return
     end
     if testFlow then
-        require("tests.flow")(function() return screen, ship, enemies, turret, gladiator end)
+        require("tests.flow")(function() return screen, ship, enemies, turret, gladiator, beginStageClear end)
         love.event.quit(0)
         return
     end

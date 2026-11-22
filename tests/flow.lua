@@ -184,5 +184,43 @@ return function(state)
     checkRow(points, values, "격추한 적", "0기")
     key("return")
     assert(state() == "title")
+
+    -- Ending a stage during Fever Time and returning from Plinko must clear all fever effects.
+    click("게임 시작")
+    local _, feverShip, _, _, feverGlad, triggerStageClear = state()
+    feverGlad:award("destroy", 35, "DESTROY", feverShip.x, feverShip.y)
+    love.update(0.05)
+    love.update(0.05)
+    assert(feverGlad.feverActive and feverGlad.feverAura > 0 and #feverGlad.feverSparks > 0,
+        "Fever Time and visual effects must be active before stage clear")
+    local recordedFeverTime = feverGlad.feverTotalTime
+    triggerStageClear()
+    assert(state() == "stageClear")
+    for _ = 1, 45 do love.update(0.05) end
+    assert(state() == "plinko", "Stage clear must transition into Plinko after 2 seconds")
+    for _ = 1, 10 do love.update(0.05) end
+    key("return")
+    assert(state() == "warpSelect", "Leaving Plinko must return to battlefield warp selection")
+    assert(not feverGlad.feverActive and feverGlad.feverAura == 0 and feverGlad.feverFlash == 0
+        and feverGlad.feverCooldown == 0 and #feverGlad.feverBursts == 0
+        and #feverGlad.feverSparks == 0 and #feverGlad.popups == 0 and feverGlad.lastEvent == nil,
+        "Returning from Plinko must have all fever state and visual effects cleared")
+    assert(math.abs(feverGlad.feverTotalTime - recordedFeverTime) < 1e-6
+        and math.abs(feverGlad.feverMaxDuration - recordedFeverTime) < 1e-6,
+        "Returning from Plinko must preserve recorded fever statistics")
+    -- Also verify clearFever clears any pending cooldown between stages.
+    feverGlad.feverCooldown = 3.0
+    feverGlad:clearFever()
+    assert(feverGlad.feverCooldown == 0, "clearFever must also clear remaining fever cooldown")
+    local _, warpValues = drawText()
+    for _, text in pairs(warpValues) do
+        assert(not tostring(text):find("FEVER", 1, true),
+            "HUD must not display active fever or cooldown after returning from Plinko: " .. tostring(text))
+    end
+    key("escape")
+    key("up")
+    key("return")
+    assert(state() == "title")
+
     print("PASS: title, settings, pause, combat input, abandonment, destruction, and run summary")
 end
