@@ -509,17 +509,17 @@ return function(Ship, Enemies, Turret, Gladiator)
         local gladiator = Gladiator.new()
         local ship = Ship.new(Arena.width, Arena.height)
 
-        -- 60 + 50 spread over 1.1s (> 1s window) must NOT trigger Fever Time.
-        gladiator:award("destroy", 60, "DESTROY", ship.x, ship.y)
+        -- 20 + 15 spread over 1.1s (> 1s window) must NOT trigger Fever Time.
+        gladiator:award("destroy", 20, "DESTROY", ship.x, ship.y)
         gladiator:update(1.1, ship)
-        gladiator:award("destroy", 50, "DESTROY", ship.x, ship.y)
+        gladiator:award("destroy", 15, "DESTROY", ship.x, ship.y)
         check(not gladiator.feverActive, "Points spread over more than 1 second must not trigger Fever Time")
 
-        -- Adding 50 more within 0.5s reaches 100 in 1s and triggers Fever Time.
+        -- Adding 15 more within 0.5s reaches 30 in 1s and triggers Fever Time.
         gladiator:update(0.5, ship)
-        gladiator:award("destroy", 50, "DESTROY", ship.x, ship.y)
+        gladiator:award("destroy", 15, "DESTROY", ship.x, ship.y)
         check(gladiator.feverActive and gladiator.feverDuration == 0,
-            "Earning 100+ points within 1 second must activate Fever Time")
+            "Earning 30+ points within 1 second must activate Fever Time")
 
         -- Points earned during Fever Time must be doubled (2x) and sustain beyond 5 seconds when avg >= 100/s.
         local gained = gladiator:recordDestroy(100, 100, ship.x, ship.y)

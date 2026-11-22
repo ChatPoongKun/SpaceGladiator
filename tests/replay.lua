@@ -6,14 +6,14 @@ local function runTests(Replay, ReplayExport)
         return math.abs(a - b) <= (eps or 1e-3)
     end
 
-    -- 1. Below 100 pts/s threshold => no highlight
+    -- 1. Below MIN_PEAK_RATE (30 pts/s) threshold => no highlight
     do
         local events = {
-            { time = 5.0, category = "destroy", points = 40, x = 100, y = 100, fever = false },
-            { time = 5.4, category = "missileDodge", points = 50, x = 120, y = 110, fever = false },
+            { time = 5.0, category = "destroy", points = 10, x = 100, y = 100, fever = false },
+            { time = 5.4, category = "missileDodge", points = 15, x = 120, y = 110, fever = false },
         }
         local win = Replay.selectHighlightWindow(events, 0, 20)
-        assert(win == nil, "Expected nil highlight when peak rate < 100 pts/s")
+        assert(win == nil, "Expected nil highlight when peak rate < 30 pts/s")
     end
 
     -- 2. Peak >= 100 pts/s => best 6s window containing [peak - 1, peak + 1], output ~7.0s
