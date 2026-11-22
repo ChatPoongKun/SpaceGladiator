@@ -95,6 +95,7 @@ function Gladiator:spawnPopup(category, points, x, y, fever)
         duration = self.popupDuration,
         fever = fever or false,
     }
+    return px, py
 end
 
 function Gladiator:pruneRecentGains()
@@ -173,7 +174,10 @@ function Gladiator:award(category, points, label, x, y)
     bucket.count = bucket.count + 1
     self.total = self.total + awarded
     self.lastEvent = { category = category, points = awarded, label = label, age = 0, fever = isFever }
-    self:spawnPopup(category, awarded, x, y, isFever)
+    local px, py = self:spawnPopup(category, awarded, x, y, isFever)
+    if self.onAward then
+        self.onAward(category, awarded, px or x, py or y, isFever)
+    end
     if isFever then
         self.feverPoints = self.feverPoints + awarded
     elseif self.feverCooldown <= 0 then

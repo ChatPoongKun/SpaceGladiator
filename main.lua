@@ -13,10 +13,13 @@ local InventoryUI = require("inventory_ui")
 local Stage = require("stage")
 local Plinko = require("plinko")
 local PlinkoUI = require("plinko_ui")
+local Replay = require("replay")
+local ReplayExport = require("replay_export")
 
 local ship, stars, fonts, camera, turret, enemies, hud, gladiator
 local inventory, inventoryUI, currentBuild
 local stage, plinko, plinkoUI
+local replay, activeExporter
 local coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
 local inventoryReturnScreen = "playing"
 local permanentUnlocksFile = "grid_unlocks.txt"
@@ -29,14 +32,14 @@ local gameOverHold = 1.25
 local displayFile = "fullscreen.txt"
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko = false, false, false, false, false, false
+local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay = false, false, false, false, false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local weaponNames = { "PROJECTILE", "MISSILE", "LASER" }
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then return defaultErrorHandler(message) end
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
@@ -45,7 +48,21 @@ local function setScreen(nextScreen)
     screen, selectedButton = nextScreen, 1
     input.boost, firing = false, false
     if screen ~= "gameOver" then Sfx.stop() end
+    if screen == "playing" and replay then
+        Sfx.setListener(function(cue)
+            if screen == "playing" and replay then replay:recordSfxEvent(cue) end
+        end)
+    else
+        Sfx.setListener(nil)
+    end
     love.mouse.setVisible(screen ~= "playing" and screen ~= "gameOver")
+    if screen == "title" then
+        if activeExporter then
+            activeExporter:finish("취소됨")
+            activeExporter = nil
+        end
+        replay = nil
+    end
     if screen == "title" or screen == "results" then
         ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
         currentBuild, stage, plinko = nil, nil, nil
@@ -71,7 +88,15 @@ local function startRun()
     camera = Camera.new(ship.x, ship.y)
     camera:update(0, ship, width, height)
     turret = Turret.new(ship.angle)
+    if activeExporter then
+        activeExporter:finish("취소됨")
+        activeExporter = nil
+    end
+    replay = Replay.new()
     gladiator = Gladiator.new()
+    gladiator.onAward = function(category, points, x, y, fever)
+        if replay then replay:recordPointEvent(category, points, x, y, fever) end
+    end
     enemies = Enemies.new(nil, gladiator)
     inventory = Inventory.newStarter()
     if not (testMode or testFlow or testGladiator or testInventory or testPlinko)
@@ -96,6 +121,7 @@ local function startRun()
 end
 
 local function enterPlinkoStageEnd()
+    if replay then replay:finalizeStage() end
     local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
     lastGladiatorTotal = gladiator.total or 0
     coinWallet = coinWallet + delta
@@ -128,7 +154,42 @@ end
 
 local menus = {}
 
+local function closeReplay()
+    if activeExporter then
+        activeExporter:finish("내보내기 취소됨")
+        activeExporter = nil
+        if replay then replay.exporting = false end
+    end
+    if replay then replay:closePlayback() end
+    setScreen("results")
+end
+
+local function openReplay()
+    if replay and replay:openPlayback(width, height) then
+        setScreen("replay")
+    end
+end
+
+local function startReplayExport()
+    if activeExporter or not replay or not replay:hasHighlight() then return end
+    replay.exportError = nil
+    replay.exportStatus = "MP4 인코딩 준비 중..."
+    local exporter, err = ReplayExport.start(replay.bestClip, fonts)
+    if not exporter then
+        replay.exportStatus = nil
+        replay.exportError = err or "MP4 내보내기 시작 실패"
+        return
+    end
+    activeExporter = exporter
+    replay.exporting = true
+    replay.exportProgress = 0
+    replay.exportStatus = "MP4 인코딩 중..."
+    replay.playing = false
+    Sfx.stop()
+end
+
 local function showResults(reason)
+    if replay then replay:finalizeStage() end
     local shield = ship.maxShield - ship.shield
     local armor = ship.maxArmor - ship.armor
     local rows = {
@@ -148,6 +209,12 @@ local function showResults(reason)
     end
     local accuracy = turret.shotsFired > 0 and 100 * turret.shotsHit / turret.shotsFired or 0
     rows[#rows + 1] = {label = "명중률", value = string.format("%.1f%%", accuracy), heading = true}
+    local resultButtons = {}
+    if replay and replay:hasHighlight() then
+        resultButtons[#resultButtons + 1] = {label = "하이라이트 보기", action = openReplay}
+    end
+    resultButtons[#resultButtons + 1] = {label = "확인", action = function() setScreen("title") end}
+    menus.results.buttons = resultButtons
     menus.results.subtitle, menus.results.rows = reason, rows
     setScreen("results")
 end
@@ -206,6 +273,7 @@ function love.load(args)
         if arg == "--test-gladiator" then testGladiator = true end
         if arg == "--test-inventory" then testInventory = true end
         if arg == "--test-plinko" then testPlinko = true end
+        if arg == "--test-replay" then testReplay = true end
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
@@ -244,6 +312,11 @@ function love.load(args)
         love.event.quit(0)
         return
     end
+    if testReplay then
+        require("tests.replay")(Replay, ReplayExport)
+        love.event.quit(0)
+        return
+    end
     if testFlow then
         require("tests.flow")(function() return screen, ship, enemies, turret, gladiator end)
         love.event.quit(0)
@@ -270,6 +343,27 @@ function love.update(dt)
     if not focused and not testMode then return end
     dt = math.min(dt, 1 / 20)
     if dt <= 0 then return end
+    if screen == "replay" and replay then
+        if activeExporter then
+            local finished = activeExporter:step()
+            replay.exportProgress = activeExporter:progress()
+            if finished then
+                replay.exporting = false
+                if activeExporter.error then
+                    replay.exportStatus = nil
+                    replay.exportError = activeExporter.error
+                else
+                    replay.exportError = nil
+                    replay.lastExportPath = activeExporter.mp4Path
+                    replay.exportStatus = "저장 완료: replays/" .. activeExporter.filename
+                end
+                activeExporter = nil
+            end
+        else
+            replay:updatePlayback(dt, width, height)
+        end
+        return
+    end
     if not ship then
         stars:update(dt, 12, -18, 0, width, height, 0)
         return
@@ -319,6 +413,9 @@ function love.update(dt)
     local activeWeaponBuild = currentBuild and currentBuild.weapons[turret.weapon] or nil
     turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeaponBuild)
     gladiator:update(dt, ship)
+    if replay then
+        replay:recordFrame(dt, ship, camera, turret, enemies, gladiator, stage)
+    end
 
     -- Sync 1:1 Gladiator Coins and check stage completion (timer or all squads cleared)
     if gladiator and (gladiator.total or 0) > lastGladiatorTotal then
@@ -576,6 +673,10 @@ local function drawFlight()
 end
 
 function love.draw()
+    if screen == "replay" and replay then
+        replay:drawPlayback(width, height, fonts)
+        return
+    end
     stars:draw()
     if ship then drawFlight() end
     local menu = menus[screen]
@@ -607,6 +708,18 @@ end
 
 function love.keypressed(key, _, isRepeat)
     if isRepeat then return end
+    if screen == "replay" and replay then
+        if key == "escape" then
+            closeReplay()
+        elseif key == "space" and not activeExporter then
+            replay:togglePlay()
+        elseif key == "r" and not activeExporter then
+            replay:restartPlayback()
+        elseif key == "e" then
+            startReplayExport()
+        end
+        return
+    end
     if key == "tab" or key == "i" then
         if screen == "playing" or screen == "plinko" then
             inventoryReturnScreen = screen
@@ -688,6 +801,19 @@ end
 
 function love.mousepressed(x, y, button)
     if button ~= 1 then return end
+    if screen == "replay" and replay then
+        local action = replay:buttonAt(x, y)
+        if action == "toggle" and not activeExporter then
+            replay:togglePlay()
+        elseif action == "restart" and not activeExporter then
+            replay:restartPlayback()
+        elseif action == "export" then
+            startReplayExport()
+        elseif action == "back" then
+            closeReplay()
+        end
+        return
+    end
     if screen == "plinko" and plinko and plinkoUI then
         local action = plinkoUI:mousepressed(plinko, x, y, button)
         if action == "openInventory" then
@@ -739,5 +865,6 @@ end
 function love.resize(w, h)
     width, height = w, h
     stars:resize(w, h)
+    if replay and replay.stars then replay.stars:resize(w, h) end
     if camera then camera:update(0, ship, w, h) end
 end
