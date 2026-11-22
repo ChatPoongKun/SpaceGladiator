@@ -50,13 +50,6 @@ StageTransition.WARP_REWARDS = {
         color = { 1.00, 0.84, 0.32 },
     },
     {
-        id = "link_boost",
-        title = "배선 링크 강화",
-        short = "LINK+",
-        subtitle = "즉시 링크 +1 · 플링코 링크권",
-        color = { 0.72, 0.56, 1.00 },
-    },
-    {
         id = "hull_repair",
         title = "긴급 선체 정비",
         short = "REPAIR+",
@@ -393,12 +386,6 @@ function StageTransition.applyRewardOnArrival(reward, inventory, ship, coinWalle
         bonusCoins = 30
     elseif reward.id == "defense_module" and ship then
         ship.shield = math.min(ship.maxShield, ship.shield + 35)
-    elseif reward.id == "link_boost" and inventory then
-        for _, mod in ipairs(inventory.placed or {}) do
-            if inventory:unlockNextLink(mod) then
-                break
-            end
-        end
     elseif reward.id == "hull_repair" and ship then
         ship.shield = ship.maxShield
         ship.armor = ship.maxArmor

@@ -1,6 +1,6 @@
 -- Unit and integration tests for the 4x4 -> 6x6 diamond grid inventory,
 -- grid-shaped modules & support chips, no separate stash (pending reward
--- discard), click-and-drop + hold-R rotation UI, core socket/link activation,
+-- discard), click-and-drop + hold-R rotation UI, direct open-socket activation,
 -- and Ship/Turret/Gladiator hooks.
 -- Runnable via `love . --test-inventory` or standalone `luajit tests/inventory.lua`.
 
@@ -87,9 +87,10 @@ local function runTests(Inventory, Ship, Turret, Gladiator)
     assert(discarded == 1 and smallInv:pendingCount() == 0, "Unplaced stage rewards must be discarded")
     assert(pendingChip.row == nil, "Discarded chip must not enter inventory")
 
-    -- 6. Core Socket & Link BFS activation
-    -- Missile Pod has 4 sockets; default links = { {1,2} }, so only sockets 1 and 2 are active.
-    assert(smallInv:activeSocketCount(missile) == 2, "Missile Pod starts with 2 core-linked sockets")
+    -- 6. Open Socket activation (no link system: every open socket functions immediately)
+    assert(missile.maxSockets == 4 and missile.links == nil, "Modules must expose open sockets without link state")
+    assert(smallInv.unlockNextLink == nil and smallInv.hasLink == nil and smallInv.unlockLink == nil,
+        "Link methods must be removed from Inventory")
     local burst = smallInv:createChip("burst")
     local feverChip = smallInv:createChip("fever_overdrive")
     local batteryChip = smallInv:createChip("dodge_charge")
@@ -98,24 +99,20 @@ local function runTests(Inventory, Ship, Turret, Gladiator)
     local badOk, badReason = smallInv:equipChip(missile, 1, batteryChip)
     assert(not badOk and badReason == "incompatible_target", "Battery chip must not fit weapon module")
 
-    -- Splitter is in UNLINKED socket 3 -> must NOT take effect yet
-    local buildBeforeLink = smallInv:computeBuild(false)
-    assert(buildBeforeLink.weapons[2].extraCount == 0, "Chip in unlinked socket must stay inactive")
-
-    -- Unlock next link (2-3) -> socket 3 becomes reachable from Core Socket 1 -> splitter activates!
-    assert(smallInv:unlockNextLink(missile))
-    assert(smallInv:activeSocketCount(missile) == 3)
-    local buildAfterLink = smallInv:computeBuild(false)
-    assert(buildAfterLink.weapons[2].extraCount == 2, "Unlocking link must activate socket 3 chip")
+    -- Splitter equipped in socket 3 must take effect immediately without any links
+    assert(smallInv:equippedSocketCount(missile) == 1)
+    local buildWithSocket3 = smallInv:computeBuild(false)
+    assert(buildWithSocket3.weapons[2].extraCount == 2, "Chip in any open socket must activate immediately")
 
     -- 7. Emergent Fever Overdrive (2x chip scaling during Fever + 1.3x non-fever battery)
     assert(smallInv:equipChip(missile, 1, burst))
     assert(smallInv:equipChip(missile, 2, feverChip))
+    assert(smallInv:equippedSocketCount(missile) == 3)
     local normalBuild = smallInv:computeBuild(false)
     local feverBuild = smallInv:computeBuild(true)
     assert(normalBuild.weapons[2].extraCount == 2 and normalBuild.weapons[2].extraBurst == 2)
     assert(feverBuild.weapons[2].extraCount == 4 and feverBuild.weapons[2].extraBurst == 4,
-        "Fever Overdrive must double linked chip numeric effects during Fever")
+        "Fever Overdrive must double equipped chip numeric effects during Fever")
     assert(normalBuild.weapons[2].batteryCost > feverBuild.weapons[2].batteryCost,
         "Non-fever battery penalty must raise battery cost outside Fever")
 
@@ -222,17 +219,17 @@ local function runTests(Inventory, Ship, Turret, Gladiator)
 
         ui:mousemoved(0, 0)
         local idleCircles, idleTexts = drawAndCaptureOverlays()
-        assert(idleCircles == 0 and not idleTexts["C"] and not idleTexts["SHLD"],
+        assert(idleCircles == 0 and not idleTexts["C"] and not idleTexts["SHLD"] and not idleTexts["링크 연결"],
             "Module slot indicators must stay hidden when not hovered")
 
-        -- Hover over the placed shield module at (row=3, col=3) -> slot/socket overlay appears
+        -- Hover over the placed shield module at (row=3, col=3) -> slot/socket overlay appears without Core 'C' or link UI
         local gStep = ui.gridRect.cellSize + ui.gridRect.gap
         local shieldHoverX = ui.gridRect.x + (rewardShield.col - 1) * gStep + ui.gridRect.cellSize * 0.5
         local shieldHoverY = ui.gridRect.y + (rewardShield.row - 1) * gStep + ui.gridRect.cellSize * 0.5
         ui:mousemoved(shieldHoverX, shieldHoverY)
         local hoverCircles, hoverTexts = drawAndCaptureOverlays()
-        assert(hoverCircles > 0 and hoverTexts["C"] and hoverTexts["SHLD"],
-            "Module slot indicators must appear when hovering over the module")
+        assert(hoverCircles > 0 and not hoverTexts["C"] and hoverTexts["SHLD"] and not hoverTexts["링크 연결"],
+            "Module socket indicators must appear on hover without Core 'C' or link button")
 
         ui:startDrag(uiInv, uiInv.pendingRewards[1], "tray", 800, 350)
         ui:keypressed(uiInv, "r")

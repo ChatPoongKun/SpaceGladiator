@@ -307,7 +307,7 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
         end
     end
 
-    -- 5. For modules, draw links and per-cell sockets only on hover so the artwork
+    -- 5. For modules, draw per-cell sockets only on hover so the artwork
     --    remains unobstructed at rest, and keep the hover overlay semi-transparent.
     if item.kind == "module" and showSlots then
         local centers = {}
@@ -315,24 +315,6 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
             local cx = originX + coord[2] * step + cellSize * 0.5
             local cy = originY + coord[1] * step + cellSize * (compact and 0.50 or 0.56)
             centers[i] = { cx, cy }
-        end
-
-        local active = inv:getActiveSockets(item)
-        for _, edge in ipairs(item.def.allLinks or {}) do
-            local p1, p2 = centers[edge[1]], centers[edge[2]]
-            if p1 and p2 then
-                g.setColor(0.02, 0.05, 0.09, 0.45 * alpha)
-                g.setLineWidth(compact and 2.6 or 3.6)
-                g.line(p1[1], p1[2], p2[1], p2[2])
-                if inv:hasLink(item, edge[1], edge[2]) then
-                    g.setColor(0.45, 0.95, 1.0, 0.90 * alpha)
-                    g.setLineWidth(compact and 1.5 or 2.2)
-                else
-                    g.setColor(0.42, 0.48, 0.56, 0.45 * alpha)
-                    g.setLineWidth(1.0)
-                end
-                g.line(p1[1], p1[2], p2[1], p2[2])
-            end
         end
 
         local rSock = compact and math.max(4.0, cellSize * 0.20) or 11.5
@@ -349,10 +331,10 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
                     if chipImg then
                         local cW, cH = chipImg:getDimensions()
                         local side = rSock * 1.48
-                        g.setColor(1, 1, 1, (active[i] and 0.96 or 0.42) * alpha)
+                        g.setColor(1, 1, 1, 0.96 * alpha)
                         g.draw(chipImg, p[1], p[2], 0, side / cW, side / cH, cW * 0.5, cH * 0.5)
                     else
-                        g.setColor(cc[1], cc[2], cc[3], (active[i] and 0.92 or 0.38) * alpha)
+                        g.setColor(cc[1], cc[2], cc[3], 0.92 * alpha)
                         g.circle("fill", p[1], p[2], rSock)
                     end
                 else
@@ -360,27 +342,14 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
                     g.circle("fill", p[1], p[2], rSock)
                 end
 
-                if i == 1 then
-                    g.setColor(1.0, 0.86, 0.36, 0.95 * alpha)
-                    g.setLineWidth(compact and 1.3 or 2.0)
-                elseif active[i] then
-                    g.setColor(0.45, 0.92, 1.0, 0.92 * alpha)
-                    g.setLineWidth(compact and 1.1 or 1.5)
-                else
-                    g.setColor(0.48, 0.54, 0.62, 0.62 * alpha)
-                    g.setLineWidth(1.0)
-                end
+                g.setColor(0.45, 0.92, 1.0, 0.92 * alpha)
+                g.setLineWidth(compact and 1.1 or 1.5)
                 g.circle("line", p[1], p[2], rSock)
 
-                if not compact then
+                if not compact and chip and not getItemImage(chip) then
                     g.setFont(fonts.small)
-                    if chip and not getItemImage(chip) then
-                        g.setColor(0.05, 0.08, 0.12, alpha)
-                        g.printf(string.sub(chip.def.shortName, 1, 2), p[1] - 12, p[2] - 6, 24, "center")
-                    elseif not chip and i == 1 then
-                        g.setColor(1.0, 0.88, 0.42, 0.95 * alpha)
-                        g.printf("C", p[1] - 8, p[2] - 6, 16, "center")
-                    end
+                    g.setColor(0.05, 0.08, 0.12, alpha)
+                    g.printf(string.sub(chip.def.shortName, 1, 2), p[1] - 12, p[2] - 6, 24, "center")
                 end
             end
         end
@@ -660,8 +629,8 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         end
         g.setColor(0.95, 0.98, 1.0, 1)
         if inspectItem.kind == "module" then
-            g.print(string.format("%s (%dx%d) · 활성 소켓 %d/%d",
-                inspectItem.def.name, iw, ih, inv:activeSocketCount(inspectItem), inspectItem.maxSockets),
+            g.print(string.format("%s (%dx%d) · 소켓 %d/%d",
+                inspectItem.def.name, iw, ih, inv:equippedSocketCount(inspectItem), inspectItem.maxSockets),
                 textX, curY + 10)
         else
             local targetTxt = targetKoreanLabel[inspectItem.def.target] or inspectItem.def.target
@@ -675,9 +644,8 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
             local btnY = curY + 92
             local btns = {
                 { label = "회전 (R)", action = { type = "rotateSelected" } },
-                { label = "링크 연결", action = { type = "unlockLink" } },
             }
-            local bw = math.floor((rw - 32) / #btns)
+            local bw = math.floor((rw - 24 - (#btns - 1) * 8) / #btns)
             for i, b in ipairs(btns) do
                 local bx = rx + 12 + (i - 1) * (bw + 8)
                 g.setColor(0.12, 0.22, 0.30, 0.95)
@@ -1050,17 +1018,6 @@ function InventoryUI:mousepressed(inv, x, y, button, opts)
                 else
                     Sfx.play("ui_error")
                     self.message = "현재 위치에서는 회전할 공간이 부족합니다. 드래그하며 R을 눌러보세요."
-                end
-                return nil
-            elseif a.type == "unlockLink" and self.selectedModule then
-                local ok = inv:unlockNextLink(self.selectedModule)
-                if ok then
-                    Sfx.play("ui_equip")
-                    self.message = self.selectedModule.def.name .. " 링크 1개 연결 완료!"
-                    return "changed"
-                else
-                    Sfx.play("ui_error")
-                    self.message = "이미 모든 링크가 연결되어 있습니다."
                 end
                 return nil
             end

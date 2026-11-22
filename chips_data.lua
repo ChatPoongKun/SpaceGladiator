@@ -1,5 +1,5 @@
 -- Support chip definitions (1x1 grid items).
--- Chips can be dropped directly onto a compatible module's active socket to
+-- Chips can be dropped directly onto a compatible module's socket to
 -- modify its behavior, or stored as a 1x1 item on an empty diamond grid cell.
 
 local ChipsData = {}

@@ -32,18 +32,17 @@ local slotProfiles = {
 
 local rewardPools = {
     high = {
-        { kind = "module", id = "missile", extraLinks = 1, rarity = "RARE" },
-        { kind = "module", id = "laser", extraLinks = 1, rarity = "RARE" },
+        { kind = "module", id = "missile", rarity = "RARE" },
+        { kind = "module", id = "laser", rarity = "RARE" },
         { kind = "chip", id = "fever_overdrive", rarity = "RARE" },
         { kind = "chip", id = "limiter_off", rarity = "RARE" },
         { kind = "chip", id = "dodge_trigger", rarity = "RARE" },
         { kind = "chip", id = "hit_trigger", rarity = "RARE" },
-        { kind = "link_token", count = 1, rarity = "RARE" },
     },
     mid = {
-        { kind = "module", id = "shield", extraLinks = 0, rarity = "UNCOMMON" },
-        { kind = "module", id = "armor", extraLinks = 0, rarity = "UNCOMMON" },
-        { kind = "module", id = "battery", extraLinks = 0, rarity = "UNCOMMON" },
+        { kind = "module", id = "shield", rarity = "UNCOMMON" },
+        { kind = "module", id = "armor", rarity = "UNCOMMON" },
+        { kind = "module", id = "battery", rarity = "UNCOMMON" },
         { kind = "chip", id = "splitter", rarity = "UNCOMMON" },
         { kind = "chip", id = "burst", rarity = "UNCOMMON" },
         { kind = "chip", id = "ricochet", rarity = "UNCOMMON" },
@@ -51,8 +50,8 @@ local rewardPools = {
         { kind = "chip", id = "wrap_trigger", rarity = "UNCOMMON" },
     },
     low = {
-        { kind = "module", id = "thruster", extraLinks = 0, rarity = "COMMON" },
-        { kind = "module", id = "projectile", extraLinks = 0, rarity = "COMMON" },
+        { kind = "module", id = "thruster", rarity = "COMMON" },
+        { kind = "module", id = "projectile", rarity = "COMMON" },
         { kind = "chip", id = "dodge_charge", rarity = "COMMON" },
         { kind = "chip", id = "shockwave", rarity = "COMMON" },
         { kind = "chip", id = "wrap_phase", rarity = "COMMON" },
@@ -63,10 +62,9 @@ local rewardPools = {
 local function describeReward(r)
     if r.kind == "module" then
         local def = ModulesData.get(r.id)
-        local extra = (r.extraLinks or 0) > 0 and (" +" .. r.extraLinks .. "L") or ""
         return {
-            title = (def and def.name or r.id) .. extra,
-            short = (def and def.shortName or r.id) .. extra,
+            title = def and def.name or r.id,
+            short = def and def.shortName or r.id,
             color = def and def.color or { 0.45, 0.85, 0.95 },
             rarity = r.rarity,
             spec = r,
@@ -77,14 +75,6 @@ local function describeReward(r)
             title = def and def.name or r.id,
             short = def and def.shortName or r.id,
             color = def and def.color or { 1.0, 0.82, 0.34 },
-            rarity = r.rarity,
-            spec = r,
-        }
-    elseif r.kind == "link_token" then
-        return {
-            title = "배선 링크 연결권",
-            short = "LINK+",
-            color = { 0.48, 0.96, 1.00 },
             rarity = r.rarity,
             spec = r,
         }
@@ -191,8 +181,8 @@ function Plinko.new(opts)
     local featuredId = type(featured) == "table" and featured.id or featured
     if featuredId == "weapon_module" then
         local weaponSpecs = {
-            { kind = "module", id = "missile", extraLinks = 1, rarity = "RARE" },
-            { kind = "module", id = "laser", extraLinks = 1, rarity = "RARE" },
+            { kind = "module", id = "missile", rarity = "RARE" },
+            { kind = "module", id = "laser", rarity = "RARE" },
         }
         local pick = weaponSpecs[math.floor(rand() * #weaponSpecs) + 1]
         if not slots[1].carriedOver then
@@ -217,10 +207,10 @@ function Plinko.new(opts)
         end
     elseif featuredId == "defense_module" then
         local defSpecs = {
-            { kind = "module", id = "shield", extraLinks = 1, rarity = "RARE" },
-            { kind = "module", id = "armor", extraLinks = 1, rarity = "RARE" },
-            { kind = "module", id = "battery", extraLinks = 1, rarity = "RARE" },
-            { kind = "module", id = "thruster", extraLinks = 0, rarity = "UNCOMMON" },
+            { kind = "module", id = "shield", rarity = "RARE" },
+            { kind = "module", id = "armor", rarity = "RARE" },
+            { kind = "module", id = "battery", rarity = "RARE" },
+            { kind = "module", id = "thruster", rarity = "UNCOMMON" },
         }
         if not slots[2].carriedOver then
             slots[2].reward = describeReward(defSpecs[math.floor(rand() * #defSpecs) + 1])
@@ -229,11 +219,6 @@ function Plinko.new(opts)
         if not slots[4].carriedOver then
             slots[4].reward = describeReward(defSpecs[math.floor(rand() * #defSpecs) + 1])
             slots[4].tier = "mid"
-        end
-    elseif featuredId == "link_boost" then
-        if not slots[3].carriedOver then
-            slots[3].reward = describeReward({ kind = "link_token", count = 1, rarity = "RARE" })
-            slots[3].tier = "high"
         end
     end
 
@@ -285,29 +270,9 @@ end
 function Plinko:grantReward(slot, inventory, ship)
     local spec = slot.reward.spec
     if spec.kind == "module" and inventory then
-        local mod = inventory:addPendingModule(spec.id)
-        for _ = 1, (spec.extraLinks or 0) do
-            inventory:unlockNextLink(mod)
-        end
+        inventory:addPendingModule(spec.id)
     elseif spec.kind == "chip" and inventory then
         inventory:addPendingChip(spec.id)
-    elseif spec.kind == "link_token" and inventory then
-        -- Auto-unlock one link on the first placed module with missing links,
-        -- falling back to any pending reward module.
-        local unlocked = false
-        for _, mod in ipairs(inventory.placed) do
-            if inventory:unlockNextLink(mod) then
-                unlocked = true
-                break
-            end
-        end
-        if not unlocked then
-            for _, item in ipairs(inventory.pendingRewards or {}) do
-                if item.kind == "module" and inventory:unlockNextLink(item) then
-                    break
-                end
-            end
-        end
     elseif spec.kind == "repair" and ship then
         ship.shield = math.min(ship.maxShield, ship.shield + (spec.shield or 50))
         ship.armor = math.min(ship.maxArmor, ship.armor + (spec.armor or 50))

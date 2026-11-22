@@ -1,4 +1,4 @@
--- 4x4 -> 6x6 Diamond Grid Inventory with Core Socket & Link Activation.
+-- 4x4 -> 6x6 Diamond Grid Inventory.
 -- Pure Lua logic (no LÖVE graphics dependency) so it can be unit-tested cleanly.
 -- No permanent separate stash exists for modules or support chips: every item
 -- has a grid shape and must fit inside the main diamond inventory (or a module
@@ -18,11 +18,6 @@ Inventory.MAX_RADIUS = 3   -- 6x6 diamond (24 cells: 2+4+6+6+4+2)
 
 local function cellKey(r, c)
     return r .. "," .. c
-end
-
-local function edgeKey(a, b)
-    if a > b then a, b = b, a end
-    return a .. "-" .. b
 end
 
 local function removeFromList(list, item)
@@ -124,7 +119,6 @@ function Inventory.new(opts)
         nextId = 1,
         metaPoints = opts.metaPoints or 0,
         expandCost = opts.expandCost or 100,
-        linkCost = opts.linkCost or 50,
     }, Inventory)
 
     for r = 1, self.gridSize do
@@ -209,15 +203,9 @@ function Inventory:unlockCell(r, c)
     return true
 end
 
-function Inventory:createModule(defId, opts)
+function Inventory:createModule(defId)
     local def = ModulesData.get(defId)
     assert(def, "Unknown module id: " .. tostring(defId))
-    opts = opts or {}
-    local links = {}
-    local initialLinks = opts.links or def.defaultLinks or {}
-    for _, edge in ipairs(initialLinks) do
-        links[edgeKey(edge[1], edge[2])] = { edge[1], edge[2] }
-    end
     local _, w, h = Inventory.getShapeCells(def, 0)
     local mod = {
         kind = "module",
@@ -232,7 +220,6 @@ function Inventory:createModule(defId, opts)
         col = nil,
         maxSockets = def.maxSockets,
         sockets = {}, -- sockets[i] = chipInstance or nil
-        links = links,
     }
     self.nextId = self.nextId + 1
     return mod
@@ -436,86 +423,13 @@ function Inventory:rotateModule(mod, steps)
     return self:rotateItem(mod, steps)
 end
 
--- Core Socket & Link Activation (BFS starting from Core Socket 1)
-function Inventory:getActiveSockets(mod)
-    local active = {}
-    if not mod or mod.maxSockets < 1 then return active end
-    local adj = {}
-    for i = 1, mod.maxSockets do adj[i] = {} end
-    for _, edge in pairs(mod.links) do
-        local a, b = edge[1], edge[2]
-        if adj[a] and adj[b] then
-            adj[a][#adj[a] + 1] = b
-            adj[b][#adj[b] + 1] = a
-        end
-    end
-    local queue = { 1 }
-    active[1] = true
-    local head = 1
-    while head <= #queue do
-        local cur = queue[head]
-        head = head + 1
-        for _, nxt in ipairs(adj[cur]) do
-            if not active[nxt] then
-                active[nxt] = true
-                queue[#queue + 1] = nxt
-            end
-        end
-    end
-    return active
-end
-
-function Inventory:activeSocketCount(mod)
-    local active = self:getActiveSockets(mod)
+function Inventory:equippedSocketCount(mod)
+    if not mod then return 0 end
     local count = 0
-    for i = 1, mod.maxSockets do
-        if active[i] then count = count + 1 end
+    for i = 1, (mod.maxSockets or 0) do
+        if mod.sockets[i] then count = count + 1 end
     end
     return count
-end
-
-function Inventory:hasLink(mod, a, b)
-    return mod.links[edgeKey(a, b)] ~= nil
-end
-
-function Inventory:unlockLink(mod, a, b)
-    if not mod then return false, "invalid_module" end
-    local key = edgeKey(a, b)
-    if mod.links[key] then return false, "already_linked" end
-    local allowed = false
-    for _, edge in ipairs(mod.def.allLinks or {}) do
-        if edgeKey(edge[1], edge[2]) == key then
-            allowed = true
-            break
-        end
-    end
-    if not allowed then return false, "invalid_link" end
-    mod.links[key] = { math.min(a, b), math.max(a, b) }
-    return true
-end
-
--- Unlocks the next missing link edge from def.allLinks (prioritizing one that
--- expands the active core-connected set).
-function Inventory:unlockNextLink(mod)
-    if not mod then return false, "invalid_module" end
-    local active = self:getActiveSockets(mod)
-    local fallback = nil
-    for _, edge in ipairs(mod.def.allLinks or {}) do
-        local key = edgeKey(edge[1], edge[2])
-        if not mod.links[key] then
-            if active[edge[1]] or active[edge[2]] then
-                mod.links[key] = { edge[1], edge[2] }
-                return true, edge
-            elseif not fallback then
-                fallback = edge
-            end
-        end
-    end
-    if fallback then
-        mod.links[edgeKey(fallback[1], fallback[2])] = { fallback[1], fallback[2] }
-        return true, fallback
-    end
-    return false, "all_linked"
 end
 
 function Inventory:equipChip(mod, socketIndex, chip)
@@ -555,9 +469,9 @@ end
 
 function Inventory:getActiveChips(mod)
     local result = {}
-    local active = self:getActiveSockets(mod)
-    for i = 1, mod.maxSockets do
-        if active[i] and mod.sockets[i] then
+    if not mod then return result end
+    for i = 1, (mod.maxSockets or 0) do
+        if mod.sockets[i] then
             result[#result + 1] = mod.sockets[i]
         end
     end
@@ -565,7 +479,7 @@ function Inventory:getActiveChips(mod)
 end
 
 -- Compute full derived ship + weapon build from all currently placed modules
--- and their core-linked active support chips.
+-- and their equipped support chips.
 function Inventory:computeBuild(feverActive)
     local build = {
         -- Ship additive bonuses on top of Ship base stats (100/100/3/100)
