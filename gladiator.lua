@@ -55,6 +55,8 @@ function Gladiator.new()
         feverSparks = {},
         sparkAccumulator = 0,
         sparkSeed = 0,
+        scoreMultiplier = 1,
+        evasionCount = 0,
     }, Gladiator)
 end
 
@@ -161,7 +163,9 @@ end
 function Gladiator:award(category, points, label, x, y)
     if not points or points <= 0 then return 0 end
     local isFever = self.feverActive
-    local awarded = isFever and (points * self.feverMultiplier) or points
+    local scaled = (self.scoreMultiplier and self.scoreMultiplier ~= 1)
+        and math.max(1, math.floor(points * self.scoreMultiplier + 0.5)) or points
+    local awarded = isFever and (scaled * self.feverMultiplier) or scaled
     local bucket = self[category]
     bucket.points = bucket.points + awarded
     bucket.count = bucket.count + 1
@@ -187,13 +191,17 @@ end
 function Gladiator:recordMissileDodge(clearance, relativeSpeed, x, y)
     if (relativeSpeed or 0) < self.minRelativeSpeed then return 0 end
     local points = Gladiator.evasionPoints(clearance, self.missileMargin, relativeSpeed)
-    return self:award("missileDodge", points, "MISSILE DODGE", x, y)
+    local awarded = self:award("missileDodge", points, "MISSILE DODGE", x, y)
+    if awarded > 0 then self.evasionCount = (self.evasionCount or 0) + 1 end
+    return awarded
 end
 
 function Gladiator:recordAerobatics(clearance, relativeSpeed, x, y)
     if (relativeSpeed or 0) < self.minRelativeSpeed then return 0 end
     local points = Gladiator.evasionPoints(clearance, self.aerobaticsMargin, relativeSpeed)
-    return self:award("aerobatics", points, "AEROBATICS", x, y)
+    local awarded = self:award("aerobatics", points, "AEROBATICS", x, y)
+    if awarded > 0 then self.evasionCount = (self.evasionCount or 0) + 1 end
+    return awarded
 end
 
 function Gladiator:onPlayerDamaged()

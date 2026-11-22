@@ -32,6 +32,12 @@ function Ship.new(width, height)
         armor = 100, maxArmor = 100,
         hull = 3, maxHull = 3,
         battery = 100, maxBattery = 100,
+        baseMaxShield = 100, baseMaxArmor = 100, baseMaxBattery = 100,
+        baseBatteryRecharge = Ship.batteryRecharge,
+        baseMaxSpeed = Ship.maxSpeed, baseBoostSpeed = Ship.boostSpeed,
+        baseBoostCost = Ship.boostCost, baseWrapBonusSpeed = Ship.wrapBonusSpeed,
+        wrapBonusSpeed = Ship.wrapBonusSpeed,
+        wrapInvulnDuration = 0, invulnTimer = 0, wrapEvents = 0,
         combatPower = Ship.combatPower,
         damageCount = 0,
     }, Ship)
@@ -58,8 +64,40 @@ function Ship:isDestroyed()
     return self.hull <= 0
 end
 
+function Ship:applyBuild(build)
+    if not build then return end
+    local prevMaxShield, prevMaxArmor, prevMaxBattery = self.maxShield, self.maxArmor, self.maxBattery
+    self.maxShield = build.noShield and 0 or (self.baseMaxShield + (build.maxShieldBonus or 0))
+    self.maxArmor = self.baseMaxArmor + (build.maxArmorBonus or 0)
+    self.maxBattery = self.baseMaxBattery + (build.maxBatteryBonus or 0)
+    self.batteryRecharge = (self.baseBatteryRecharge + (build.batteryRechargeBonus or 0)) * (build.batteryRechargeMult or 1)
+    self.maxSpeed = self.baseMaxSpeed + (build.maxSpeedBonus or 0)
+    self.boostSpeed = self.baseBoostSpeed + (build.boostSpeedBonus or 0)
+    self.boostCost = math.max(5, self.baseBoostCost + (build.boostCostBonus or 0))
+    self.wrapBonusSpeed = (self.baseWrapBonusSpeed + (build.wrapBonusSpeedAdd or 0)) * (build.wrapSpeedMult or 1)
+    self.wrapInvulnDuration = build.wrapInvulnDuration or 0
+
+    if self.maxShield > prevMaxShield then
+        self.shield = self.shield + (self.maxShield - prevMaxShield)
+    end
+    self.shield = math.min(self.maxShield, self.shield)
+    if self.maxArmor > prevMaxArmor then
+        self.armor = self.armor + (self.maxArmor - prevMaxArmor)
+    end
+    self.armor = math.min(self.maxArmor, self.armor)
+    if self.maxBattery > prevMaxBattery then
+        self.battery = self.battery + (self.maxBattery - prevMaxBattery)
+    end
+    self.battery = math.min(self.maxBattery, self.battery)
+end
+
+function Ship:rechargeBattery(amount)
+    if not amount or amount <= 0 then return end
+    self.battery = math.min(self.maxBattery, self.battery + amount)
+end
+
 function Ship:takeDamage(amount)
-    if amount <= 0 or self:isDestroyed() then return end
+    if amount <= 0 or self:isDestroyed() or (self.invulnTimer or 0) > 0 then return end
     self.damageCount = (self.damageCount or 0) + 1
     Sfx.play("impact")
     if self:hasShield() then
@@ -80,14 +118,16 @@ function Ship:takeDamage(amount)
     end
 end
 
-local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin, dt)
+local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin, dt, wrapBonusSpeed)
+    local started = false
     if bonus == 0 then
         local travel = (oldVelocity + velocity) * 0.5 * dt
         local nextPosition = position + travel
         if nextPosition < margin or nextPosition > extent - margin then
             local direction = travel > 0 and 1 or -1
             if travel == 0 and nextPosition > extent - margin then direction = 1 end
-            bonus = direction * Ship.wrapBonusSpeed
+            bonus = direction * (wrapBonusSpeed or Ship.wrapBonusSpeed)
+            started = true
         end
     end
 
@@ -96,7 +136,7 @@ local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin,
     if velocity * bonus < 0 then velocity = 0 end
     position = (position + ((oldVelocity + velocity) * 0.5 + bonus) * dt) % extent
     if position >= margin and position <= extent - margin then bonus = 0 end
-    return position, velocity, bonus
+    return position, velocity, bonus, started
 end
 
 function Ship:turn(dt, direction)
@@ -152,9 +192,17 @@ function Ship:update(dt, input)
     local cap = self.maxSpeed + (self.boostSpeed - self.maxSpeed) * self.boostLevel
     local oldVx, oldVy = self:updateVelocity(dt, input.thrust, input.brake, cap)
 
+    self.invulnTimer = math.max(0, (self.invulnTimer or 0) - dt)
     local margin = self:hitRadius() + 1
-    self.x, self.vx, self.wrapVx = crossEdge(self.x, oldVx, self.vx, self.wrapVx, Arena.width, margin, dt)
-    self.y, self.vy, self.wrapVy = crossEdge(self.y, oldVy, self.vy, self.wrapVy, Arena.height, margin, dt)
+    local wrappedX, wrappedY
+    self.x, self.vx, self.wrapVx, wrappedX = crossEdge(self.x, oldVx, self.vx, self.wrapVx, Arena.width, margin, dt, self.wrapBonusSpeed)
+    self.y, self.vy, self.wrapVy, wrappedY = crossEdge(self.y, oldVy, self.vy, self.wrapVy, Arena.height, margin, dt, self.wrapBonusSpeed)
+    if wrappedX or wrappedY then
+        self.wrapEvents = (self.wrapEvents or 0) + 1
+        if (self.wrapInvulnDuration or 0) > 0 then
+            self.invulnTimer = math.max(self.invulnTimer, self.wrapInvulnDuration)
+        end
+    end
 end
 
 function Ship:drawBoostPulse()
