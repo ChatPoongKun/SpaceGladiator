@@ -169,8 +169,24 @@ function InventoryUI:computeSnappedOrigin(item, rotation, px, py)
     return row, col
 end
 
+local function isPointOverShape(item, originX, originY, cellSize, gap, mx, my, rotation)
+    local step = cellSize + gap
+    local rot = Inventory.normalizeRotation(rotation ~= nil and rotation or item.rotation)
+    local shapeCells = Inventory.getShapeCells(item, rot)
+    for _, coord in ipairs(shapeCells) do
+        local cx = originX + coord[2] * step
+        local cy = originY + coord[1] * step
+        if pointInRect(mx, my, cx, cy, cellSize, cellSize) then
+            return true
+        end
+    end
+    return false
+end
+
 -- Draws any item (module or support chip) as its visual grid cell shape
 -- with grid-proportioned artwork rotated to match the item's orientation.
+-- Slot/socket overlays are hidden by default so the artwork stays prominent,
+-- and are revealed when hovered (opts.showSlots = true).
 local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fonts, opts)
     opts = opts or {}
     local g = love.graphics
@@ -180,42 +196,43 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
     local col = item.def.color or { 0.4, 0.8, 0.9 }
     local alpha = opts.alpha or 1.0
     local isSel = opts.selected == true
+    local isHovered = opts.hovered == true
+    local showSlots = opts.showSlots == true
     local compact = cellSize < 42
     local img = getItemImage(item)
 
-    -- Build lookup for cell adjacency so multi-cell modules look cohesive while
-    -- still clearly showing individual grid cells.
+    -- Build lookup for cell adjacency so multi-cell modules look cohesive.
     local occupied = {}
     for _, coord in ipairs(shapeCells) do
         occupied[coord[1] .. "," .. coord[2]] = true
     end
 
-    -- 1. Draw base grid cell backing and inter-cell connectors
+    -- 1. Draw clean dark backing so detailed artwork stands out clearly
     for _, coord in ipairs(shapeCells) do
         local dr, dc = coord[1], coord[2]
-        local cx = originX + dc * step + 2
-        local cy = originY + dr * step + 2
-        local cw = cellSize - 4
-        local ch = cellSize - 4
+        local cx = originX + dc * step + 1
+        local cy = originY + dr * step + 1
+        local cw = cellSize - 2
+        local ch = cellSize - 2
 
         if occupied[dr .. "," .. (dc + 1)] then
-            g.setColor(col[1] * 0.24, col[2] * 0.24, col[3] * 0.24, 0.94 * alpha)
-            g.rectangle("fill", cx + cw - 2, cy + 3, gap + 8, ch - 6)
+            g.setColor(0.03 + col[1] * 0.09, 0.05 + col[2] * 0.09, 0.08 + col[3] * 0.09, 0.94 * alpha)
+            g.rectangle("fill", cx + cw - 2, cy + 2, gap + 6, ch - 4)
         end
         if occupied[(dr + 1) .. "," .. dc] then
-            g.setColor(col[1] * 0.24, col[2] * 0.24, col[3] * 0.24, 0.94 * alpha)
-            g.rectangle("fill", cx + 3, cy + ch - 2, cw - 6, gap + 8)
+            g.setColor(0.03 + col[1] * 0.09, 0.05 + col[2] * 0.09, 0.08 + col[3] * 0.09, 0.94 * alpha)
+            g.rectangle("fill", cx + 2, cy + ch - 2, cw - 4, gap + 6)
         end
 
-        g.setColor(col[1] * 0.22, col[2] * 0.22, col[3] * 0.22, 0.95 * alpha)
+        g.setColor(0.03 + col[1] * 0.10, 0.05 + col[2] * 0.10, 0.08 + col[3] * 0.10, 0.95 * alpha)
         g.rectangle("fill", cx, cy, cw, ch, 6, 6)
     end
 
-    -- 2. Draw grid-sized item artwork rotated to match current orientation
+    -- 2. Draw full-brightness grid-sized item artwork rotated to match orientation
     local totalW = bw * cellSize + (bw - 1) * gap
     local totalH = bh * cellSize + (bh - 1) * gap
     if img then
-        local pad = compact and 2 or 3
+        local pad = compact and 1 or 2
         local drawW = math.max(4, totalW - pad * 2)
         local drawH = math.max(4, totalH - pad * 2)
         local imgW, imgH = img:getDimensions()
@@ -226,7 +243,7 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
         local centerX = originX + totalW * 0.5
         local centerY = originY + totalH * 0.5
 
-        g.setColor(1, 1, 1, (item.kind == "chip" and 0.96 or 0.92) * alpha)
+        g.setColor(1, 1, 1, alpha)
         g.draw(img, centerX, centerY, rot * (math.pi * 0.5),
             targetW / imgW, targetH / imgH, imgW * 0.5, imgH * 0.5)
     elseif item.kind == "chip" then
@@ -243,50 +260,56 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
         g.polygon("line", midX, midY - dR, midX + dR, midY, midX, midY + dR, midX - dR, midY)
     end
 
-    -- 3. Draw crisp cell grid borders and subtle outer item frame
-    for _, coord in ipairs(shapeCells) do
-        local dr, dc = coord[1], coord[2]
-        local cx = originX + dc * step + 2
-        local cy = originY + dr * step + 2
-        local cw = cellSize - 4
-        local ch = cellSize - 4
-
-        g.setColor(col[1], col[2], col[3], (isSel and 0.95 or 0.45) * alpha)
-        g.setLineWidth(isSel and 1.8 or 1.0)
-        g.rectangle("line", cx, cy, cw, ch, 6, 6)
-    end
-
-    g.setColor(col[1], col[2], col[3], (isSel and 1.0 or 0.82) * alpha)
-    g.setLineWidth(isSel and 2.5 or 1.6)
-    g.rectangle("line", originX + 2, originY + 2, totalW - 4, totalH - 4, 6, 6)
-
-    -- 4. Labels / tags
-    if item.kind == "chip" then
-        if not compact then
-            local cx = originX + 2
-            local cy = originY + 2
+    -- 3. Draw per-cell grid dividers only when slot overlay is visible;
+    --    keep a clean unobtrusive outer frame at rest.
+    if showSlots then
+        for _, coord in ipairs(shapeCells) do
+            local dr, dc = coord[1], coord[2]
+            local cx = originX + dc * step + 2
+            local cy = originY + dr * step + 2
             local cw = cellSize - 4
             local ch = cellSize - 4
-            g.setColor(0.02, 0.05, 0.09, 0.72 * alpha)
-            g.rectangle("fill", cx + 3, cy + ch - 18, cw - 6, 15, 3, 3)
-            g.setFont(fonts.small)
-            g.setColor(col[1], col[2], col[3], 0.98 * alpha)
-            g.printf(targetShortTag[item.def.target] or "ANY", cx + 3, cy + ch - 17, cw - 6, "center")
-        end
-    else
-        if not compact and shapeCells[1] then
-            local cx = originX + shapeCells[1][2] * step + 4
-            local cy = originY + shapeCells[1][1] * step + 4
-            g.setColor(0.02, 0.05, 0.09, 0.72 * alpha)
-            g.rectangle("fill", cx, cy, 40, 15, 3, 3)
-            g.setFont(fonts.small)
-            g.setColor(0.95, 0.98, 1.0, 0.96 * alpha)
-            g.printf(item.def.shortName, cx + 2, cy + 1, 36, "center")
+
+            g.setColor(col[1], col[2], col[3], (isSel and 0.58 or 0.34) * alpha)
+            g.setLineWidth(1.0)
+            g.rectangle("line", cx, cy, cw, ch, 6, 6)
         end
     end
 
-    -- 5. For modules, draw links and per-cell sockets on top of the artwork
-    if item.kind == "module" then
+    g.setColor(col[1], col[2], col[3], (isSel and 0.96 or (isHovered and 0.86 or 0.58)) * alpha)
+    g.setLineWidth(isSel and 2.2 or (isHovered and 1.8 or 1.2))
+    g.rectangle("line", originX + 1.5, originY + 1.5, totalW - 3, totalH - 3, 6, 6)
+
+    -- 4. Labels / tags (shown only on hover or when artwork is missing)
+    if showSlots or not img then
+        if item.kind == "chip" then
+            if not compact then
+                local cx = originX + 2
+                local cy = originY + 2
+                local cw = cellSize - 4
+                local ch = cellSize - 4
+                g.setColor(0.02, 0.05, 0.09, 0.68 * alpha)
+                g.rectangle("fill", cx + 3, cy + ch - 18, cw - 6, 15, 3, 3)
+                g.setFont(fonts.small)
+                g.setColor(col[1], col[2], col[3], 0.98 * alpha)
+                g.printf(targetShortTag[item.def.target] or "ANY", cx + 3, cy + ch - 17, cw - 6, "center")
+            end
+        else
+            if not compact and shapeCells[1] then
+                local cx = originX + shapeCells[1][2] * step + 4
+                local cy = originY + shapeCells[1][1] * step + 4
+                g.setColor(0.02, 0.05, 0.09, 0.68 * alpha)
+                g.rectangle("fill", cx, cy, 40, 15, 3, 3)
+                g.setFont(fonts.small)
+                g.setColor(0.95, 0.98, 1.0, 0.96 * alpha)
+                g.printf(item.def.shortName, cx + 2, cy + 1, 36, "center")
+            end
+        end
+    end
+
+    -- 5. For modules, draw links and per-cell sockets only on hover so the artwork
+    --    remains unobstructed at rest, and keep the hover overlay semi-transparent.
+    if item.kind == "module" and showSlots then
         local centers = {}
         for i, coord in ipairs(shapeCells) do
             local cx = originX + coord[2] * step + cellSize * 0.5
@@ -298,28 +321,27 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
         for _, edge in ipairs(item.def.allLinks or {}) do
             local p1, p2 = centers[edge[1]], centers[edge[2]]
             if p1 and p2 then
-                -- Subtle dark halo for contrast over detailed artwork
-                g.setColor(0.02, 0.05, 0.09, 0.70 * alpha)
-                g.setLineWidth(compact and 3.4 or 5.0)
+                g.setColor(0.02, 0.05, 0.09, 0.45 * alpha)
+                g.setLineWidth(compact and 2.6 or 3.6)
                 g.line(p1[1], p1[2], p2[1], p2[2])
                 if inv:hasLink(item, edge[1], edge[2]) then
-                    g.setColor(0.45, 0.95, 1.0, 0.94 * alpha)
-                    g.setLineWidth(compact and 1.8 or 2.8)
+                    g.setColor(0.45, 0.95, 1.0, 0.90 * alpha)
+                    g.setLineWidth(compact and 1.5 or 2.2)
                 else
                     g.setColor(0.42, 0.48, 0.56, 0.45 * alpha)
-                    g.setLineWidth(1.2)
+                    g.setLineWidth(1.0)
                 end
                 g.line(p1[1], p1[2], p2[1], p2[2])
             end
         end
 
-        local rSock = compact and math.max(4.5, cellSize * 0.22) or 12.5
+        local rSock = compact and math.max(4.0, cellSize * 0.20) or 11.5
         for i = 1, (item.maxSockets or 0) do
             local p = centers[i]
             if p then
                 local chip = item.sockets[i]
-                g.setColor(0.02, 0.05, 0.09, 0.88 * alpha)
-                g.circle("fill", p[1], p[2], rSock + 1.5)
+                g.setColor(0.02, 0.05, 0.09, 0.56 * alpha)
+                g.circle("fill", p[1], p[2], rSock + 1.2)
 
                 if chip then
                     local cc = chip.def.color or { 1, 0.8, 0.3 }
@@ -327,26 +349,26 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
                     if chipImg then
                         local cW, cH = chipImg:getDimensions()
                         local side = rSock * 1.48
-                        g.setColor(1, 1, 1, (active[i] and 0.96 or 0.40) * alpha)
+                        g.setColor(1, 1, 1, (active[i] and 0.96 or 0.42) * alpha)
                         g.draw(chipImg, p[1], p[2], 0, side / cW, side / cH, cW * 0.5, cH * 0.5)
                     else
-                        g.setColor(cc[1], cc[2], cc[3], (active[i] and 0.95 or 0.38) * alpha)
+                        g.setColor(cc[1], cc[2], cc[3], (active[i] and 0.92 or 0.38) * alpha)
                         g.circle("fill", p[1], p[2], rSock)
                     end
                 else
-                    g.setColor(0.04, 0.08, 0.13, 0.92 * alpha)
+                    g.setColor(0.04, 0.08, 0.13, 0.62 * alpha)
                     g.circle("fill", p[1], p[2], rSock)
                 end
 
                 if i == 1 then
-                    g.setColor(1.0, 0.86, 0.36, alpha)
-                    g.setLineWidth(compact and 1.4 or 2.2)
+                    g.setColor(1.0, 0.86, 0.36, 0.95 * alpha)
+                    g.setLineWidth(compact and 1.3 or 2.0)
                 elseif active[i] then
-                    g.setColor(0.45, 0.92, 1.0, 0.95 * alpha)
-                    g.setLineWidth(compact and 1.2 or 1.6)
+                    g.setColor(0.45, 0.92, 1.0, 0.92 * alpha)
+                    g.setLineWidth(compact and 1.1 or 1.5)
                 else
-                    g.setColor(0.48, 0.54, 0.62, 0.65 * alpha)
-                    g.setLineWidth(1.1)
+                    g.setColor(0.48, 0.54, 0.62, 0.62 * alpha)
+                    g.setLineWidth(1.0)
                 end
                 g.circle("line", p[1], p[2], rSock)
 
@@ -356,7 +378,7 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
                         g.setColor(0.05, 0.08, 0.12, alpha)
                         g.printf(string.sub(chip.def.shortName, 1, 2), p[1] - 12, p[2] - 6, 24, "center")
                     elseif not chip and i == 1 then
-                        g.setColor(1.0, 0.88, 0.42, alpha)
+                        g.setColor(1.0, 0.88, 0.42, 0.95 * alpha)
                         g.printf("C", p[1] - 8, p[2] - 6, 16, "center")
                     end
                 end
@@ -486,8 +508,12 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
     for _, mod in ipairs(inv.placed) do
         local ox = gx + (mod.col - 1) * step
         local oy = gy + (mod.row - 1) * step
+        local isHovered = isPointOverShape(mod, ox, oy, cellSize, gap, self.mouseX, self.mouseY)
+        local showSlots = isHovered and not (self.dragging and self.dragging.kind == "module")
         drawItemGridShape(inv, mod, ox, oy, cellSize, gap, fonts, {
             selected = (self.selectedItem == mod),
+            hovered = isHovered,
+            showSlots = showSlots,
         })
 
         local shapeCells = Inventory.getShapeCells(mod, mod.rotation)
@@ -519,8 +545,11 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
     for _, chip in ipairs(inv.placedChips) do
         local ox = gx + (chip.col - 1) * step
         local oy = gy + (chip.row - 1) * step
+        local isHovered = not self.dragging and isPointOverShape(chip, ox, oy, cellSize, gap, self.mouseX, self.mouseY)
         drawItemGridShape(inv, chip, ox, oy, cellSize, gap, fonts, {
             selected = (self.selectedItem == chip),
+            hovered = isHovered,
+            showSlots = isHovered,
         })
         local shapeCells = Inventory.getShapeCells(chip, chip.rotation)
         for _, coord in ipairs(shapeCells) do
@@ -727,8 +756,11 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
 
                     local drawX = cursorX + math.floor((cardW - shapeW) * 0.5)
                     local drawY = cursorY + 8
+                    local cardHovered = not self.dragging and pointInRect(self.mouseX, self.mouseY, cursorX, cursorY, cardW, cardH)
                     drawItemGridShape(inv, item, drawX, drawY, miniCell, miniGap, fonts, {
                         selected = isSel,
+                        hovered = cardHovered,
+                        showSlots = cardHovered,
                     })
 
                     g.setFont(fonts.small)

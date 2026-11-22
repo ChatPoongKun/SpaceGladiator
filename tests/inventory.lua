@@ -196,7 +196,44 @@ local function runTests(Inventory, Ship, Turret, Gladiator)
         }
         uiInv:addPendingModule("laser")
         uiInv:addPendingChip("burst")
-        ui:draw(uiInv, testFonts, 1280, 800, false, { stageEndMode = true, returnTarget = "nextStage" })
+
+        -- Verify slot/socket indicators stay hidden until mouse hover so item artwork stays prominent.
+        local function drawAndCaptureOverlays()
+            local circles = 0
+            local texts = {}
+            local origCircle = love.graphics.circle
+            local origPrintf = love.graphics.printf
+            love.graphics.circle = function(...)
+                circles = circles + 1
+                return origCircle(...)
+            end
+            love.graphics.printf = function(txt, ...)
+                texts[tostring(txt)] = true
+                return origPrintf(txt, ...)
+            end
+            local ok, err = pcall(function()
+                ui:draw(uiInv, testFonts, 1280, 800, false, { stageEndMode = true, returnTarget = "nextStage" })
+            end)
+            love.graphics.circle = origCircle
+            love.graphics.printf = origPrintf
+            assert(ok, err)
+            return circles, texts
+        end
+
+        ui:mousemoved(0, 0)
+        local idleCircles, idleTexts = drawAndCaptureOverlays()
+        assert(idleCircles == 0 and not idleTexts["C"] and not idleTexts["SHLD"],
+            "Module slot indicators must stay hidden when not hovered")
+
+        -- Hover over the placed shield module at (row=3, col=3) -> slot/socket overlay appears
+        local gStep = ui.gridRect.cellSize + ui.gridRect.gap
+        local shieldHoverX = ui.gridRect.x + (rewardShield.col - 1) * gStep + ui.gridRect.cellSize * 0.5
+        local shieldHoverY = ui.gridRect.y + (rewardShield.row - 1) * gStep + ui.gridRect.cellSize * 0.5
+        ui:mousemoved(shieldHoverX, shieldHoverY)
+        local hoverCircles, hoverTexts = drawAndCaptureOverlays()
+        assert(hoverCircles > 0 and hoverTexts["C"] and hoverTexts["SHLD"],
+            "Module slot indicators must appear when hovering over the module")
+
         ui:startDrag(uiInv, uiInv.pendingRewards[1], "tray", 800, 350)
         ui:keypressed(uiInv, "r")
         ui:mousemoved(ui.gridRect.x + 150, ui.gridRect.y + 150)
