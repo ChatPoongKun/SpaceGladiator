@@ -6,8 +6,8 @@ local Enemies = {}
 Enemies.__index = Enemies
 local tau = 2 * math.pi
 local exitMargin = 155
-local waypointBrakeTime = 0.18
 local wingAlignment = math.rad(6)
+local attackAlignment = math.rad(6)
 local contactDamage = 20
 
 Enemies.spawnRate = 1 / 4
@@ -113,7 +113,6 @@ function Enemies:spawn(ship, kindIndex, options)
     enemy.prevX, enemy.prevY = enemy.x, enemy.y
     enemy.angle = (options and options.angle or math.atan2(ship.x - enemy.x, enemy.y - ship.y)) % tau
     enemy.wave = options and options.wave or {}
-    enemy.waypointBrakeRemaining = 0
     enemy.slot = options and options.slot or (self.rng() < 0.5 and -1 or 1)
     enemy.evadeTime, enemy.evadeCooldown = 0, 0
     enemy.sepX, enemy.sepY = 0, 0
@@ -278,6 +277,12 @@ local function wingWaypoint(group, enemy, ship, attacking)
         attacking and definition.patrolMin or wingSpread + wingTrail)
 end
 
+local function angleToShip(enemy, ship)
+    local dx, dy = ship.x - enemy.x, enemy.y - ship.y
+    if dx * dx + dy * dy < 1e-12 then return enemy.angle end
+    return math.atan2(dx, dy)
+end
+
 local function prepareWingPass(group, enemy, dt, ship, definition)
     local wave = enemy.wave
     local attacking = wave.attacker == enemy
@@ -286,23 +291,29 @@ local function prepareWingPass(group, enemy, dt, ship, definition)
     end
     if enemy.goal.state == "holding" or (enemy.goal.state == "flying" and atWaypoint(enemy, definition)) then
         local wingman = enemy.wingman
-        if attacking and wingman.goal and wingman.goal.state == "holding" then
+        local aim = attacking and angleToShip(enemy, ship) or enemy.angle
+        if attacking and wingman.goal and wingman.goal.state == "holding"
+            and enemy:speed() == 0 and math.abs(turnError(enemy, aim)) <= attackAlignment then
             wave.burst = group.fire:shoot(enemy, ship)
             wave.attacker = wingman
             -- The first round fixes the next intercept. The last round clears both ships to move.
             wingman.goal = wingWaypoint(group, wingman, ship, true)
             enemy.goal = wingWaypoint(group, enemy, ship, false)
+            enemy.goal.firingAngle = aim
         else
             enemy.goal.state = "holding"
-            local angle = attacking and math.atan2(ship.x - enemy.x, enemy.y - ship.y) or enemy.angle
-            pilot(enemy, dt, 0, 0, angle, true)
+            pilot(enemy, dt, 0, 0, aim, true)
             return false
         end
     end
     local goal = enemy.goal
     if goal.state ~= "flying" then
         local bearing = math.atan2(goal.x - enemy.x, enemy.y - goal.y)
-        if wave.burst or math.abs(turnError(enemy, bearing)) > wingAlignment then
+        if wave.burst then
+            pilot(enemy, dt, 0, 0, goal.firingAngle or bearing, true)
+            return false
+        end
+        if math.abs(turnError(enemy, bearing)) > wingAlignment then
             pilot(enemy, dt, 0, 0, bearing, true)
             return false
         end
@@ -315,26 +326,42 @@ local function patrol(group, enemy, dt, ship, aimAngle, definition)
     local evadeX, evadeY = aimEvasion(enemy, ship, aimAngle, dt)
     if enemy.wingman then
         if not prepareWingPass(group, enemy, dt, ship, definition) then return end
-    elseif not enemy.goal then
-        enemy.goal = chooseWaypoint(group, enemy, ship, definition)
-    elseif atWaypoint(enemy, definition) then
-        group.fire:shoot(enemy, ship)
-        enemy.goal = chooseWaypoint(group, enemy, ship, definition)
-        enemy.waypointBrakeRemaining = waypointBrakeTime
+    else
+        if not enemy.goal then
+            enemy.goal = chooseWaypoint(group, enemy, ship, definition)
+        elseif enemy.goal.state ~= "aiming" and enemy.goal.state ~= "firing" and atWaypoint(enemy, definition) then
+            enemy.goal.state = "aiming"
+        end
+
+        if enemy.goal.state == "aiming" then
+            local aim = angleToShip(enemy, ship)
+            if enemy:speed() == 0 and math.abs(turnError(enemy, aim)) <= attackAlignment then
+                local burst = group.fire:shoot(enemy, ship)
+                if burst and burst.remaining > 0 then
+                    enemy.goal.state = "firing"
+                    enemy.goal.burst = burst
+                    enemy.goal.aimAngle = aim
+                    pilot(enemy, dt, 0, 0, aim, true)
+                    return
+                end
+                enemy.goal = chooseWaypoint(group, enemy, ship, definition)
+            else
+                pilot(enemy, dt, 0, 0, aim, true)
+                return
+            end
+        elseif enemy.goal.state == "firing" then
+            if enemy.goal.burst and enemy.goal.burst.remaining > 0 then
+                pilot(enemy, dt, 0, 0, enemy.goal.aimAngle or angleToShip(enemy, ship), true)
+                return
+            end
+            enemy.goal = chooseWaypoint(group, enemy, ship, definition)
+        end
     end
 
     local steerX = enemy.sepX + evadeX * definition.evadeSpeed
     local steerY = enemy.sepY + evadeY * definition.evadeSpeed
     local speed = enemy.maxSpeed * 0.84
-    local brakeStep = math.min(dt, enemy.waypointBrakeRemaining)
-    if brakeStep > 0 then
-        -- Turn toward the next goal while the brakes damp the incoming velocity.
-        flyTo(enemy, brakeStep, enemy.goal.x, enemy.goal.y, speed, steerX, steerY, true)
-        enemy.waypointBrakeRemaining = enemy.waypointBrakeRemaining - brakeStep
-    end
-    if brakeStep < dt then
-        flyTo(enemy, dt - brakeStep, enemy.goal.x, enemy.goal.y, speed, steerX, steerY, false)
-    end
+    flyTo(enemy, dt, enemy.goal.x, enemy.goal.y, speed, steerX, steerY, false)
 end
 
 local function departureGoal(enemy, view)
@@ -429,7 +456,7 @@ end
 local function move(group, enemy, dt, ship, aimAngle, motion)
     local definition = group.types[enemy.kind]
     local view = group.view
-    while dt > 0 do
+    while dt > 1e-9 do
         local x, y = enemy.x, enemy.y
         local step = math.min(dt, 1 / 60)
         if enemy.phase == "departing" then

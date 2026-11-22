@@ -28,6 +28,20 @@ return function(Ship, Enemies, Camera, check)
             and y >= math.max(0, view.top) + margin and y <= math.min(height, view.bottom) - margin
     end
 
+    local function aimError(enemy, ship)
+        local targetAngle = math.atan2(ship.x - enemy.x, enemy.y - ship.y)
+        return math.abs((targetAngle - enemy.angle + math.pi) % tau - math.pi)
+    end
+
+    local function completeAttackToNextGoal(group, enemy, ship, camera, w, h)
+        local oldGoal = enemy.goal
+        for _ = 1, 6 * 60 do
+            group:update(dt, ship, nil, camera, w, h)
+            if enemy.goal ~= oldGoal then return true end
+        end
+        return false
+    end
+
     do
         local speedRatios = {}
         for kind = 1, #Enemies.types do
@@ -35,21 +49,42 @@ return function(Ship, Enemies, Camera, check)
             local enemy = group:spawn(ship, kind, {x = 400, y = 270, vx = 140, angle = math.pi / 2})
             local firstGoal = {x = enemy.x + Enemies.types[kind].arrivalRadius + 2, y = enemy.y}
             enemy.goal = firstGoal
-            ship.x, ship.y = enemy.x, enemy.y
+            ship.x, ship.y = enemy.x - 160, enemy.y - 120
             group.rng = function() return 0.75 end
             group:update(dt, ship)
-            check(enemy.goal == firstGoal and not enemy.braking and enemy:speed() >= 140,
-                "Approaching a waypoint must not brake the aircraft")
-            local incomingSpeed, startX = enemy:speed(), enemy.x
+            check(enemy.goal == firstGoal and not enemy.braking and enemy:speed() >= 140 and #group.fire.shots == 0,
+                "Approaching a waypoint must not brake or fire the aircraft")
+            local incomingSpeed = enemy:speed()
             group:update(dt, ship)
-            local nextGoal = enemy.goal
             speedRatios[kind] = enemy:speed() / incomingSpeed
-            check(nextGoal ~= firstGoal and enemy.angle < math.pi / 2 and enemy.x > startX and enemy.braking
+            check(enemy.goal == firstGoal and enemy.braking and #group.fire.shots == 0
                 and math.abs(speedRatios[kind] - math.exp(-Enemies.types[kind].brake * dt)) < 1e-6,
-                "Arriving must apply hull-specific braking while the aircraft slides and turns")
-            group:update(0.2, ship)
-            check(enemy.goal == nextGoal and not enemy.braking and enemy:speed() > 0,
-                "The short waypoint brake must release and leave the aircraft moving")
+                "Arriving must hold the waypoint and brake before firing")
+
+            local firedStopped, firedAimed = false, false
+            for _ = 1, 6 * 60 do
+                local prevShots = #group.fire.shots
+                local prevSpeed = enemy:speed()
+                local prevErr = aimError(enemy, ship)
+                group:update(dt, ship)
+                if #group.fire.shots > prevShots then
+                    firedStopped = prevSpeed == 0
+                    firedAimed = prevErr <= math.rad(6) + 1e-6
+                    break
+                end
+                assert(enemy.braking and enemy.goal == firstGoal,
+                    "The enemy must keep braking and holding its waypoint until stopped and aimed at the player")
+            end
+            check(firedStopped and firedAimed,
+                "Every enemy must come to a complete stop and aim its nose at the player before attacking")
+
+            check(completeAttackToNextGoal(group, enemy, ship) and enemy.goal ~= firstGoal,
+                "After attacking, the enemy must pick a new waypoint")
+            for _ = 1, 180 do
+                group:update(dt, ship)
+                if enemy:speed() > 10 then break end
+            end
+            check(enemy:speed() > 10, "After attacking, the enemy must accelerate toward its next waypoint")
         end
         check(speedRatios[1] < speedRatios[2] and speedRatios[2] < speedRatios[3] and speedRatios[3] < 1,
             "WEDGE must brake harder than EQUILATERAL, and OBTUSE must retain the most momentum")
@@ -99,14 +134,14 @@ return function(Ship, Enemies, Camera, check)
         check(escort.goal == oldGoal and leader.goal == leaderGoal, "Unreached waypoints must stay fixed as the player moves")
 
         escort.x, escort.y = oldGoal.x, oldGoal.y
-        group:update(dt, ship)
-        check(escort.goal ~= oldGoal and leader.goal == leaderGoal and isPatrolGoal(escort, ship, group.view),
-            "An escort reaching its goal must choose a new one independently of the OBTUSE")
+        check(completeAttackToNextGoal(group, escort, ship)
+            and escort.goal ~= oldGoal and leader.goal == leaderGoal and isPatrolGoal(escort, ship, group.view),
+            "An escort reaching its goal must attack from a stop and choose a new one independently of the OBTUSE")
         group:destroy(1)
         oldGoal = escort.goal
         escort.x, escort.y = oldGoal.x, oldGoal.y
-        group:update(dt, ship)
-        check(escort.goal ~= oldGoal and isPatrolGoal(escort, ship, group.view),
+        check(completeAttackToNextGoal(group, escort, ship)
+            and escort.goal ~= oldGoal and isPatrolGoal(escort, ship, group.view),
             "An escort must continue its own patrol after the OBTUSE is destroyed")
     end
 
@@ -125,8 +160,8 @@ return function(Ship, Enemies, Camera, check)
                 assert(isPatrolGoal(enemy, ship, group.view), "An outward first approach must choose an inward goal")
                 local first = enemy.goal
                 enemy.x, enemy.y = first.x, first.y
-                group:update(dt, ship, nil, camera, 800, 600)
-                assert(enemy.goal ~= first and isPatrolGoal(enemy, ship, group.view),
+                assert(completeAttackToNextGoal(group, enemy, ship, camera, 800, 600)
+                    and enemy.goal ~= first and isPatrolGoal(enemy, ship, group.view),
                     "Subsequent patrol goals must also fit inside the camera and the hull's patrol range")
             end
         end
@@ -171,6 +206,8 @@ return function(Ship, Enemies, Camera, check)
             local burst = group.fire.bursts[1]
             if burst and burst ~= lastBurst then
                 attackers[#attackers + 1], lastBurst = burst.enemy, burst
+                assert(burst.enemy:speed() == 0 and aimError(burst.enemy, ship) <= math.rad(6) + 1e-6,
+                    "A paired WEDGE must stop completely and aim at the player before firing")
                 local partner = burst.enemy == leftWing and rightWing or leftWing
                 assert(length(partner.x - ship.x, partner.y - ship.y) > Enemies.types[1].patrolMax,
                     "The next attacker must first pull back outside the WEDGE attack range")
@@ -241,9 +278,13 @@ return function(Ship, Enemies, Camera, check)
         step(ship, group)
         assert(isPatrolGoal(left, ship, group.view), "Losing a firing wingman must release the survivor to solo patrol")
         left.x, left.y = left.goal.x, left.goal.y
-        step(ship, group)
-        check(#group.fire.bursts == 1 and group.fire.bursts[1].enemy == left,
-            "The surviving WEDGE must still fire at its own waypoint")
+        for _ = 1, 4 * 60 do
+            step(ship, group)
+            if #group.fire.bursts > 0 then break end
+        end
+        check(#group.fire.bursts == 1 and group.fire.bursts[1].enemy == left and left:speed() == 0
+            and aimError(left, ship) <= math.rad(6) + 1e-6,
+            "The surviving WEDGE must stop, aim, and fire at its own waypoint")
     end
 
     do

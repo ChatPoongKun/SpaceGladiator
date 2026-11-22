@@ -24,18 +24,23 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     step(ship, thrust, 0.15, 60)
     check(near(ship.vx, 0) and near(ship.vy, -startingSpeed - Ship.thrust * 0.15), "W must accelerate toward the nose")
     local vx, vy, y = ship.vx, ship.vy, ship.y
+    local quarterDecay = (1 - Ship.naturalDrag) ^ 0.25
     step(ship, coast, 0.25, 60)
-    check(near(ship.vx, vx) and near(ship.vy, vy), "Releasing W must preserve velocity")
-    check(near(ship.y, y + vy * 0.25), "Coasting must advance position")
+    check(near(ship.vx, vx * quarterDecay) and near(ship.vy, vy * quarterDecay),
+        "Releasing W must apply 50%/s natural deceleration without changing direction")
+    check(ship.y < y, "Coasting must advance position")
+    local coastVy = ship.vy
     step(ship, { turn = 1, thrust = false, brake = false }, 0.25, 60)
-    check(near(ship.vx, vx) and near(ship.vy, vy), "Turning must not rotate existing momentum")
+    check(near(ship.vx, 0) and near(ship.vy, coastVy * quarterDecay),
+        "Turning must not rotate existing momentum while naturally decelerating")
     check(near(ship.angle, Ship.turnSpeed * 0.25), "D must rotate clockwise")
     step(ship, { turn = -1, thrust = false, brake = false }, 0.25, 60)
     check(near(ship.angle, 0) or near(ship.angle, 2 * math.pi), "A must rotate counterclockwise")
 
+    vy = ship.vy
     ship.angle = math.pi / 2
     step(ship, thrust, 0.2, 60)
-    check(ship.vx > 0 and near(ship.vy, vy), "New thrust must add to existing momentum")
+    check(ship.vx > 0 and near(ship.vy, vy), "New thrust must add to existing momentum without natural drag")
     local previousSpeed = ship:speed()
     for _ = 1, 60 do
         ship:update(1 / 60, brake)
@@ -58,7 +63,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
         local crossing = Ship.new(width, height)
         local baseline = Ship.new(width, height)
         local margin = crossing:hitRadius() + 1
-        local distance = margin + 1
+        local distance = margin + 0.5
         crossing[axis] = sign < 0 and distance or extent - distance
         crossing[velocity], baseline[velocity] = sign * Ship.driftThreshold / 2, sign * Ship.driftThreshold / 2
         local function checkCrossingStep(dt, input, push)
@@ -84,21 +89,29 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     end
 
     local low = Ship.new(width, height)
+    local dragRate = -math.log(1 - Ship.naturalDrag)
+    local offset = Ship.driftDeceleration / dragRate
     local belowThreshold = Ship.driftThreshold - 1
-    local remaining = math.max(0, belowThreshold - Ship.driftDeceleration * 0.2)
+    local remaining = math.max(0, (belowThreshold + offset) * math.exp(-dragRate * 0.2) - offset)
     low.vx, low.vy = belowThreshold * 0.6, belowThreshold * 0.8
     low:update(0.2, coast)
     check(near(low:speed(), remaining) and near(low.vx, remaining * 0.6) and near(low.vy, remaining * 0.8),
         "Below the configured threshold, automatic deceleration must reduce speed without changing direction")
     step(low, coast, math.ceil(belowThreshold / Ship.driftDeceleration), 60)
     check(low:speed() == 0, "Low-speed deceleration must stop without reversing")
-    low.vx = Ship.driftThreshold
-    step(low, coast, 1, 60)
-    check(low:speed() == Ship.driftThreshold, "Automatic deceleration must not apply at exactly its threshold")
+
+    local cruising = Ship.new(width, height)
+    cruising.vx, cruising.vy = Ship.maxSpeed * 0.6, Ship.maxSpeed * 0.8
+    step(cruising, coast, 1, 60)
+    local expectedHalf = Ship.maxSpeed * (1 - Ship.naturalDrag)
+    check(near(cruising:speed(), expectedHalf) and near(cruising.vx, expectedHalf * 0.6)
+        and near(cruising.vy, expectedHalf * 0.8),
+        "Coasting above the drift threshold must reduce speed by 50% per second without changing direction")
+
     low = Ship.new(width, height)
     step(low, thrust, 0.1, 60)
     check(near(low:speed(), (Ship.thrust - Ship.driftDeceleration) * 0.1),
-        "Thrust must overcome low-speed deceleration when starting")
+        "Thrust must overcome low-speed deceleration without natural drag when starting")
 
     local slow, fast = Ship.new(width, height), Ship.new(width, height)
     slow.vy, fast.vy = -startingSpeed, -startingSpeed
@@ -109,10 +122,15 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     step(slow, brake, 1 / 6, 30)
     step(fast, brake, 1 / 6, 144)
     check(near(slow.vy, fast.vy), "Braking must be frame-rate independent")
+    slow.vx, slow.vy, fast.vx, fast.vy = Ship.maxSpeed, 0, Ship.maxSpeed, 0
+    step(slow, coast, 1, 30)
+    step(fast, coast, 1, 144)
+    check(near(slow.vx, expectedHalf) and near(fast.vx, expectedHalf),
+        "Natural coast deceleration must be frame-rate independent")
     slow.vx, slow.vy, fast.vx, fast.vy = belowThreshold, 0, belowThreshold, 0
     step(slow, coast, 0.5, 30)
     step(fast, coast, 0.5, 144)
-    remaining = math.max(0, belowThreshold - Ship.driftDeceleration * 0.5)
+    remaining = math.max(0, (belowThreshold + offset) * math.exp(-dragRate * 0.5) - offset)
     check(near(slow.vx, remaining) and near(fast.vx, remaining), "Low-speed deceleration must be frame-rate independent")
 
     local boost = { turn = 0, thrust = false, brake = false, boost = true }
@@ -130,10 +148,12 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     ship:update(Ship.boostHold, boost)
     check(ship.battery == ship.maxBattery - Ship.boostCost and ship:speed() < Ship.boostSpeed
         and ship:speed() > Ship.maxSpeed, "A second press during boost must be ignored as the speed starts to decay")
-    ship:update(Ship.boostFalloff, coast)
+    ship:update(Ship.boostFalloff - 1 / 60, coast)
     check(near(ship:speed(), Ship.maxSpeed) and ship.boostLevel == 0,
-        "Boost must return to normal speed after the short falloff")
-    ship:update(1 / 60, coast)
+        "Boost must return to normal speed after the short falloff without natural drag")
+    step(ship, coast, 1, 60)
+    check(near(ship:speed(), Ship.maxSpeed * (1 - Ship.naturalDrag)),
+        "Natural deceleration must resume after boosting ends")
     check(ship.battery > ship.maxBattery - Ship.boostCost, "The battery must recharge after boosting")
     camera:update(1, ship, 1280, 800)
     check(near(camera.zoom, normalZoom) and near(camera.x, width / 2), "The camera must settle on the arena center")

@@ -10,8 +10,9 @@ Ship.turnSpeed = 2.8
 Ship.radius = 23
 Ship.shieldMargin = 1.3
 Ship.destructionDuration = 0.7
-Ship.driftThreshold = 90
-Ship.driftDeceleration = 195
+Ship.driftThreshold = 50
+Ship.driftDeceleration = 50
+Ship.naturalDrag = 0.5
 Ship.boostSpeed = 420
 Ship.boostHold = 0.24
 Ship.boostFalloff = 0.24
@@ -144,7 +145,7 @@ function Ship:turn(dt, direction)
     self.angle = (self.angle + direction * self.turnSpeed * dt) % (2 * math.pi)
 end
 
-function Ship:updateVelocity(dt, thrust, brake, cap)
+function Ship:updateVelocity(dt, thrust, brake, cap, coastDt)
     self.accelerating = thrust and not brake
     self.braking = brake
     local oldVx, oldVy = self.vx, self.vy
@@ -160,6 +161,37 @@ function Ship:updateVelocity(dt, thrust, brake, cap)
     local speed = self:speed()
     if speed > cap then
         self.vx, self.vy = self.vx * cap / speed, self.vy * cap / speed
+        speed = cap
+    end
+
+    local dragTime = coastDt == nil and dt or coastDt
+    if not self.braking and not self.accelerating and dragTime > 0 and speed > 0 then
+        local dragRate = (self.naturalDrag or 0) > 0 and -math.log(1 - self.naturalDrag) or 0
+        local remaining = speed
+        local t = dragTime
+        if dragRate > 0 then
+            if remaining >= self.driftThreshold and self.driftThreshold > 0 and self.driftDeceleration > 0 then
+                local toThreshold = math.log(remaining / self.driftThreshold) / dragRate
+                if t <= toThreshold then
+                    remaining = remaining * math.exp(-dragRate * t)
+                    t = 0
+                else
+                    remaining = self.driftThreshold
+                    t = t - toThreshold
+                end
+            end
+            if t > 0 then
+                if self.driftDeceleration > 0 and remaining <= self.driftThreshold then
+                    local offset = self.driftDeceleration / dragRate
+                    remaining = math.max(0, (remaining + offset) * math.exp(-dragRate * t) - offset)
+                else
+                    remaining = remaining * math.exp(-dragRate * t)
+                end
+            end
+        elseif remaining < self.driftThreshold then
+            remaining = math.max(0, remaining - self.driftDeceleration * t)
+        end
+        self.vx, self.vy = self.vx * remaining / speed, self.vy * remaining / speed
     elseif speed > 0 and speed < self.driftThreshold then
         local remaining = math.max(0, speed - self.driftDeceleration * dt)
         self.vx, self.vy = self.vx * remaining / speed, self.vy * remaining / speed
@@ -191,7 +223,7 @@ function Ship:update(dt, input)
     local falloff = math.min(1, self.boostRemaining / self.boostFalloff)
     self.boostLevel = falloff * falloff * (3 - 2 * falloff)
     local cap = self.maxSpeed + (self.boostSpeed - self.maxSpeed) * self.boostLevel
-    local oldVx, oldVy = self:updateVelocity(dt, input.thrust, input.brake, cap)
+    local oldVx, oldVy = self:updateVelocity(dt, input.thrust, input.brake, cap, rechargeTime)
 
     self.invulnTimer = math.max(0, (self.invulnTimer or 0) - dt)
     local margin = self:hitRadius() + 1
