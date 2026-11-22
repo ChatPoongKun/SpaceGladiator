@@ -239,7 +239,7 @@ function PlinkoUI:draw(plinko, stage, fonts, width, height, pendingCount)
     g.rectangle("line", nx, actY, halfW, 40, 6, 6)
     g.setFont(fonts.menuBody)
     g.setColor(0.92, 1, 0.95, 1)
-    g.printf("다음 스테이지 →", nx, actY + 11, halfW, "center")
+    g.printf("전장으로 복귀 >", nx, actY + 11, halfW, "center")
     self:addRegion(nx, actY, halfW, 40, { type = "nextStage" })
 
     g.pop()

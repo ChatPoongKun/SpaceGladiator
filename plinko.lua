@@ -186,6 +186,57 @@ function Plinko.new(opts)
         end
     end
 
+    -- Apply next-stage warp gate featured reward overrides when specified
+    local featured = opts.featuredReward
+    local featuredId = type(featured) == "table" and featured.id or featured
+    if featuredId == "weapon_module" then
+        local weaponSpecs = {
+            { kind = "module", id = "missile", extraLinks = 1, rarity = "RARE" },
+            { kind = "module", id = "laser", extraLinks = 1, rarity = "RARE" },
+        }
+        local pick = weaponSpecs[math.floor(rand() * #weaponSpecs) + 1]
+        if not slots[1].carriedOver then
+            slots[1].reward = describeReward(pick)
+            slots[1].tier = "high"
+            slots[1].required = math.max(16, slots[1].required - 4)
+        end
+    elseif featuredId == "support_chip" then
+        local rareChips = {
+            { kind = "chip", id = "fever_overdrive", rarity = "RARE" },
+            { kind = "chip", id = "limiter_off", rarity = "RARE" },
+            { kind = "chip", id = "dodge_trigger", rarity = "RARE" },
+            { kind = "chip", id = "hit_trigger", rarity = "RARE" },
+        }
+        if not slots[1].carriedOver then
+            slots[1].reward = describeReward(rareChips[math.floor(rand() * #rareChips) + 1])
+            slots[1].tier = "high"
+        end
+        if not slots[5].carriedOver then
+            slots[5].reward = describeReward(rareChips[math.floor(rand() * #rareChips) + 1])
+            slots[5].tier = "high"
+        end
+    elseif featuredId == "defense_module" then
+        local defSpecs = {
+            { kind = "module", id = "shield", extraLinks = 1, rarity = "RARE" },
+            { kind = "module", id = "armor", extraLinks = 1, rarity = "RARE" },
+            { kind = "module", id = "battery", extraLinks = 1, rarity = "RARE" },
+            { kind = "module", id = "thruster", extraLinks = 0, rarity = "UNCOMMON" },
+        }
+        if not slots[2].carriedOver then
+            slots[2].reward = describeReward(defSpecs[math.floor(rand() * #defSpecs) + 1])
+            slots[2].tier = "mid"
+        end
+        if not slots[4].carriedOver then
+            slots[4].reward = describeReward(defSpecs[math.floor(rand() * #defSpecs) + 1])
+            slots[4].tier = "mid"
+        end
+    elseif featuredId == "link_boost" then
+        if not slots[3].carriedOver then
+            slots[3].reward = describeReward({ kind = "link_token", count = 1, rarity = "RARE" })
+            slots[3].tier = "high"
+        end
+    end
+
     return setmetatable({
         stageNumber = stageNumber,
         boardW = boardW,

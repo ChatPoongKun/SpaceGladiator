@@ -396,22 +396,19 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
 
     g.setFont(fonts.menuBody)
     g.setColor(0.62, 0.84, 0.92, 1)
-    local cellInfo = string.format("확장 슬롯 %d / %d  (4x4 → 6x6 다이아몬드)  ·  드래그 배치 · 클릭 유지+R 회전",
+    local cellInfo = string.format("확장 슬롯 %d / %d  (4x4 > 6x6 다이아몬드)  ·  드래그 배치 · 클릭 유지+R 회전",
         inv:unlockedCellCount(), inv:maxCellCount())
     g.print(cellInfo, px + 26, py + 56)
 
     -- Close / Proceed button
     local closeLabel = "전투 복귀"
     local closeW = 136
-    if returnTarget == "nextStage" then
-        closeLabel = inv:pendingCount() > 0 and "미배치 포기·출격" or "다음 스테이지 출격"
-        closeW = 174
-    elseif returnTarget == "plinko" then
-        closeLabel = "플링코 복귀"
-        closeW = 136
+    if returnTarget == "warpSelect" or returnTarget == "nextStage" or stageEndMode then
+        closeLabel = inv:pendingCount() > 0 and "미배치 포기·전장 복귀" or "전장으로 복귀"
+        closeW = inv:pendingCount() > 0 and 196 or 152
     end
     local closeX, closeY, closeH = px + panelW - closeW - 22, py + 18, 36
-    if returnTarget == "nextStage" then
+    if returnTarget == "warpSelect" or returnTarget == "nextStage" or stageEndMode then
         g.setColor(inv:pendingCount() > 0 and 0.28 or 0.14, inv:pendingCount() > 0 and 0.18 or 0.30, 0.16, 0.96)
         g.rectangle("fill", closeX, closeY, closeW, closeH, 6, 6)
         g.setColor(inv:pendingCount() > 0 and 1.0 or 0.46, inv:pendingCount() > 0 and 0.72 or 0.94, inv:pendingCount() > 0 and 0.36 or 0.68, 0.92)

@@ -21,6 +21,10 @@ local cues = {
     evasion         = { "evasion",      0.56, 1.00, 3, 0.05, 0.05 },
     fever_start     = { "fever_start",  0.76, 1.00, 1, 0.20, 0.00 },
     stage_clear     = { "stage_clear",  0.72, 1.00, 1, 0.20, 0.00 },
+    shutter_close   = { "shutter_close",0.68, 1.00, 1, 0.15, 0.00 },
+    shutter_open    = { "shutter_open", 0.62, 1.00, 1, 0.15, 0.00 },
+    warp_jump       = { "warp_jump",    0.76, 1.00, 1, 0.20, 0.00 },
+    warp_arrive     = { "warp_arrive",  0.68, 1.00, 1, 0.20, 0.00 },
 
     -- UI interaction
     ui_hover        = { "ui_hover",     0.38, 1.00, 2, 0.03, 0.02 },

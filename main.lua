@@ -13,16 +13,19 @@ local InventoryUI = require("inventory_ui")
 local Stage = require("stage")
 local Plinko = require("plinko")
 local PlinkoUI = require("plinko_ui")
+local StageTransition = require("stage_transition")
 local Replay = require("replay")
 local ReplayExport = require("replay_export")
 
 local ship, stars, fonts, camera, turret, enemies, hud, gladiator
 local inventory, inventoryUI, currentBuild
 local stage, plinko, plinkoUI
+local stageClearState, plinkoShutter, warpGates, warpState
 local replay, activeExporter
 local coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
 local inventoryReturnScreen = "playing"
 local inventoryStageEndMode = false
+local pauseReturnScreen = "playing"
 local permanentUnlocksFile = "grid_unlocks.txt"
 local lastFeverState, lastEvasionCount, lastWrapEvents, lastDamageCount = false, 0, 0, 0
 local wrapTriggerCooldown, shockwaveCooldown = 0, 0
@@ -48,7 +51,9 @@ end
 local function setScreen(nextScreen)
     screen, selectedButton = nextScreen, 1
     input.boost, firing = false, false
-    if screen ~= "gameOver" then Sfx.stop() end
+    local preserveSfx = (screen == "gameOver" or screen == "stageClear" or screen == "plinko"
+        or screen == "warpSelect" or screen == "warping" or screen == "playing")
+    if not preserveSfx then Sfx.stop() end
     if screen == "playing" and replay then
         Sfx.setListener(function(cue)
             if screen == "playing" and replay then replay:recordSfxEvent(cue) end
@@ -56,7 +61,9 @@ local function setScreen(nextScreen)
     else
         Sfx.setListener(nil)
     end
-    love.mouse.setVisible(screen ~= "playing" and screen ~= "gameOver")
+    local hideMouse = (screen == "playing" or screen == "gameOver"
+        or screen == "stageClear" or screen == "warpSelect" or screen == "warping")
+    love.mouse.setVisible(not hideMouse)
     if screen == "title" then
         if activeExporter then
             activeExporter:finish("취소됨")
@@ -67,7 +74,9 @@ local function setScreen(nextScreen)
     if screen == "title" or screen == "results" then
         ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
         currentBuild, stage, plinko = nil, nil, nil
+        stageClearState, plinkoShutter, warpGates, warpState = nil, nil, nil, nil
         coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
+        pauseReturnScreen = "playing"
     end
 end
 
@@ -75,7 +84,8 @@ local function syncInventoryBuild()
     if not inventory or not ship or not gladiator then return end
     currentBuild = inventory:computeBuild(gladiator.feverActive)
     ship:applyBuild(currentBuild)
-    gladiator.scoreMultiplier = currentBuild.scoreMultiplier or 1
+    local stageMult = (stage and stage.scoreMultiplier) or 1
+    gladiator.scoreMultiplier = (currentBuild.scoreMultiplier or 1) * stageMult
     lastFeverState = gladiator.feverActive
 end
 
@@ -104,12 +114,15 @@ local function startRun()
         and love.filesystem.getInfo(permanentUnlocksFile) then
         inventory:loadUnlockedCells(love.filesystem.read(permanentUnlocksFile))
     end
+    Sfx.stop()
     inventoryUI = InventoryUI.new()
     plinkoUI = PlinkoUI.new()
     plinko = nil
+    stageClearState, plinkoShutter, warpGates, warpState = nil, nil, nil, nil
     coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
     inventoryReturnScreen = "playing"
     inventoryStageEndMode = false
+    pauseReturnScreen = "playing"
     stage = Stage.new(1)
     if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then
         stage:configureEnemies(enemies)
@@ -122,8 +135,21 @@ local function startRun()
     setScreen("playing")
 end
 
-local function enterPlinkoStageEnd()
+local function beginStageClear()
     if replay then replay:finalizeStage() end
+    local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
+    lastGladiatorTotal = gladiator.total or 0
+    coinWallet = coinWallet + delta
+    if enemies then
+        enemies.items = {}
+        if enemies.fire then enemies.fire.items = {} end
+    end
+    stageClearState = StageTransition.newStageClear(stage)
+    setScreen("stageClear")
+    Sfx.play("stage_clear")
+end
+
+local function enterPlinkoStageEnd()
     local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
     lastGladiatorTotal = gladiator.total or 0
     coinWallet = coinWallet + delta
@@ -133,12 +159,24 @@ local function enterPlinkoStageEnd()
         coins = coinWallet,
         carriedSlots = carriedPlinkoSlots,
         carryoverEnabled = false,
+        featuredReward = stage and stage.featuredReward or nil,
     })
+    stageClearState = nil
+    plinkoShutter = StageTransition.newShutterOpen()
     setScreen("plinko")
-    Sfx.play("stage_clear")
 end
 
-local function launchNextStage()
+local function finalizePlinko()
+    if plinko then
+        plinko:resolveAll(inventory, ship)
+        coinWallet = plinko.coins
+        carriedPlinkoSlots = plinko:exportCarryoverSlots()
+        plinko = nil
+    end
+    plinkoShutter = nil
+end
+
+local function enterWarpSelect(keepExistingGates)
     if inventoryUI and inventory then
         inventoryUI:cancelDrag(inventory)
     end
@@ -146,15 +184,64 @@ local function launchNextStage()
         inventory:discardPendingRewards()
     end
     inventoryStageEndMode = false
-    inventoryReturnScreen = "playing"
-    stage = stage and stage:nextStage() or Stage.new(2)
+    inventoryReturnScreen = "warpSelect"
+    if enemies then
+        enemies.items = {}
+        if enemies.fire then enemies.fire.items = {} end
+    end
+    if not keepExistingGates or not warpGates then
+        if ship then
+            ship.x, ship.y = Arena.width * 0.5, Arena.height * 0.5
+            ship.vx, ship.vy, ship.wrapVx, ship.wrapVy = 0, 0, 0, 0
+            ship.boostRemaining, ship.boostLevel = 0, 0
+            ship.accelerating, ship.braking = false, false
+        end
+        warpGates = StageTransition.generateWarpGates(Arena.width, Arena.height)
+    end
+    syncInventoryBuild()
+    savePermanentUnlocks()
+    setScreen("warpSelect")
+end
+
+local function beginWarpToNextStage(gate)
+    warpState = StageTransition.newWarp(gate, (stage and stage.number or 1) + 1, ship, width, height)
+    warpGates = nil
+    setScreen("warping")
+    Sfx.play("warp_jump")
+end
+
+local function completeWarpAndStartStage(gate)
+    local reward = gate and gate.reward or nil
+    stage = stage and stage:nextStage({ featuredReward = reward }) or Stage.new(2, { featuredReward = reward })
+    local bonusCoins = StageTransition.applyRewardOnArrival(reward, inventory, ship, coinWallet)
+    coinWallet = coinWallet + bonusCoins
     enemies.items = {}
     if enemies.fire then enemies.fire.items = {} end
     enemies.spawnAccumulator = 0.5
     stage:configureEnemies(enemies)
+    warpState = nil
+    warpGates = nil
     syncInventoryBuild()
     savePermanentUnlocks()
     setScreen("playing")
+end
+
+local function openInventoryFromPlinko()
+    finalizePlinko()
+    inventoryReturnScreen = "warpSelect"
+    inventoryStageEndMode = true
+    setScreen("inventory")
+end
+
+local function leavePlinkoToBattlefield()
+    finalizePlinko()
+    if inventory and inventory:pendingCount() > 0 then
+        inventoryReturnScreen = "warpSelect"
+        inventoryStageEndMode = true
+        setScreen("inventory")
+        return
+    end
+    enterWarpSelect(false)
 end
 
 local function closeInventoryScreen()
@@ -163,31 +250,12 @@ local function closeInventoryScreen()
     end
     syncInventoryBuild()
     savePermanentUnlocks()
-    if inventoryReturnScreen == "nextStage" then
-        launchNextStage()
+    if inventoryReturnScreen == "warpSelect" then
+        enterWarpSelect(warpGates ~= nil)
         return
     end
-    local target = inventoryReturnScreen or "playing"
-    if target ~= "plinko" then
-        inventoryStageEndMode = false
-    end
-    setScreen(target)
-end
-
-local function advanceToNextStage()
-    if plinko then
-        plinko:resolveAll(inventory, ship)
-        coinWallet = plinko.coins
-        carriedPlinkoSlots = plinko:exportCarryoverSlots()
-        plinko = nil
-    end
-    if inventory and inventory:pendingCount() > 0 then
-        inventoryReturnScreen = "nextStage"
-        inventoryStageEndMode = true
-        setScreen("inventory")
-        return
-    end
-    launchNextStage()
+    inventoryStageEndMode = false
+    setScreen(inventoryReturnScreen or "playing")
 end
 
 local menus = {}
@@ -289,7 +357,7 @@ menus.title = {title = "DRIFT", buttons = {
     {label = "게임 종료", action = function() love.event.quit() end},
 }}
 menus.pause = {title = "일시정지", buttons = {
-    {label = "계속하기", action = function() setScreen("playing") end},
+    {label = "계속하기", action = function() setScreen(pauseReturnScreen or "playing") end},
     {label = "설정", action = openSettings},
     {label = "포기하기", action = function() showResults("전투 포기") end},
     {label = "타이틀로 나가기", action = function() setScreen("title") end},
@@ -330,6 +398,7 @@ function love.load(args)
         menuTitle = love.graphics.newFont(menuFont, 34),
         menuButton = love.graphics.newFont(menuFont, 18),
         menuBody = love.graphics.newFont(menuFont, 15),
+        menuSmall = love.graphics.newFont(menuFont, 12),
     }
     hud = Hud.new()
     stars = Starfield.new(width, height)
@@ -346,7 +415,7 @@ function love.load(args)
         return
     end
     if testPlinko then
-        require("tests.plinko_stage")(Stage, Plinko, Inventory, Ship, Enemies)
+        require("tests.plinko_stage")(Stage, Plinko, Inventory, Ship, Enemies, StageTransition)
         love.event.quit(0)
         return
     end
@@ -393,7 +462,7 @@ function love.update(dt)
                 else
                     replay.exportError = nil
                     replay.lastExportPath = activeExporter.mp4Path
-                    replay.exportStatus = "저장 완료: replays/" .. activeExporter.filename
+                    replay.exportStatus = "저장 완료: " .. (activeExporter.mp4Path or ("SpaceGladiator/" .. activeExporter.filename))
                 end
                 activeExporter = nil
             end
@@ -407,12 +476,31 @@ function love.update(dt)
         return
     end
     if screen == "plinko" then
+        if plinkoShutter and StageTransition.updateShutterOpen(plinkoShutter, dt) then
+            plinkoShutter = nil
+        end
         if plinko then plinko:update(dt, inventory, ship) end
         stars:update(dt, 18, -24, 0, width, height, 0)
         return
     end
     if screen == "pause" or screen == "settings" or screen == "inventory" then return end
     time = time + dt
+    if screen == "stageClear" then
+        ship:update(dt, { turn = 0, thrust = false, brake = true, boost = false })
+        camera:update(dt, ship, width, height)
+        local vx, vy = ship:worldVelocity()
+        stars:update(dt, 90 + vx * 1.8, -210 + vy * 1.8, 0, width, height, 0)
+        if StageTransition.updateStageClear(stageClearState, dt) then
+            enterPlinkoStageEnd()
+        end
+        return
+    end
+    if screen == "warping" then
+        if StageTransition.updateWarp(warpState, dt, ship, stars, camera, width, height) then
+            completeWarpAndStartStage(warpState.gate)
+        end
+        return
+    end
     if screen == "gameOver" then
         ship:update(dt, input)
         gladiator:update(dt, ship)
@@ -429,6 +517,32 @@ function love.update(dt)
     if testMode then
         input.turn, input.thrust, input.brake = 0.55, true, false
         mouseX, mouseY, firing = width * 0.60, height * 0.24, true
+    end
+
+    if screen == "warpSelect" then
+        StageTransition.updateWarpGates(warpGates, dt)
+        local preGate = StageTransition.checkGateTrigger(warpGates, ship)
+        if preGate then
+            beginWarpToNextStage(preGate)
+            return
+        end
+        ship:update(dt, input)
+        input.boost = false
+        local postGate = StageTransition.checkGateTrigger(warpGates, ship)
+        if postGate then
+            beginWarpToNextStage(postGate)
+            return
+        end
+        camera:update(dt, ship, width, height)
+        local surge = 1050 * ship.boostLevel
+        local vx, vy = ship:worldVelocity()
+        stars:update(dt, 120 + vx * 2.8 + ship.boostX * surge,
+            -290 + vy * 2.8 + ship.boostY * surge,
+            ship.accelerating and 1 or 0, width, height, ship.boostLevel)
+        local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
+        local activeWeaponBuild = currentBuild and currentBuild.weapons[turret.weapon] or nil
+        turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeaponBuild)
+        return
     end
 
     ship:update(dt, input)
@@ -462,7 +576,7 @@ function love.update(dt)
     end
     if stage and not (testMode or testFlow or testGladiator or testInventory or testPlinko) then
         if stage:update(dt, enemies) then
-            enterPlinkoStageEnd()
+            beginStageClear()
             return
         end
     end
@@ -561,7 +675,23 @@ local function drawHud()
     g.setFont(fonts.title)
     g.setColor(0.83, 0.93, 0.97, 1)
     g.print("D R I F T", 32, 25)
-    label(stage and string.format("STAGE %02d  /  %.1fS", stage.number, stage:remainingTime()) or "04  /  TACTICAL FLIGHT", 34, 66)
+    if screen == "warpSelect" then
+        g.setFont(fonts.small)
+        g.setColor(0.46, 0.95, 0.78, 1)
+        g.print(string.format("STAGE %02d  /  WARP GATE OPEN", stage and stage.number or 1), 34, 66)
+    elseif stage and stage:isOvertime() then
+        g.setFont(fonts.small)
+        g.setColor(1.0, 0.78, 0.34, 1)
+        g.print(string.format("STAGE %02d  /  CLEAR HOSTILES", stage.number), 34, 66)
+    else
+        label(stage and string.format("STAGE %02d  /  %.1fS", stage.number, stage:remainingTime()) or "04  /  TACTICAL FLIGHT", 34, 66)
+    end
+    if screen == "playing" and stage and stage.featuredReward then
+        local rc = stage.featuredReward.color or { 0.48, 0.92, 1.0 }
+        g.setFont(fonts.small)
+        g.setColor(rc[1], rc[2], rc[3], 0.92)
+        g.print("BONUS  /  " .. stage.featuredReward.short, 34, 83)
+    end
     local gx, gw = math.floor(width / 2) - 115, 230
     g.setFont(fonts.small)
     if gladiator.feverActive then
@@ -637,7 +767,11 @@ local function drawHud()
 
     local mode = ship.braking and "BRAKING" or ship.accelerating and "THRUST" or "COAST"
     if ship.boostLevel > 0 then mode = "BOOST" end
-    if screen ~= "playing" or not focused then mode = "PAUSED" end
+    if screen == "warpSelect" then
+        mode = ship.boostLevel > 0 and "BOOST" or "WARP READY"
+    elseif (screen ~= "playing" and screen ~= "stageClear") or not focused then
+        mode = "PAUSED"
+    end
     if ship:isDestroyed() then mode = "DESTROYED" end
     local mx = width - 180
     g.setColor(0.38, 0.91, 0.78, 0.85)
@@ -687,6 +821,9 @@ local function drawFlight()
     love.graphics.translate(originX, originY)
     love.graphics.scale(camera.zoom)
     Arena.draw(ship.boostLevel, gladiator.feverAura)
+    if screen == "warpSelect" and warpGates then
+        StageTransition.drawWarpGates(warpGates, ship, time, fonts)
+    end
     enemies:draw(time)
     gladiator:drawFeverWorld(ship, time)
     drawPlayer(originX, originY)
@@ -695,7 +832,20 @@ local function drawFlight()
     gladiator:drawFeverOverlay(width, height, time)
     gladiator:drawPopups(camera, width, height, fonts.small)
     drawHud()
-    if screen == "playing" and (focused or testMode) then
+    if screen == "warpSelect" then
+        local g = love.graphics
+        local bw, bh = math.min(540, width - 80), 32
+        local bx, by = math.floor((width - bw) * 0.5), 110
+        g.setColor(0.024, 0.056, 0.094, 0.88)
+        g.rectangle("fill", bx, by, bw, bh, 6, 6)
+        g.setColor(0.45, 0.92, 0.84, 0.72)
+        g.setLineWidth(1.2)
+        g.rectangle("line", bx, by, bw, bh, 6, 6)
+        g.setFont(fonts.menuBody)
+        g.setColor(0.86, 0.98, 0.95, 1)
+        g.printf("다음 스테이지 워프 개방 · 원하는 보상의 경계로 비행하세요", bx + 10, by + 7, bw - 20, "center")
+    end
+    if (screen == "playing" or screen == "warpSelect") and (focused or testMode) then
         local g = love.graphics
         local x, y = love.mouse.getPosition()
         if testMode then x, y = mouseX, mouseY end
@@ -715,16 +865,26 @@ function love.draw()
         replay:drawPlayback(width, height, fonts)
         return
     end
+    if screen == "warping" and warpState then
+        stars:draw()
+        StageTransition.drawWarp(warpState, ship, camera, width, height, time, fonts)
+        return
+    end
     stars:draw()
     if ship then drawFlight() end
     local menu = menus[screen]
     if screen == "gameOver" and ship.destructionAge >= Ship.destructionDuration then
         menu = gameOverMenu
-    elseif screen == "playing" and not focused and not testMode then
+    elseif (screen == "playing" or screen == "warpSelect") and not focused and not testMode then
         menu = unfocusedMenu
     end
-    if screen == "plinko" and plinko and plinkoUI then
+    if screen == "stageClear" and stageClearState then
+        StageTransition.drawStageClearOverlay(stageClearState, width, height, fonts)
+    elseif screen == "plinko" and plinko and plinkoUI then
         plinkoUI:draw(plinko, stage, fonts, width, height, inventory and inventory:pendingCount() or 0)
+        if plinkoShutter then
+            StageTransition.drawShutterOpen(plinkoShutter, width, height)
+        end
     elseif screen == "inventory" and inventory and inventoryUI then
         inventoryUI:draw(inventory, fonts, width, height, gladiator and gladiator.feverActive, {
             stageEndMode = inventoryStageEndMode,
@@ -761,11 +921,19 @@ function love.keypressed(key, _, isRepeat)
         end
         return
     end
+    if screen == "stageClear" or screen == "warping" then
+        return
+    end
     if key == "tab" or key == "i" then
-        if screen == "playing" or screen == "plinko" then
+        if screen == "playing" or screen == "warpSelect" then
             inventoryReturnScreen = screen
-            inventoryStageEndMode = (screen == "plinko")
+            inventoryStageEndMode = false
             setScreen("inventory")
+            return
+        elseif screen == "plinko" then
+            if not plinkoShutter or plinkoShutter.elapsed >= 0.25 then
+                openInventoryFromPlinko()
+            end
             return
         elseif screen == "inventory" then
             closeInventoryScreen()
@@ -773,10 +941,11 @@ function love.keypressed(key, _, isRepeat)
         end
     end
     if screen == "plinko" then
+        if plinkoShutter and plinkoShutter.elapsed < 0.25 then return end
         if key == "space" and plinko then
             plinko:invest(10)
         elseif key == "return" or key == "kpenter" then
-            advanceToNextStage()
+            leavePlinkoToBattlefield()
         end
         return
     end
@@ -788,7 +957,7 @@ function love.keypressed(key, _, isRepeat)
             else
                 closeInventoryScreen()
             end
-        elseif (key == "return" or key == "kpenter") and inventoryReturnScreen == "nextStage" then
+        elseif (key == "return" or key == "kpenter") and inventoryReturnScreen == "warpSelect" then
             closeInventoryScreen()
         elseif inventoryUI and inventory then
             if inventoryUI:keypressed(inventory, key) == "changed" then
@@ -799,9 +968,14 @@ function love.keypressed(key, _, isRepeat)
         return
     end
     if key == "escape" or key == "p" then
-        if screen == "playing" then setScreen("pause")
-        elseif screen == "pause" then setScreen("playing")
-        elseif screen == "settings" and key == "escape" then closeSettings() end
+        if screen == "playing" or screen == "warpSelect" then
+            pauseReturnScreen = screen
+            setScreen("pause")
+        elseif screen == "pause" then
+            setScreen(pauseReturnScreen or "playing")
+        elseif screen == "settings" and key == "escape" then
+            closeSettings()
+        end
         return
     end
 
@@ -820,7 +994,7 @@ function love.keypressed(key, _, isRepeat)
         return
     end
 
-    if screen ~= "playing" then return end
+    if screen ~= "playing" and screen ~= "warpSelect" then return end
     if key == "r" then startRun()
     elseif key == "1" or key == "2" or key == "3" then turret.weapon = tonumber(key); Sfx.play("ui_hover")
     elseif key == "space" and (focused or testMode) then input.boost = true end
@@ -872,17 +1046,16 @@ function love.mousepressed(x, y, button)
         return
     end
     if screen == "plinko" and plinko and plinkoUI then
+        if plinkoShutter and plinkoShutter.elapsed < 0.25 then return end
         local action = plinkoUI:mousepressed(plinko, x, y, button)
         if action == "openInventory" then
-            inventoryReturnScreen = "plinko"
-            inventoryStageEndMode = true
-            setScreen("inventory")
+            openInventoryFromPlinko()
         elseif action == "nextStage" then
-            advanceToNextStage()
+            leavePlinkoToBattlefield()
         end
         return
     end
-    if screen == "playing" then
+    if screen == "playing" or screen == "warpSelect" then
         firing = focused
         return
     end

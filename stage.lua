@@ -1,6 +1,7 @@
 -- Stage progression manager for SpaceGladiator.
--- Each stage lasts for a fixed duration (default 45s) OR ends immediately
--- once all enemies scheduled for that stage have been spawned and defeated.
+-- Each stage never ends while active hostiles remain. It clears once all
+-- scheduled squads are defeated (early clear) OR after the stage timer expires
+-- and all remaining hostiles on the battlefield are gone.
 
 local Stage = {}
 Stage.__index = Stage
@@ -13,6 +14,8 @@ function Stage.new(stageNumber, opts)
     local num = stageNumber or 1
     local duration = opts.duration or Stage.DEFAULT_DURATION
     local totalSquads = opts.totalSquads or (Stage.BASE_SQUADS + (num - 1))
+    local featuredReward = opts.featuredReward or nil
+    local scoreMultiplier = opts.scoreMultiplier or (featuredReward and featuredReward.id == "coin_jackpot" and 1.5 or 1)
     return setmetatable({
         number = num,
         duration = duration,
@@ -20,11 +23,17 @@ function Stage.new(stageNumber, opts)
         totalSquads = totalSquads,
         cleared = false,
         clearReason = nil,
+        featuredReward = featuredReward,
+        scoreMultiplier = scoreMultiplier,
     }, Stage)
 end
 
 function Stage:remainingTime()
     return math.max(0, self.duration - self.elapsed)
+end
+
+function Stage:isOvertime()
+    return not self.cleared and self.elapsed >= self.duration
 end
 
 function Stage:configureEnemies(enemies)
@@ -38,15 +47,29 @@ function Stage:update(dt, enemies)
     if self.cleared or dt <= 0 then return false end
     self.elapsed = self.elapsed + dt
 
+    local activeCount = (enemies and enemies.items) and #enemies.items or 0
+    local timeUp = self.elapsed >= self.duration
+
+    -- Once the stage timer expires, stop scheduling new squads so the player
+    -- only has to finish off the enemies still remaining on the battlefield.
+    if timeUp and enemies and enemies.squadsRemaining ~= nil and enemies.squadsRemaining > 0 then
+        enemies.squadsRemaining = 0
+    end
+
+    -- Never end the stage as long as any enemies remain.
+    if activeCount > 0 then
+        return false
+    end
+
     -- Early clear: all scheduled squads spawned and zero active hostiles remain
-    if enemies and enemies.squadsRemaining == 0 and #enemies.items == 0 then
+    if enemies and enemies.squadsRemaining == 0 and not timeUp then
         self.cleared = true
         self.clearReason = "ALL HOSTILES CLEARED"
         return true
     end
 
-    -- Time limit clear
-    if self.elapsed >= self.duration then
+    -- Time limit reached and zero enemies remain
+    if timeUp then
         self.cleared = true
         self.clearReason = "STAGE TIME COMPLETE"
         return true
