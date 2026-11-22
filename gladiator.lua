@@ -176,7 +176,7 @@ function Gladiator:award(category, points, label, x, y)
     self.lastEvent = { category = category, points = awarded, label = label, age = 0, fever = isFever }
     local px, py = self:spawnPopup(category, awarded, x, y, isFever)
     if self.onAward then
-        self.onAward(category, awarded, px or x, py or y, isFever)
+        self.onAward(category, awarded, px or x, py or y, isFever, points)
     end
     if isFever then
         self.feverPoints = self.feverPoints + awarded

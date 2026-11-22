@@ -105,8 +105,8 @@ local function startRun()
     end
     replay = Replay.new()
     gladiator = Gladiator.new()
-    gladiator.onAward = function(category, points, x, y, fever)
-        if replay then replay:recordPointEvent(category, points, x, y, fever) end
+    gladiator.onAward = function(category, points, x, y, fever, basePoints)
+        if replay then replay:recordPointEvent(category, points, x, y, fever, basePoints) end
     end
     enemies = Enemies.new(nil, gladiator)
     inventory = Inventory.newStarter()

@@ -224,15 +224,21 @@ function Replay:resetRun()
     self.lastExportPath = nil
 end
 
-function Replay:recordPointEvent(category, points, x, y, fever)
+function Replay:recordPointEvent(category, points, x, y, fever, basePoints)
     if not points or points <= 0 then return end
+    local isFever = fever and true or false
+    local rawPoints = basePoints
+    if rawPoints == nil then
+        rawPoints = isFever and (points / (Gladiator.feverMultiplier or 2)) or points
+    end
     self.pointEvents[#self.pointEvents + 1] = {
         time = self.stageTime,
         category = category,
         points = points,
+        basePoints = rawPoints,
         x = x or 0,
         y = y or 0,
-        fever = fever and true or false,
+        fever = isFever,
     }
 end
 
@@ -478,15 +484,36 @@ function Replay:recordFrame(dt, ship, camera, turret, enemies, gladiator, stage)
 end
 
 -- Pure analytical highlight window selection:
--- 1. Find 1.0s centered window with max points >= MIN_PEAK_RATE (100 pts/s).
--- 2. Select highest-scoring 6.0s window containing [peak - 1.0, peak + 1.0].
+-- 1. Find 1.0s centered window with max base points (excluding fever/score multipliers) >= MIN_PEAK_RATE (30 base pts/s).
+-- 2. Select highest-scoring (by base points) 6.0s window containing [peak - 1.0, peak + 1.0].
 -- 3. Place 0.5x slow-mo ramp block (1.25s source -> 2.25s playback, +1.0s) centered on peak -> 7.0s output.
 function Replay.selectHighlightWindow(pointEvents, minTime, maxTime)
     if not pointEvents or #pointEvents == 0 or not minTime or not maxTime or maxTime <= minTime then
         return nil
     end
 
-    local function sumPoints(lo, hi)
+    local function eventBasePoints(ev)
+        if ev.basePoints ~= nil then
+            return ev.basePoints
+        end
+        if ev.fever then
+            return ev.points / (Gladiator.feverMultiplier or 2)
+        end
+        return ev.points
+    end
+
+    local function sumBasePoints(lo, hi)
+        local total = 0
+        for i = 1, #pointEvents do
+            local ev = pointEvents[i]
+            if ev.time >= lo - 1e-6 and ev.time <= hi + 1e-6 then
+                total = total + eventBasePoints(ev)
+            end
+        end
+        return total
+    end
+
+    local function sumAwardedPoints(lo, hi)
         local total = 0
         for i = 1, #pointEvents do
             local ev = pointEvents[i]
@@ -503,7 +530,7 @@ function Replay.selectHighlightWindow(pointEvents, minTime, maxTime)
     local bestPeakTime = nil
     local t = minTime
     while t <= maxTime + 1e-6 do
-        local rate = sumPoints(t - 0.5, t + 0.5)
+        local rate = sumBasePoints(t - 0.5, t + 0.5)
         if rate > bestRate then
             bestRate = rate
             bestPeakTime = t
@@ -515,7 +542,7 @@ function Replay.selectHighlightWindow(pointEvents, minTime, maxTime)
     for i = 1, #pointEvents do
         local et = pointEvents[i].time
         if et >= minTime and et <= maxTime then
-            local rate = sumPoints(et - 0.5, et + 0.5)
+            local rate = sumBasePoints(et - 0.5, et + 0.5)
             if rate > bestRate then
                 bestRate = rate
                 bestPeakTime = et
@@ -544,7 +571,7 @@ function Replay.selectHighlightWindow(pointEvents, minTime, maxTime)
             local bestDist = math.huge
             local cand = minStart
             while cand <= maxStart + 1e-6 do
-                local score = sumPoints(cand, cand + clipDuration)
+                local score = sumBasePoints(cand, cand + clipDuration)
                 local centerDist = math.abs((cand + clipDuration * 0.5) - bestPeakTime)
                 if score > bestWindowScore or (score == bestWindowScore and centerDist < bestDist) then
                     bestWindowScore = score
@@ -585,7 +612,8 @@ function Replay.selectHighlightWindow(pointEvents, minTime, maxTime)
         clipDuration = clipDuration,
         peakTime = bestPeakTime,
         peakRate = bestRate,
-        clipPoints = sumPoints(clipStart, clipEnd),
+        clipBasePoints = sumBasePoints(clipStart, clipEnd),
+        clipPoints = sumAwardedPoints(clipStart, clipEnd),
         slowStart = slowStart,
         slowEnd = slowEnd,
         slowSourceDuration = slowSourceDur,
@@ -797,6 +825,7 @@ function Replay:extractClip(window)
                 time = ev.time,
                 category = ev.category,
                 points = ev.points,
+                basePoints = ev.basePoints,
                 x = ev.x,
                 y = ev.y,
                 fever = ev.fever,
@@ -842,7 +871,8 @@ function Replay:finalizeStage()
         if extracted then
             local better = (not self.bestClip)
                 or (extracted.peakRate > self.bestClip.peakRate)
-                or (extracted.peakRate == self.bestClip.peakRate and extracted.clipPoints > self.bestClip.clipPoints)
+                or (extracted.peakRate == self.bestClip.peakRate
+                    and (extracted.clipBasePoints or extracted.clipPoints) > (self.bestClip.clipBasePoints or self.bestClip.clipPoints))
             if better then
                 self.bestClip = extracted
             end
