@@ -142,7 +142,7 @@ local function beginStageClear()
     coinWallet = coinWallet + delta
     if enemies then
         enemies.items = {}
-        if enemies.fire then enemies.fire.items = {} end
+        if enemies.fire then enemies.fire:beginHarmlessExpiry() end
     end
     stageClearState = StageTransition.newStageClear(stage)
     setScreen("stageClear")
@@ -153,7 +153,7 @@ local function enterPlinkoStageEnd()
     local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
     lastGladiatorTotal = gladiator.total or 0
     coinWallet = coinWallet + delta
-    if enemies and enemies.fire then enemies.fire.items = {} end
+    if enemies and enemies.fire then enemies.fire:clear() end
     plinko = Plinko.new({
         stageNumber = stage and stage.number or 1,
         coins = coinWallet,
@@ -187,7 +187,7 @@ local function enterWarpSelect(keepExistingGates)
     inventoryReturnScreen = "warpSelect"
     if enemies then
         enemies.items = {}
-        if enemies.fire then enemies.fire.items = {} end
+        if enemies.fire then enemies.fire:clear() end
     end
     if not keepExistingGates or not warpGates then
         if ship then
@@ -216,11 +216,15 @@ local function completeWarpAndStartStage(gate)
     local bonusCoins = StageTransition.applyRewardOnArrival(reward, inventory, ship, coinWallet)
     coinWallet = coinWallet + bonusCoins
     enemies.items = {}
-    if enemies.fire then enemies.fire.items = {} end
+    if enemies.fire then enemies.fire:clear() end
     enemies.spawnAccumulator = 0.5
     stage:configureEnemies(enemies)
     warpState = nil
     warpGates = nil
+    if camera and ship then
+        camera.pullback = 0
+        camera:update(0, ship, width, height)
+    end
     syncInventoryBuild()
     savePermanentUnlocks()
     setScreen("playing")
@@ -487,6 +491,9 @@ function love.update(dt)
     time = time + dt
     if screen == "stageClear" then
         ship:update(dt, { turn = 0, thrust = false, brake = true, boost = false })
+        if enemies and enemies.fire then
+            enemies.fire:updateHarmless(dt)
+        end
         camera:update(dt, ship, width, height)
         local vx, vy = ship:worldVelocity()
         stars:update(dt, 90 + vx * 1.8, -210 + vy * 1.8, 0, width, height, 0)

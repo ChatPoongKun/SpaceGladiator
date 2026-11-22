@@ -18,6 +18,12 @@ function EnemyFire.new()
     return setmetatable({shots = {}, bursts = {}, impacts = {}}, EnemyFire)
 end
 
+function EnemyFire:clear()
+    self.shots = {}
+    self.bursts = {}
+    self.impacts = {}
+end
+
 local function bearing(enemy, targetX, targetY)
     local dx, dy = targetX - enemy.x, targetY - enemy.y
     if dx == 0 and dy == 0 then return enemy.angle - math.pi / 2, 0 end
@@ -354,30 +360,95 @@ function EnemyFire:update(dt, ship, gladiator)
     for _, shot in ipairs(self.shots) do shot.delay = 0 end
 end
 
+-- Mark all remaining projectiles as harmless on stage clear and stagger their
+-- expiration times so they visibly glide and dissipate sequentially without
+-- ever dealing damage to the player.
+function EnemyFire:beginHarmlessExpiry()
+    self.bursts = {}
+    local n = #self.shots
+    if n == 0 then return end
+
+    local ordered = {}
+    for i = 1, n do ordered[i] = self.shots[i] end
+    table.sort(ordered, function(a, b)
+        return (a.lifetime - a.age) < (b.lifetime - b.age)
+    end)
+
+    local maxSpan = math.min(0.95, 0.12 + 0.09 * n)
+    for i, shot in ipairs(ordered) do
+        local frac = n > 1 and ((i - 1) / (n - 1)) or 0
+        local delay = 0.12 + frac * math.max(0, maxSpan - 0.12)
+        shot.harmless = true
+        shot.harmlessStartAge = shot.age
+        shot.harmlessExpireAt = math.min(shot.lifetime, shot.age + delay)
+        shot.delay = 0
+    end
+end
+
+-- Advance harmless projectiles during stage-clear hold: no player collision or
+-- damage, no second-leg missile re-homing, and crisp sequential expiry rings.
+function EnemyFire:updateHarmless(dt)
+    if dt <= 0 then return end
+    for i = #self.impacts, 1, -1 do
+        local effect = self.impacts[i]
+        effect.age = effect.age + dt
+        if effect.age >= impactLifetime then table.remove(self.impacts, i) end
+    end
+
+    for i = #self.shots, 1, -1 do
+        local shot = self.shots[i]
+        local expireAt = shot.harmlessExpireAt or shot.lifetime
+        local step = math.min(dt, math.max(0, expireAt - shot.age))
+        if step > 0 then
+            moveShot(shot, step)
+        end
+        if shot.age >= expireAt - 1e-9 then
+            self.impacts[#self.impacts + 1] = {
+                x = shot.x, y = shot.y, age = 0, profile = shot.profile, dissipate = true,
+            }
+            table.remove(self.shots, i)
+        end
+    end
+end
+
 function EnemyFire:draw()
     local g = love.graphics
     g.push("all")
     for _, shot in ipairs(self.shots) do
         local profile = shot.profile
         local r, green, b = unpack(profile.color)
+        local fade = 1
+        if shot.harmless and shot.harmlessExpireAt then
+            local span = math.max(1e-4, shot.harmlessExpireAt - (shot.harmlessStartAge or 0))
+            local left = math.max(0, (shot.harmlessExpireAt - shot.age) / span)
+            fade = 0.25 + 0.55 * left
+            -- Desaturate slightly toward cool neutral so deactivated shots look clearly harmless
+            r = r * 0.65 + 0.22
+            green = green * 0.65 + 0.30
+            b = b * 0.65 + 0.34
+        end
         local length = math.sqrt(shot.vx * shot.vx + shot.vy * shot.vy)
         local dx, dy = 0, 0
         if length > 0 then dx, dy = shot.vx / length, shot.vy / length end
         local trail = math.min(profile.trail, profile.radius + length * shot.age)
         local tailX, tailY = shot.x - dx * trail, shot.y - dy * trail
         g.setLineWidth(profile.radius * 1.8)
-        g.setColor(r, green, b, 0.25)
+        g.setColor(r, green, b, 0.25 * fade)
         g.line(tailX, tailY, shot.x, shot.y)
         g.setLineWidth(profile == laser and 3 or 1.5)
-        g.setColor(r, green, b, 0.9)
+        g.setColor(r, green, b, 0.9 * fade)
         g.line(tailX, tailY, shot.x, shot.y)
-        g.setColor(1, 0.85, 0.75, 1)
+        g.setColor(1, 0.85, 0.75, fade)
         g.circle("fill", shot.x, shot.y, profile.radius * 0.55)
     end
     for _, effect in ipairs(self.impacts) do
         local progress = effect.age / impactLifetime
         local r, green, b = unpack(effect.profile.color)
-        if effect.shield then r, green, b = 0.30, 0.70, 1 end
+        if effect.shield then
+            r, green, b = 0.30, 0.70, 1
+        elseif effect.dissipate then
+            r, green, b = 0.68, 0.90, 1.0
+        end
         g.setLineWidth(1.5)
         g.setColor(r, green, b, 0.8 * (1 - progress))
         g.circle("line", effect.x, effect.y, 4 + progress * effect.profile.radius * 4)

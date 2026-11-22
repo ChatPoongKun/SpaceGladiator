@@ -83,17 +83,46 @@ local function runTests(Stage, Plinko, Inventory, Ship, Enemies, StageTransition
         local warp = StageTransition.newWarp(triggered, 2, testShip, 1280, 800, detRng)
         local peakSpeed = StageTransition.warpSpeedFactor(0.42)
         local arriveSpeed = StageTransition.warpSpeedFactor(0.95)
+        local endSpeed = StageTransition.warpSpeedFactor(1.0)
         assert(peakSpeed > 0.95 and arriveSpeed < 0.15, "Warp must cruise fast through starlight then slow down on arrival")
+        assert(endSpeed == 0 and endSpeed == endSpeed, "Warp speed factor at progress=1.0 must be finite 0, never NaN")
+        local Camera = require("camera")
+        local warpCam = Camera.new(testShip.x, testShip.y)
         local done = false
         for _ = 1, 180 do
-            if StageTransition.updateWarp(warp, 1 / 60, testShip, nil, nil, 1280, 800) then
+            if StageTransition.updateWarp(warp, 1 / 60, testShip, nil, warpCam, 1280, 800) then
                 done = true
                 break
             end
+            assert(warpCam.zoom == warpCam.zoom and warpCam.zoom > 0, "Camera zoom must stay finite throughout warp")
         end
         assert(done and warp.done, "Starlight warp must finish and hand off to the next stage")
+        assert(warpCam.zoom == warpCam.zoom and warpCam.zoom > 0 and warpCam.pullback == warpCam.pullback,
+            "Camera must remain finite after warp completion")
         assert(math.abs(testShip.x - 540) < 1e-3 and math.abs(testShip.y - 270) < 1e-3,
             "Ship must arrive smoothly at the center of the next arena")
+
+        -- Harmless sequential enemy projectile expiry on stage clear
+        local EnemyFire = require("enemy_fire")
+        local fire = EnemyFire.new()
+        local fakeLeader = { x = 300, y = 270, angle = 0, radius = 28, kind = 3 }
+        testShip.x, testShip.y = 540, 270
+        local shieldBefore, armorBefore = testShip.shield, testShip.armor
+        fire:shoot(fakeLeader, testShip) -- spawns 6 missiles
+        assert(#fire.shots == 6)
+        fire:beginHarmlessExpiry()
+        assert(#fire.bursts == 0)
+        local sawPartialExpiry = false
+        for _ = 1, 80 do
+            fire:updateHarmless(1 / 60)
+            if #fire.shots > 0 and #fire.shots < 6 then
+                sawPartialExpiry = true
+            end
+        end
+        assert(sawPartialExpiry, "Harmless stage-clear projectiles must expire sequentially rather than all at once")
+        assert(#fire.shots == 0, "All harmless projectiles must finish expiring during stage clear")
+        assert(testShip.shield == shieldBefore and testShip.armor == armorBefore,
+            "Harmless expiring projectiles must never deal damage to the player")
     end
 
     -- 6. Plinko featured reward override + 5-slot edge-weighted rarity distribution check

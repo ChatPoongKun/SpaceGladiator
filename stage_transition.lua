@@ -571,9 +571,9 @@ function StageTransition.warpSpeedFactor(progress)
         -- Sustained hyperspace starlight cruise
         return 1.0
     else
-        -- Smooth deceleration as we approach the next stage
-        local decelT = (p - 0.58) / 0.42
-        return math.pow(1 - decelT, 2.4)
+        -- Smooth deceleration as we approach the next stage (guard against tiny negative FP drift at p == 1)
+        local decelT = clamp((p - 0.58) / 0.42, 0, 1)
+        return math.pow(math.max(0, 1 - decelT), 2.4)
     end
 end
 

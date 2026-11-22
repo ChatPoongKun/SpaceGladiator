@@ -13,7 +13,9 @@ function Camera:update(dt, ship, width, height)
     local fit = math.min((width - 52) / Arena.width, (bottom - top) / Arena.height, 1.25)
     self.screenOffsetY = (top + bottom - height) * 0.5
     local easing = 1 - math.exp(-22 * dt)
-    self.pullback = self.pullback + (ship.boostLevel - self.pullback) * easing
+    local targetBoost = (type(ship.boostLevel) == "number" and ship.boostLevel == ship.boostLevel) and ship.boostLevel or 0
+    if self.pullback ~= self.pullback then self.pullback = 0 end
+    self.pullback = self.pullback + (targetBoost - self.pullback) * easing
     self.zoom = fit * (1 - 0.12 * self.pullback)
 
     local age = ship.boostHold + ship.boostFalloff - ship.boostRemaining
