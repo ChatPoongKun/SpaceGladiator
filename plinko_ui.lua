@@ -1,3 +1,4 @@
+local Sfx = require("sfx")
 -- Interactive Gladiator Coin Plinko UI overlay shown at the end of each stage.
 -- Supports investing 10 / 25 / 50 / ALL coins (dropped randomly across the full
 -- top width), opening the diamond grid inventory to equip newly won items,
@@ -9,6 +10,7 @@ PlinkoUI.__index = PlinkoUI
 function PlinkoUI.new()
     return setmetatable({
         hitRegions = {},
+        hoveredIndex = nil,
     }, PlinkoUI)
 end
 
@@ -237,13 +239,30 @@ function PlinkoUI:mousepressed(plinko, x, y, button)
                 plinko:invest(a.amount)
                 return "invested"
             elseif a.type == "openInventory" then
+                Sfx.play("ui_click")
                 return "openInventory"
             elseif a.type == "nextStage" then
+                Sfx.play("ui_click")
                 return "nextStage"
             end
         end
     end
     return nil
+end
+
+function PlinkoUI:mousemoved(x, y)
+    local found = nil
+    for i = #self.hitRegions, 1, -1 do
+        local r = self.hitRegions[i]
+        if pointInRect(x, y, r.x, r.y, r.w, r.h) then
+            found = i
+            break
+        end
+    end
+    if found and found ~= self.hoveredIndex then
+        Sfx.play("ui_hover")
+    end
+    self.hoveredIndex = found
 end
 
 return PlinkoUI

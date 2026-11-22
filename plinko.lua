@@ -7,6 +7,7 @@
 
 local ModulesData = require("modules_data")
 local ChipsData = require("chips_data")
+local Sfx = require("sfx")
 
 local Plinko = {}
 Plinko.__index = Plinko
@@ -213,6 +214,7 @@ function Plinko:invest(amount)
     self.coins = self.coins - spent
     self.invested = self.invested + spent
     self.dropQueue = self.dropQueue + spent
+    if spent > 0 then Sfx.play("plinko_drop") end
     return spent
 end
 
@@ -309,6 +311,7 @@ function Plinko:update(dt, inventory, ship)
                 if dot < 0 then
                     c.vx = (c.vx - 1.55 * dot * nx) + (self.rand() - 0.5) * 42
                     c.vy = (c.vy - 1.45 * dot * ny) * 0.72
+                    Sfx.play("plinko_peg")
                 end
             end
         end
@@ -318,9 +321,13 @@ function Plinko:update(dt, inventory, ship)
             local idx = math.max(1, math.min(Plinko.SLOT_COUNT, math.floor(c.x / slotW) + 1))
             local slot = self.slots[idx]
             slot.filled = slot.filled + 1
+            local ratio = math.min(1, slot.filled / math.max(1, slot.required))
             if not slot.claimed and slot.filled >= slot.required then
                 slot.claimed = true
+                Sfx.play("plinko_claim")
                 self:grantReward(slot, inventory, ship)
+            else
+                Sfx.play("plinko_slot", 0.90 + 0.45 * ratio)
             end
             table.remove(self.activeCoins, i)
         end

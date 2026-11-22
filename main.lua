@@ -107,6 +107,7 @@ local function enterPlinkoStageEnd()
         carryoverEnabled = false,
     })
     setScreen("plinko")
+    Sfx.play("stage_clear")
 end
 
 local function advanceToNextStage()
@@ -648,21 +649,41 @@ function love.keypressed(key, _, isRepeat)
 
     local menu = menus[screen]
     if menu then
-        if key == "up" then selectedButton = (selectedButton - 2) % #menu.buttons + 1
-        elseif key == "down" then selectedButton = selectedButton % #menu.buttons + 1
-        elseif key == "return" or key == "kpenter" then menu.buttons[selectedButton].action() end
+        if key == "up" then
+            selectedButton = (selectedButton - 2) % #menu.buttons + 1
+            Sfx.play("ui_hover")
+        elseif key == "down" then
+            selectedButton = selectedButton % #menu.buttons + 1
+            Sfx.play("ui_hover")
+        elseif key == "return" or key == "kpenter" then
+            Sfx.play("ui_click")
+            menu.buttons[selectedButton].action()
+        end
         return
     end
 
     if screen ~= "playing" then return end
     if key == "r" then startRun()
-    elseif key == "1" or key == "2" or key == "3" then turret.weapon = tonumber(key)
+    elseif key == "1" or key == "2" or key == "3" then turret.weapon = tonumber(key); Sfx.play("ui_hover")
     elseif key == "space" and (focused or testMode) then input.boost = true end
 end
 
 function love.mousemoved(x, y)
+    if screen == "inventory" and inventoryUI then
+        inventoryUI:mousemoved(x, y)
+        return
+    elseif screen == "plinko" and plinkoUI then
+        plinkoUI:mousemoved(x, y)
+        return
+    end
     local menu = menus[screen]
-    if menu then selectedButton = Menu.buttonAt(menu, width, height, x, y) or selectedButton end
+    if menu then
+        local hovered = Menu.buttonAt(menu, width, height, x, y)
+        if hovered and hovered ~= selectedButton then
+            selectedButton = hovered
+            Sfx.play("ui_hover")
+        end
+    end
 end
 
 function love.mousepressed(x, y, button)
@@ -698,6 +719,7 @@ function love.mousepressed(x, y, button)
     local index = Menu.buttonAt(menu, width, height, x, y)
     if index then
         selectedButton = index
+        Sfx.play("ui_click")
         menu.buttons[index].action()
     end
 end

@@ -4,6 +4,7 @@
 -- plugging support chips into module sockets.
 
 local Inventory = require("inventory")
+local Sfx = require("sfx")
 
 local InventoryUI = {}
 InventoryUI.__index = InventoryUI
@@ -15,6 +16,7 @@ function InventoryUI.new()
         selectedSocket = 1,
         message = "모듈이나 칩을 클릭해 배치·장착하세요. (R: 회전, TAB/ESC: 닫기)",
         hitRegions = {},
+        hoveredIndex = nil,
     }, InventoryUI)
 end
 
@@ -337,10 +339,12 @@ function InventoryUI:mousepressed(inv, x, y, button)
         if pointInRect(x, y, r.x, r.y, r.w, r.h) then
             local a = r.action
             if a.type == "close" then
+                Sfx.play("ui_click")
                 return "close"
             elseif a.type == "unlockCell" then
                 local ok = inv:unlockCell(a.r, a.c)
                 if ok then
+                    Sfx.play("ui_equip")
                     self.message = string.format("그리드 (%d,%d) 칸을 확장했습니다!", a.r, a.c)
                     return "changed"
                 end
@@ -348,15 +352,18 @@ function InventoryUI:mousepressed(inv, x, y, button)
                 if self.selectedChip then
                     local ok, reason = inv:equipChip(a.mod, a.socketIndex, self.selectedChip)
                     if ok then
+                        Sfx.play("ui_equip")
                         self.message = self.selectedChip.def.name .. " 장착 완료!"
                         self.selectedChip = nil
                         self.selectedModule = a.mod
                         return "changed"
                     else
+                        Sfx.play("ui_error")
                         self.message = "장착 불가: 대상 카테고리 불일치 (" .. tostring(reason) .. ")"
                     end
                 elseif a.mod.sockets[a.socketIndex] then
                     local removed = inv:unequipChip(a.mod, a.socketIndex)
+                    Sfx.play("ui_click")
                     self.message = removed.def.name .. " 칩을 분리했습니다."
                     self.selectedModule = a.mod
                     return "changed"
@@ -374,42 +381,51 @@ function InventoryUI:mousepressed(inv, x, y, button)
             elseif a.type == "stashModule" then
                 self.selectedModule = a.mod
                 self.selectedChip = nil
+                Sfx.play("ui_click")
                 self.message = a.mod.def.name .. " 선택됨 — 그리드 빈 칸을 클릭해 배치하세요."
                 return nil
             elseif a.type == "stashChip" then
                 self.selectedChip = a.chip
+                Sfx.play("ui_click")
                 self.message = a.chip.def.name .. " 선택됨 — 모듈 안의 소켓 원을 클릭해 장착하세요."
                 return nil
             elseif a.type == "gridCell" then
                 if self.selectedModule then
                     local ok, reason = inv:placeModule(self.selectedModule, a.r, a.c)
                     if ok then
+                        Sfx.play("ui_equip")
                         self.message = self.selectedModule.def.name .. " 배치 완료!"
                         return "changed"
                     else
+                        Sfx.play("ui_error")
                         self.message = "배치 불가: 공간이 부족하거나 잠긴 칸입니다 (" .. tostring(reason) .. ")"
                     end
                 end
                 return nil
             elseif a.type == "rotateSelected" and self.selectedModule then
                 if inv:rotateModule(self.selectedModule) then
+                    Sfx.play("ui_equip")
                     self.message = self.selectedModule.def.name .. " 회전 완료"
                     return "changed"
                 else
+                    Sfx.play("ui_error")
                     self.message = "현재 위치에서는 회전할 공간이 부족합니다."
                 end
                 return nil
             elseif a.type == "unlockLink" and self.selectedModule then
                 local ok = inv:unlockNextLink(self.selectedModule)
                 if ok then
+                    Sfx.play("ui_equip")
                     self.message = self.selectedModule.def.name .. " 링크 1개 연결 완료!"
                     return "changed"
                 else
+                    Sfx.play("ui_error")
                     self.message = "이미 모든 링크가 연결되어 있습니다."
                 end
                 return nil
             elseif a.type == "unplaceSelected" and self.selectedModule then
                 if self.selectedModule.row then
+                    Sfx.play("ui_click")
                     inv:removeModule(self.selectedModule, true)
                     self.message = self.selectedModule.def.name .. "을(를) 보관함으로 이동했습니다."
                     return "changed"
@@ -434,6 +450,21 @@ function InventoryUI:keypressed(inv, key)
         end
     end
     return nil
+end
+
+function InventoryUI:mousemoved(x, y)
+    local found = nil
+    for i = #self.hitRegions, 1, -1 do
+        local r = self.hitRegions[i]
+        if pointInRect(x, y, r.x, r.y, r.w, r.h) then
+            found = i
+            break
+        end
+    end
+    if found and found ~= self.hoveredIndex then
+        Sfx.play("ui_hover")
+    end
+    self.hoveredIndex = found
 end
 
 return InventoryUI

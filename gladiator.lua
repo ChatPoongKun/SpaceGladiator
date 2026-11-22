@@ -1,3 +1,4 @@
+local Sfx = require("sfx")
 local Gladiator = {}
 Gladiator.__index = Gladiator
 
@@ -134,6 +135,7 @@ end
 
 function Gladiator:startFever(x, y)
     self.feverActive = true
+    Sfx.play("fever_start")
     self.feverDuration = 0
     self.feverPoints = 0
     self.recentGains = {}
@@ -192,7 +194,7 @@ function Gladiator:recordMissileDodge(clearance, relativeSpeed, x, y)
     if (relativeSpeed or 0) < self.minRelativeSpeed then return 0 end
     local points = Gladiator.evasionPoints(clearance, self.missileMargin, relativeSpeed)
     local awarded = self:award("missileDodge", points, "MISSILE DODGE", x, y)
-    if awarded > 0 then self.evasionCount = (self.evasionCount or 0) + 1 end
+    if awarded > 0 then self.evasionCount = (self.evasionCount or 0) + 1; Sfx.play("evasion") end
     return awarded
 end
 
@@ -200,7 +202,7 @@ function Gladiator:recordAerobatics(clearance, relativeSpeed, x, y)
     if (relativeSpeed or 0) < self.minRelativeSpeed then return 0 end
     local points = Gladiator.evasionPoints(clearance, self.aerobaticsMargin, relativeSpeed)
     local awarded = self:award("aerobatics", points, "AEROBATICS", x, y)
-    if awarded > 0 then self.evasionCount = (self.evasionCount or 0) + 1 end
+    if awarded > 0 then self.evasionCount = (self.evasionCount or 0) + 1; Sfx.play("evasion") end
     return awarded
 end
 

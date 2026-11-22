@@ -99,7 +99,7 @@ end
 function Ship:takeDamage(amount)
     if amount <= 0 or self:isDestroyed() or (self.invulnTimer or 0) > 0 then return end
     self.damageCount = (self.damageCount or 0) + 1
-    Sfx.play("impact")
+    Sfx.play("player_hit")
     if self:hasShield() then
         local absorbed = math.min(self.shield, amount)
         self.shield = self.shield - absorbed
@@ -111,6 +111,7 @@ function Ship:takeDamage(amount)
 
     self.hull = math.max(0, self.hull - 1)
     if self:isDestroyed() then
+        Sfx.play("ship_destroy")
         self.destructionAge = 0
         self.vx, self.vy, self.wrapVx, self.wrapVy = 0, 0, 0, 0
         self.accelerating, self.braking = false, false
