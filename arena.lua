@@ -1,4 +1,11 @@
-local Arena = { width = 1080, height = 540 }
+local Arena = { width = 1280, height = 800, baseWidth = 1280, baseHeight = 800 }
+
+function Arena.resize(w, h)
+    if not w or not h or w <= 0 or h <= 0 then return end
+    local scale = math.min(w / Arena.baseWidth, h / Arena.baseHeight)
+    Arena.width = w / scale
+    Arena.height = h / scale
+end
 
 function Arena.draw(boost, fever)
     local g = love.graphics

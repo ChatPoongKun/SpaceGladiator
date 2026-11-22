@@ -8,10 +8,8 @@ function Camera.new(x, y)
 end
 
 function Camera:update(dt, ship, width, height)
-    -- Keep the entire room between the upper telemetry and the lower instruments.
-    local top, bottom = 122, height - 199
-    local fit = math.min((width - 52) / Arena.width, (bottom - top) / Arena.height, 1.25)
-    self.screenOffsetY = (top + bottom - height) * 0.5
+    local fit = math.min(width / Arena.width, height / Arena.height)
+    self.screenOffsetY = 0
     local easing = 1 - math.exp(-22 * dt)
     local targetBoost = (type(ship.boostLevel) == "number" and ship.boostLevel == ship.boostLevel) and ship.boostLevel or 0
     if self.pullback ~= self.pullback then self.pullback = 0 end

@@ -36,14 +36,13 @@ local gameOverHold = 1.25
 local displayFile = "fullscreen.txt"
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay = false, false, false, false, false, false, false
+local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay, testFullscreen = false, false, false, false, false, false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
-local weaponNames = { "PROJECTILE", "MISSILE", "LASER" }
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay) then return defaultErrorHandler(message) end
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
@@ -407,6 +406,7 @@ function love.load(args)
         if arg == "--test-inventory" then testInventory = true end
         if arg == "--test-plinko" then testPlinko = true end
         if arg == "--test-replay" then testReplay = true end
+        if arg == "--test-fullscreen" then testFullscreen = true end
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
@@ -417,6 +417,7 @@ function love.load(args)
         love.window.setFullscreen(true, "desktop")
     end
     width, height = love.graphics.getDimensions()
+    Arena.resize(width, height)
     local menuFont = "assets/fonts/DriftMenu.ttf"
     fonts = {
         small = love.graphics.newFont(11),
@@ -448,6 +449,11 @@ function love.load(args)
     end
     if testReplay then
         require("tests.replay")(Replay, ReplayExport)
+        love.event.quit(0)
+        return
+    end
+    if testFullscreen then
+        require("tests.fullscreen_arena")
         love.event.quit(0)
         return
     end
@@ -676,55 +682,15 @@ function love.update(dt)
     end
 end
 
-local function label(text, x, y, alpha)
-    love.graphics.setFont(fonts.small)
-    love.graphics.setColor(0.53, 0.65, 0.75, alpha or 1)
-    love.graphics.print(text, x, y)
-end
-
-local function keycap(key, text, x, y, active)
-    local g = love.graphics
-    local keyWidth = key == "SPACE" and 48 or 27
-    g.setColor(0.10, 0.19, 0.24, active and 0.95 or 0.45)
-    g.rectangle("fill", x, y, keyWidth, 27, 5, 5)
-    g.setColor(0.34, 0.70, 0.76, active and 0.9 or 0.24)
-    g.rectangle("line", x, y, keyWidth, 27, 5, 5)
-    g.setFont(fonts.body)
-    g.setColor(0.75, 0.91, 0.96, 1)
-    g.printf(key, x, y + 6, keyWidth, "center")
-    g.setColor(0.53, 0.65, 0.75, 1)
-    g.print(text, x + keyWidth + 9, y + 6)
-end
-
 local function drawHud()
     local g = love.graphics
-    -- Keep telemetry legible when enemies or explosions pass behind it.
-    g.setColor(0.018, 0.028, 0.055, 0.72)
-    g.rectangle("fill", 0, 0, width, 104)
-    g.setColor(0.25, 0.47, 0.58, 0.16)
-    g.setLineWidth(1)
-    g.line(32, 103, width - 32, 103)
-    g.setFont(fonts.title)
-    g.setColor(0.83, 0.93, 0.97, 1)
-    g.print("D R I F T", 32, 25)
-    if screen == "warpSelect" then
-        g.setFont(fonts.small)
-        g.setColor(0.46, 0.95, 0.78, 1)
-        g.print(string.format("STAGE %02d  /  WARP GATE OPEN", stage and stage.number or 1), 34, 66)
-    elseif stage and stage:isOvertime() then
-        g.setFont(fonts.small)
-        g.setColor(1.0, 0.78, 0.34, 1)
-        g.print(string.format("STAGE %02d  /  CLEAR HOSTILES", stage.number), 34, 66)
-    else
-        label(stage and string.format("STAGE %02d  /  %.1fS", stage.number, stage:remainingTime()) or "04  /  TACTICAL FLIGHT", 34, 66)
-    end
-    if screen == "playing" and stage and stage.featuredReward then
-        local rc = stage.featuredReward.color or { 0.48, 0.92, 1.0 }
-        g.setFont(fonts.small)
-        g.setColor(rc[1], rc[2], rc[3], 0.92)
-        g.print("BONUS  /  " .. stage.featuredReward.short, 34, 83)
-    end
     local gx, gw = math.floor(width / 2) - 115, 230
+    -- Subtle compact backing keeps Gladiator Points legible over the full-screen battlefield.
+    g.setColor(0.018, 0.028, 0.055, 0.62)
+    g.rectangle("fill", gx - 10, 16, gw + 20, 88, 8, 8)
+    g.setColor(0.25, 0.47, 0.58, 0.24)
+    g.setLineWidth(1)
+    g.rectangle("line", gx - 10, 16, gw + 20, 88, 8, 8)
     g.setFont(fonts.small)
     if gladiator.feverActive then
         local pulse = 0.78 + 0.22 * math.sin(time * 14)
@@ -781,38 +747,8 @@ local function drawHud()
             end
         end
     end
-    local sx = width - 232
-    label("HOSTILES  /  DESTROYED", sx, 29)
-    g.setFont(fonts.title)
-    g.setColor(0.86, 0.91, 0.93, 1)
-    g.print(string.format("%02d  /  %03d", #enemies.items, enemies.kills), sx, 46)
 
     hud:draw(ship, width, height, time)
-    local y = height - 183
-    label("FLIGHT CONTROLS", 24, y - 12)
-    keycap("W", "THRUST", 24, y + 4, ship.accelerating)
-    keycap("S", "BRAKE", 24, y + 33, ship.braking)
-    keycap("A/D", "ROTATE", 24, y + 62, input.turn ~= 0)
-    keycap("SPACE", "BOOST", 24, y + 91, ship.boostLevel > 0)
-    keycap("1-3", turret.weapon .. " / " .. weaponNames[turret.weapon], 24, y + 120, true)
-    keycap("LMB", "FIRE", 24, y + 149, firing)
-
-    local mode = ship.braking and "BRAKING" or ship.accelerating and "THRUST" or "COAST"
-    if ship.boostLevel > 0 then mode = "BOOST" end
-    if screen == "warpSelect" then
-        mode = ship.boostLevel > 0 and "BOOST" or "WARP READY"
-    elseif (screen ~= "playing" and screen ~= "stageClear") or not focused then
-        mode = "PAUSED"
-    end
-    if ship:isDestroyed() then mode = "DESTROYED" end
-    local mx = width - 180
-    g.setColor(0.38, 0.91, 0.78, 0.85)
-    g.circle("fill", mx, y + 14, 3)
-    label(mode, mx + 12, y + 8)
-    label(string.format("ZOOM  %d%%", math.floor(camera.zoom * 100 + 0.5)), mx - 3, y + 59)
-    label("TAB / I  GRID", mx - 3, height - 85)
-    label("R  RESET", mx - 3, height - 63)
-    label("ESC / P  PAUSE", mx - 3, height - 41)
 end
 
 local function wrapOffsets(position, extent, reach)
@@ -1127,6 +1063,29 @@ end
 
 function love.resize(w, h)
     width, height = w, h
+    local prevW, prevH = Arena.width, Arena.height
+    Arena.resize(w, h)
+    if ship and prevW > 0 and prevH > 0 then
+        local sx, sy = Arena.width / prevW, Arena.height / prevH
+        ship.x, ship.y = ship.x * sx, ship.y * sy
+        if ship.prevX then ship.prevX = ship.prevX * sx end
+        if ship.prevY then ship.prevY = ship.prevY * sy end
+    end
+    if warpGates and warpGates.gates and prevW > 0 and prevH > 0 then
+        local sx, sy = Arena.width / prevW, Arena.height / prevH
+        warpGates.arenaW, warpGates.arenaH = Arena.width, Arena.height
+        for _, gate in ipairs(warpGates.gates) do
+            if gate.edge == "top" then
+                gate.x, gate.y = gate.x * sx, 0
+            elseif gate.edge == "bottom" then
+                gate.x, gate.y = gate.x * sx, Arena.height
+            elseif gate.edge == "left" then
+                gate.x, gate.y = 0, gate.y * sy
+            else
+                gate.x, gate.y = Arena.width, gate.y * sy
+            end
+        end
+    end
     stars:resize(w, h)
     if replay and replay.stars then replay.stars:resize(w, h) end
     if camera then camera:update(0, ship, w, h) end

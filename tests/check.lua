@@ -178,11 +178,28 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
         camera:update(1 / 60, ship, w, h)
         local left, top = camera:worldToScreen(0, 0, w, h)
         local right, bottom = camera:worldToScreen(width, height, w, h)
-        check(left >= 0 and top >= 104 and right <= w and bottom <= h - 190,
+        check(left >= 0 and top >= 0 and right <= w and bottom <= h,
             "All arena boundaries must stay visible during the boost at both supported viewport sizes")
         local aimX, aimY = camera:screenToWorld(w * 0.8, h * 0.35, w, h)
         local x, y = camera:worldToScreen(aimX, aimY, w, h)
         check(near(x, w * 0.8) and near(y, h * 0.35), "Aiming must account for the boost camera")
+    end
+
+    -- Verify full-screen arena expansion across standard, widescreen, and compact viewports.
+    do
+        local prevW, prevH = Arena.width, Arena.height
+        local idleShip = Ship.new(width, height)
+        for _, viewport in ipairs({{1280, 800}, {1920, 1080}, {800, 600}}) do
+            local w, h = unpack(viewport)
+            Arena.resize(w, h)
+            local fullCam = Camera.new(Arena.width / 2, Arena.height / 2)
+            fullCam:update(0, idleShip, w, h)
+            local left, top = fullCam:worldToScreen(0, 0, w, h)
+            local right, bottom = fullCam:worldToScreen(Arena.width, Arena.height, w, h)
+            check(near(left, 0) and near(top, 0) and near(right, w) and near(bottom, h),
+                "Battlefield must expand to fill the entire screen at " .. w .. "x" .. h)
+        end
+        Arena.width, Arena.height = prevW, prevH
     end
 
     ship = Ship.new(1280, 800)
@@ -501,6 +518,53 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
         love.graphics.line = originalLine
         check(ok and enemies.kills == 0 and laser.shotsHit == 0 and endX and endX > 0 and endX < 1280 and near(endY, 0),
             "The laser must leave offscreen targets intact and follow the current screen edge: " .. tostring(message))
+    end
+
+    -- Verify enemies outside the screen cannot be damaged by any weapon (projectile, missile blast, laser, or homing).
+    do
+        local w, h = 1280, 800
+        local prevW, prevH = Arena.width, Arena.height
+        Arena.resize(w, h)
+        local edgeShip = Ship.new(Arena.width, Arena.height)
+        edgeShip.x, edgeShip.y = Arena.width - 40, Arena.height * 0.5
+        local screenCam = Camera.new(Arena.width * 0.5, Arena.height * 0.5)
+        screenCam:update(0, edgeShip, w, h)
+
+        -- 1. Projectile flying off-screen must not hit off-screen enemy, even if near the edge.
+        local offEnemies = Enemies.new()
+        offEnemies.items = { target(Arena.width + 12, edgeShip.y, 24), target(Arena.width + 120, edgeShip.y, 24) }
+        local projTurret = Turret.new(math.pi / 2)
+        projTurret.weapon = 1
+        projTurret:fire(edgeShip, Arena.width + 200, edgeShip.y, offEnemies, 0, screenCam, w, h)
+        for _ = 1, 30 do
+            projTurret:update(1 / 60, edgeShip, Arena.width + 200, edgeShip.y, false, offEnemies, screenCam, w, h)
+        end
+        check(offEnemies.kills == 0 and #offEnemies.items == 2,
+            "Projectiles must not hit enemies outside the screen")
+
+        -- 2. Missile blast near the screen edge must not damage off-screen enemies, while still hitting on-screen ones.
+        local onEnemy = target(Arena.width - 20, edgeShip.y, 16)
+        local offBlastEnemy = target(Arena.width + 15, edgeShip.y, 24)
+        offEnemies.items = { onEnemy, offBlastEnemy }
+        local rocketTurret = Turret.new(math.pi / 2)
+        rocketTurret.weapon = 2
+        rocketTurret:update(0.01, edgeShip, Arena.width - 10, edgeShip.y, true, offEnemies, screenCam, w, h)
+        for _ = 1, 60 do
+            rocketTurret:update(1 / 60, edgeShip, Arena.width - 10, edgeShip.y, false, offEnemies, screenCam, w, h)
+        end
+        check(offEnemies.kills == 1 and #offEnemies.items == 1 and offEnemies.items[1] == offBlastEnemy,
+            "Missile blast must hit on-screen enemies while leaving off-screen enemies unharmed")
+
+        -- 3. Laser aimed at an enemy whose center is outside the screen edge must not hit it.
+        local edgeLaserEnemies = Enemies.new()
+        edgeLaserEnemies.items = { target(Arena.width + 8, edgeShip.y, 24) }
+        local laserTurret = Turret.new(math.pi / 2)
+        laserTurret.weapon = 3
+        laserTurret:update(0.01, edgeShip, Arena.width + 8, edgeShip.y, true, edgeLaserEnemies, screenCam, w, h)
+        check(edgeLaserEnemies.kills == 0 and #edgeLaserEnemies.items == 1,
+            "Laser must not hit enemies whose center lies outside the screen")
+
+        Arena.width, Arena.height = prevW, prevH
     end
     enemyGroup:draw(1)
 

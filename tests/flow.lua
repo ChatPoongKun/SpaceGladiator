@@ -54,6 +54,19 @@ return function(state)
     click("게임 시작")
     local screen, ship, enemies, turret, gladiator = state()
     assert(screen == "playing" and not love.mouse.isVisible())
+    do
+        local hudPoints, hudValues = drawText()
+        assert(not hudPoints["D R I F T"], "Top title must be removed from gameplay HUD")
+        assert(not hudPoints["HOSTILES  /  DESTROYED"], "Top kill count must be removed from gameplay HUD")
+        assert(not hudPoints["FLIGHT CONTROLS"], "Left control guide must be removed from gameplay HUD")
+        assert(not hudPoints["TAB / I  GRID"] and not hudPoints["R  RESET"] and not hudPoints["ESC / P  PAUSE"],
+            "Right control guide must be removed from gameplay HUD")
+        local hasGladiator = false
+        for _, text in pairs(hudValues) do
+            if tostring(text):find("GLADIATOR", 1, true) then hasGladiator = true end
+        end
+        assert(hasGladiator, "Top Gladiator Points display must remain visible")
+    end
     love.update(0.05)
     assert(#turret.missiles == 0, "Starting the run must not also fire a weapon")
     local function fireVolley()

@@ -1070,14 +1070,13 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
     end
 
     -- Reconstruct camera matching target viewport size
-    local top, bottom = 122, height - 199
-    local fit = math.min((width - 52) / Arena.width, (bottom - top) / Arena.height, 1.25)
+    local fit = math.min(width / Arena.width, height / Arena.height)
     local pullback = lerp(f0.camPullback, f1.camPullback, alpha)
     local cam = setmetatable({
         x = lerp(f0.camX, f1.camX, alpha),
         y = lerp(f0.camY, f1.camY, alpha),
         zoom = fit * (1 - 0.12 * pullback),
-        screenOffsetY = (top + bottom - height) * 0.5,
+        screenOffsetY = 0,
         pullback = pullback,
     }, require("camera"))
 
