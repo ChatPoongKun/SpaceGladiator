@@ -20,13 +20,10 @@ return function(Ship, Enemies, Camera, check)
         group:update(dt, ship)
         check(#group.fire.shots == 0, "Choosing the first waypoint must not trigger enemy fire")
         enemy.goal = {x = enemy.x, y = enemy.y}
-        for _ = 1, 120 do
-            group:update(dt, ship)
-            if #group.fire.shots > 0 then break end
-        end
+        group:update(dt, ship)
         local aimX, aimY = ship.x, ship.y
-        check(#group.fire.shots == 1 and #group.fire.bursts == 1 and enemy:speed() == 0,
-            "A WEDGE must stop and launch its first bullet on arrival")
+        check(#group.fire.shots == 1 and #group.fire.bursts == 1 and not enemy.braking,
+            "A WEDGE must launch its first bullet immediately on arrival without stopping")
         ship.y = ship.y + 100
         group:update(0.1, ship)
         check(#group.fire.shots == 1, "The WEDGE follow-up rounds must wait for their burst spacing")

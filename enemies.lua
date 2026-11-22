@@ -16,21 +16,21 @@ Enemies.patrolDuration = 10
 Enemies.types = {
     {
         name = "WEDGE", vertices = {0, -15, 10, 10, 0, 5, -10, 10},
-        radius = 16, evadeSpeed = 94, turnSpeed = 3.2,
-        thrust = 285, brake = 4.2, maxSpeed = 500,
+        radius = 16, evadeSpeed = 94, turnSpeed = 3.0,
+        thrust = 285, brake = 5.0, maxSpeed = 500,
         patrolMin = 55, patrolMax = 110, arrivalRadius = 32,
         combatPower = 40,
     },
     {
         name = "EQUILATERAL", vertices = {0, -24, -12 * math.sqrt(3), 12, 12 * math.sqrt(3), 12},
         radius = 24, evadeSpeed = 78,
-        turnSpeed = 2.8, thrust = 255, brake = 2.6, maxSpeed = 320,
+        turnSpeed = 3.5, thrust = 255, brake = 2.5, maxSpeed = 320,
         patrolMin = 120, patrolMax = 185, arrivalRadius = 40,
         combatPower = 70,
     },
     {
         name = "OBTUSE", vertices = {0, -12, -26, 10, 26, 10},
-        radius = 28, evadeSpeed = 62, turnSpeed = 1.4, thrust = 218, brake = 1.25, maxSpeed = 200,
+        radius = 28, evadeSpeed = 62, turnSpeed = 2.5, thrust = 218, brake = 4.0, maxSpeed = 200,
         patrolMin = 195, patrolMax = 290, arrivalRadius = 48,
         combatPower = 100,
     },
@@ -291,17 +291,15 @@ local function prepareWingPass(group, enemy, dt, ship, definition)
     end
     if enemy.goal.state == "holding" or (enemy.goal.state == "flying" and atWaypoint(enemy, definition)) then
         local wingman = enemy.wingman
-        local aim = attacking and angleToShip(enemy, ship) or enemy.angle
-        if attacking and wingman.goal and wingman.goal.state == "holding"
-            and enemy:speed() == 0 and math.abs(turnError(enemy, aim)) <= attackAlignment then
+        if attacking and wingman.goal and wingman.goal.state == "holding" then
             wave.burst = group.fire:shoot(enemy, ship)
             wave.attacker = wingman
             -- The first round fixes the next intercept. The last round clears both ships to move.
             wingman.goal = wingWaypoint(group, wingman, ship, true)
             enemy.goal = wingWaypoint(group, enemy, ship, false)
-            enemy.goal.firingAngle = aim
         else
             enemy.goal.state = "holding"
+            local aim = attacking and angleToShip(enemy, ship) or enemy.angle
             pilot(enemy, dt, 0, 0, aim, true)
             return false
         end
@@ -309,11 +307,7 @@ local function prepareWingPass(group, enemy, dt, ship, definition)
     local goal = enemy.goal
     if goal.state ~= "flying" then
         local bearing = math.atan2(goal.x - enemy.x, enemy.y - goal.y)
-        if wave.burst then
-            pilot(enemy, dt, 0, 0, goal.firingAngle or bearing, true)
-            return false
-        end
-        if math.abs(turnError(enemy, bearing)) > wingAlignment then
+        if wave.burst or math.abs(turnError(enemy, bearing)) > wingAlignment then
             pilot(enemy, dt, 0, 0, bearing, true)
             return false
         end
@@ -329,32 +323,41 @@ local function patrol(group, enemy, dt, ship, aimAngle, definition)
     else
         if not enemy.goal then
             enemy.goal = chooseWaypoint(group, enemy, ship, definition)
-        elseif enemy.goal.state ~= "aiming" and enemy.goal.state ~= "firing" and atWaypoint(enemy, definition) then
-            enemy.goal.state = "aiming"
-        end
+        elseif enemy.kind == 1 then
+            if atWaypoint(enemy, definition) then
+                group.fire:shoot(enemy, ship)
+                enemy.goal = chooseWaypoint(group, enemy, ship, definition)
+            end
+        else
+            if enemy.goal.state ~= "aiming" and enemy.goal.state ~= "firing" and atWaypoint(enemy, definition) then
+                enemy.goal.state = "aiming"
+            end
 
-        if enemy.goal.state == "aiming" then
-            local aim = angleToShip(enemy, ship)
-            if enemy:speed() == 0 and math.abs(turnError(enemy, aim)) <= attackAlignment then
-                local burst = group.fire:shoot(enemy, ship)
-                if burst and burst.remaining > 0 then
-                    enemy.goal.state = "firing"
-                    enemy.goal.burst = burst
-                    enemy.goal.aimAngle = aim
+            if enemy.goal.state == "aiming" then
+                local aim = angleToShip(enemy, ship)
+                local ready = math.abs(turnError(enemy, aim)) <= attackAlignment
+                    and (enemy.kind ~= 3 or enemy:speed() == 0)
+                if ready then
+                    local burst = group.fire:shoot(enemy, ship)
+                    if burst and burst.remaining > 0 then
+                        enemy.goal.state = "firing"
+                        enemy.goal.burst = burst
+                        enemy.goal.aimAngle = aim
+                        pilot(enemy, dt, 0, 0, aim, true)
+                        return
+                    end
+                    enemy.goal = chooseWaypoint(group, enemy, ship, definition)
+                else
                     pilot(enemy, dt, 0, 0, aim, true)
                     return
                 end
+            elseif enemy.goal.state == "firing" then
+                if enemy.goal.burst and enemy.goal.burst.remaining > 0 then
+                    pilot(enemy, dt, 0, 0, enemy.goal.aimAngle or angleToShip(enemy, ship), true)
+                    return
+                end
                 enemy.goal = chooseWaypoint(group, enemy, ship, definition)
-            else
-                pilot(enemy, dt, 0, 0, aim, true)
-                return
             end
-        elseif enemy.goal.state == "firing" then
-            if enemy.goal.burst and enemy.goal.burst.remaining > 0 then
-                pilot(enemy, dt, 0, 0, enemy.goal.aimAngle or angleToShip(enemy, ship), true)
-                return
-            end
-            enemy.goal = chooseWaypoint(group, enemy, ship, definition)
         end
     end
 
@@ -604,12 +607,35 @@ function Enemies:destroy(index)
     end
 end
 
-function Enemies:hitArea(x, y, radius, fraction)
+local function resolveView(group, viewOrCamera, width, height)
+    if viewOrCamera then
+        if viewOrCamera.screenToWorld and width and height then
+            local left, top = viewOrCamera:screenToWorld(0, 0, width, height)
+            local right, bottom = viewOrCamera:screenToWorld(width, height, width, height)
+            return left, top, right, bottom
+        elseif viewOrCamera.left then
+            return viewOrCamera.left, viewOrCamera.top, viewOrCamera.right, viewOrCamera.bottom
+        end
+    end
+    local view = group.view
+    return view.left, view.top, view.right, view.bottom
+end
+
+function Enemies:isOnScreen(x, y, viewOrCamera, width, height)
+    local left, top, right, bottom = resolveView(self, viewOrCamera, width, height)
+    local eps = 1e-6
+    return x >= left - eps and x <= right + eps and y >= top - eps and y <= bottom + eps
+end
+
+function Enemies:hitArea(x, y, radius, fraction, viewOrCamera, width, height)
+    local left, top, right, bottom = resolveView(self, viewOrCamera, width, height)
+    local eps = 1e-6
     local hit = false
     for i = #self.items, 1, -1 do
         local enemy = self.items[i]
-        local ex, ey = positionAt(enemy, fraction)
-        if (ex - x) ^ 2 + (ey - y) ^ 2 <= (radius + enemy.radius) ^ 2 then
+        local ex, ey = positionAt(enemy, fraction or 1)
+        if ex >= left - eps and ex <= right + eps and ey >= top - eps and ey <= bottom + eps
+            and (ex - x) ^ 2 + (ey - y) ^ 2 <= (radius + enemy.radius) ^ 2 then
             self:destroy(i)
             hit = true
         end
@@ -617,17 +643,40 @@ function Enemies:hitArea(x, y, radius, fraction)
     return hit
 end
 
-function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction)
+function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCamera, width, height)
     startFraction, endFraction = startFraction or 0, endFraction or 1
+    local left, top, right, bottom = resolveView(self, viewOrCamera, width, height)
+    local eps = 1e-6
     local dx, dy = x2 - x1, y2 - y1
+    local near, far = Collision.rectangleInterval(
+        x1 - (left - eps), y1 - (top - eps), dx, dy,
+        (right - left) + 2 * eps, (bottom - top) + 2 * eps)
+    local segStart, segEnd = math.max(0, near), math.min(1, far)
+    if segStart > segEnd then return nil end
+
+    local cx1, cy1 = x1 + dx * segStart, y1 + dy * segStart
+    local span = segEnd - segStart
+    local cdx, cdy = dx * span, dy * span
+    local fStart = startFraction + (endFraction - startFraction) * segStart
+    local fEnd = startFraction + (endFraction - startFraction) * segEnd
+
     local nearest, hitIndex = math.huge, nil
     for i, enemy in ipairs(self.items) do
-        local startX, startY = positionAt(enemy, startFraction)
-        local endX, endY = positionAt(enemy, endFraction)
-        local rx, ry = x1 - startX, y1 - startY
-        local vx, vy = dx - (endX - startX), dy - (endY - startY)
-        local t = Collision.circleEntry(rx, ry, vx, vy, enemy.radius + 2)
-        if t and t < nearest then nearest, hitIndex = t, i end
+        local startX, startY = positionAt(enemy, fStart)
+        local endX, endY = positionAt(enemy, fEnd)
+        local rx, ry = cx1 - startX, cy1 - startY
+        local vx, vy = cdx - (endX - startX), cdy - (endY - startY)
+        local localT = Collision.circleEntry(rx, ry, vx, vy, enemy.radius + 2)
+        if localT then
+            local t = segStart + span * localT
+            if t < nearest then
+                local ex = startX + (endX - startX) * localT
+                local ey = startY + (endY - startY) * localT
+                if ex >= left - eps and ex <= right + eps and ey >= top - eps and ey <= bottom + eps then
+                    nearest, hitIndex = t, i
+                end
+            end
+        end
     end
     if hitIndex then
         self:destroy(hitIndex)
