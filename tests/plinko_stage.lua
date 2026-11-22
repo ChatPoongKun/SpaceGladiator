@@ -79,28 +79,58 @@ local function runTests(Stage, Plinko, Inventory, Ship, Enemies, StageTransition
         local triggered = StageTransition.checkGateTrigger(gatesState, testShip)
         assert(triggered == targetGate, "Flying into a boundary gate must trigger warp to next stage")
 
-        -- Starlight warp speeds up then slows down smoothly as arriving at next stage
+        -- Starlight warp accelerates in the ship's thrust direction (not the boundary edge direction)
+        local thrustAngle = (triggered.angle + 0.85) % (math.pi * 2)
+        local expectedDirX, expectedDirY = math.sin(thrustAngle), -math.cos(thrustAngle)
+        testShip.angle = thrustAngle
         local warp = StageTransition.newWarp(triggered, 2, testShip, 1280, 800, detRng)
+        assert(math.abs(warp.angle - thrustAngle) < 1e-6, "Warp angle must follow ship thrust heading")
+        assert(math.abs(warp.dirX - expectedDirX) < 1e-6 and math.abs(warp.dirY - expectedDirY) < 1e-6,
+            "Warp acceleration vector must follow ship thrust direction rather than boundary normal")
         local peakSpeed = StageTransition.warpSpeedFactor(0.42)
         local arriveSpeed = StageTransition.warpSpeedFactor(0.95)
         local endSpeed = StageTransition.warpSpeedFactor(1.0)
         assert(peakSpeed > 0.95 and arriveSpeed < 0.15, "Warp must cruise fast through starlight then slow down on arrival")
         assert(endSpeed == 0 and endSpeed == endSpeed, "Warp speed factor at progress=1.0 must be finite 0, never NaN")
         local Camera = require("camera")
+        local Starfield = require("starfield")
         local warpCam = Camera.new(testShip.x, testShip.y)
+        local warpStars = Starfield.new(1280, 800, detRng)
+        warp.streaks[1].nx, warp.streaks[1].ny, warp.streaks[1].depth = 0.5, 0.5, 1.0
         local done = false
-        for _ = 1, 180 do
-            if StageTransition.updateWarp(warp, 1 / 60, testShip, nil, warpCam, 1280, 800) then
+        for frame = 1, 180 do
+            local prevSx = warp.streaks[1].nx * 1280
+            local prevSy = warp.streaks[1].ny * 800
+            if StageTransition.updateWarp(warp, 1 / 60, testShip, warpStars, warpCam, 1280, 800) then
                 done = true
                 break
             end
+            if frame == 1 then
+                local moveDx = warp.streaks[1].nx * 1280 - prevSx
+                local moveDy = warp.streaks[1].ny * 800 - prevSy
+                local cross = math.abs(moveDx * (-expectedDirY) - moveDy * (-expectedDirX))
+                local dot = moveDx * (-expectedDirX) + moveDy * (-expectedDirY)
+                assert(dot > 0 and cross < 1e-4, "Warp streaks must move strictly opposite ship thrust in screen pixels")
+                local starLen = math.sqrt(warpStars.vx * warpStars.vx + warpStars.vy * warpStars.vy)
+                assert(math.abs(warpStars.vx / starLen - expectedDirX) < 1e-5
+                    and math.abs(warpStars.vy / starLen - expectedDirY) < 1e-5,
+                    "Starfield warp stream must align with ship thrust direction")
+            end
+            assert(math.abs(testShip.angle - thrustAngle) < 1e-6, "Ship heading must remain aligned with thrust during warp")
+            assert(math.abs(testShip.boostX - expectedDirX) < 1e-6 and math.abs(testShip.boostY - expectedDirY) < 1e-6,
+                "Ship boost vector must match thrust direction during warp")
             assert(warpCam.zoom == warpCam.zoom and warpCam.zoom > 0, "Camera zoom must stay finite throughout warp")
         end
         assert(done and warp.done, "Starlight warp must finish and hand off to the next stage")
         assert(warpCam.zoom == warpCam.zoom and warpCam.zoom > 0 and warpCam.pullback == warpCam.pullback,
             "Camera must remain finite after warp completion")
-        assert(math.abs(testShip.x - 540) < 1e-3 and math.abs(testShip.y - 270) < 1e-3,
+        local Arena = require("arena")
+        assert(math.abs(testShip.x - Arena.width * 0.5) < 1e-3 and math.abs(testShip.y - Arena.height * 0.5) < 1e-3,
             "Ship must arrive smoothly at the center of the next arena")
+        assert(math.abs(testShip.angle - thrustAngle) < 1e-6,
+            "Ship must preserve its thrust angle upon arrival in the next stage")
+        assert(math.abs(testShip.vx - expectedDirX * 42) < 1e-5 and math.abs(testShip.vy - expectedDirY * 42) < 1e-5,
+            "Ship arrival velocity must follow its thrust direction")
 
         -- Harmless sequential enemy projectile expiry on stage clear
         local EnemyFire = require("enemy_fire")

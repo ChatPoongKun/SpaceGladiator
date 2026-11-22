@@ -99,11 +99,6 @@ local function shuffle(list, rng)
     return copy
 end
 
-local function shortestAngleDiff(from, to)
-    local tau = math.pi * 2
-    return (to - from + math.pi) % tau - math.pi
-end
-
 --------------------------------------------------------------------------------
 -- 1. Stage Clear + Left/Right Blast Shutter Transition
 --------------------------------------------------------------------------------
@@ -547,6 +542,9 @@ function StageTransition.newWarp(gate, nextStageNumber, ship, width, height, rng
         }
     end
 
+    local warpAngle = (ship and ship.angle or gate.angle or 0) % (math.pi * 2)
+    local dirX, dirY = math.sin(warpAngle), -math.cos(warpAngle)
+
     return {
         gate = gate,
         nextStageNumber = nextStageNumber or 2,
@@ -554,7 +552,10 @@ function StageTransition.newWarp(gate, nextStageNumber, ship, width, height, rng
         duration = StageTransition.WARP_DURATION,
         startX = ship and ship.x or (Arena.width * 0.5),
         startY = ship and ship.y or (Arena.height * 0.5),
-        startAngle = ship and ship.angle or gate.angle,
+        startAngle = warpAngle,
+        angle = warpAngle,
+        dirX = dirX,
+        dirY = dirY,
         speedFactor = 0,
         arriveSfxPlayed = false,
         streaks = streaks,
@@ -589,26 +590,33 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
         Sfx.play("warp_arrive")
     end
 
-    local dirX, dirY = warp.gate.dirX, warp.gate.dirY
+    local dirX, dirY = warp.dirX, warp.dirY
+    local viewW = math.max(1, width or 1280)
+    local viewH = math.max(1, height or 800)
 
-    -- Drive Starfield along warp direction so stars stretch & then calm down cleanly
+    -- Drive Starfield along ship thrust direction so stars stretch & then calm down cleanly
     if stars then
         local starSpeed = 240 + 4600 * speedFactor
-        stars:update(dt, dirX * starSpeed, dirY * starSpeed, speedFactor, width, height, speedFactor)
+        stars:update(dt, dirX * starSpeed, dirY * starSpeed, speedFactor, viewW, viewH, speedFactor)
     end
 
-    -- Stream hyperspace starlight streaks in opposite direction of ship flight
-    local streakTravel = (0.18 + 3.2 * speedFactor) * dt
+    -- Stream hyperspace starlight streaks opposite the ship's thrust direction at uniform pixel speed
+    local refSize = math.sqrt(viewW * viewH)
+    local travelPx = (0.18 + 3.2 * speedFactor) * refSize * dt
+    local stepNx = dirX * travelPx / viewW
+    local stepNy = dirY * travelPx / viewH
     for _, st in ipairs(warp.streaks) do
-        st.nx = (st.nx - dirX * streakTravel * st.depth) % 1
-        st.ny = (st.ny - dirY * streakTravel * st.depth) % 1
+        st.nx = (st.nx - stepNx * st.depth) % 1
+        st.ny = (st.ny - stepNy * st.depth) % 1
     end
 
-    -- Smoothly align ship heading & engine plume with warp state
+    -- Keep ship heading & engine plume aligned with its thrust direction throughout warp
     if ship then
-        local alignT = easeOutCubic(clamp(p / 0.22, 0, 1))
-        local diff = shortestAngleDiff(warp.startAngle, warp.gate.angle)
-        ship.angle = (warp.startAngle + diff * alignT) % (math.pi * 2)
+        ship.angle = warp.angle
+        local visualSpeed = 42 + (math.max(42, ship.maxSpeed or 180) - 42) * speedFactor
+        ship.vx = dirX * visualSpeed
+        ship.vy = dirY * visualSpeed
+        ship.wrapVx, ship.wrapVy = 0, 0
         ship.boostLevel = speedFactor
         ship.accelerating = speedFactor > 0.05
         ship.braking = false
@@ -617,7 +625,7 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
     end
 
     if camera and ship then
-        camera:update(dt, ship, width, height)
+        camera:update(dt, ship, viewW, viewH)
     end
 
     if warp.elapsed >= warp.duration then
@@ -626,10 +634,11 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
         if ship then
             ship.x = Arena.width * 0.5
             ship.y = Arena.height * 0.5
-            ship.angle = warp.gate.angle
+            ship.angle = warp.angle
             ship.vx = dirX * 42
             ship.vy = dirY * 42
             ship.wrapVx, ship.wrapVy = 0, 0
+            ship.invulnTimer = 0
             ship.boostLevel = 0
             ship.boostRemaining = 0
             ship.accelerating = false
@@ -645,8 +654,9 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
     local g = love.graphics
     local p = clamp(warp.elapsed / math.max(1e-6, warp.duration), 0, 1)
     local sf = warp.speedFactor or StageTransition.warpSpeedFactor(p)
-    local dirX, dirY = warp.gate.dirX, warp.gate.dirY
+    local dirX, dirY = warp.dirX, warp.dirY
     local rc = warp.gate.reward and warp.gate.reward.color or { 0.45, 0.92, 1.0 }
+    local viewDiag = math.sqrt(width * width + height * height)
 
     g.push("all")
     g.origin()
@@ -677,11 +687,12 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         g.rectangle("fill", 0, 0, width, height)
     end
 
-    -- 2. Old arena sliding behind & fading out during initial warp departure (p < 0.36)
+    -- 2. Old arena sliding behind & fading out along -thrust during initial warp departure (p < 0.36)
     local originX, originY = camera:worldToScreen(0, 0, width, height)
     if p < 0.36 then
         local departT = p / 0.36
-        local slide = easeInCubic(departT) * 950
+        local departDist = math.max(1050, viewDiag * 0.85)
+        local slide = easeInCubic(departT) * departDist
         local alpha = 1 - departT
         g.push("all")
         g.translate(originX - dirX * slide, originY - dirY * slide)
@@ -693,11 +704,12 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         g.pop()
     end
 
-    -- 3. Next stage arena sliding smoothly in from ahead during deceleration (p > 0.58)
+    -- 3. Next stage arena sliding smoothly in from ahead along +thrust during deceleration (p > 0.58)
     if p > 0.58 then
         local arriveT = (p - 0.58) / 0.42
         local eased = easeOutCubic(arriveT)
-        local slide = (1 - eased) * 820
+        local arriveDist = math.max(950, viewDiag * 0.82)
+        local slide = (1 - eased) * arriveDist
         g.push("all")
         g.translate(originX + dirX * slide, originY + dirY * slide)
         g.scale(camera.zoom)
@@ -705,29 +717,24 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         g.pop()
     end
 
-    -- 4. Draw ship gliding from departure point -> screen center during cruise -> new arena center on arrival
+    -- 4. Draw ship gliding smoothly from departure point into thrust-aligned cruise lunge & arrival center
     if ship then
         local centerX, centerY = camera:worldToScreen(Arena.width * 0.5, Arena.height * 0.5, width, height)
         local startSx, startSy = camera:worldToScreen(warp.startX, warp.startY, width, height)
+        local vibScale = sf * sf
+        local vibX = math.sin(time * 64) * 1.8 * vibScale
+        local vibY = math.cos(time * 73) * 1.8 * vibScale
+        local targetSx = centerX + dirX * 18 * sf + vibX
+        local targetSy = centerY + dirY * 18 * sf + vibY
         local shipSx, shipSy
 
         if p < 0.30 then
             local t1 = easeInOutCubic(p / 0.30)
-            shipSx = startSx + (centerX - startSx) * t1
-            shipSy = startSy + (centerY - startSy) * t1
-        elseif p < 0.62 then
-            -- Subtle forward lunge + micro vibration at peak hyperspace cruise
-            local vibX = math.sin(time * 64) * 1.8 * sf
-            local vibY = math.cos(time * 73) * 1.8 * sf
-            shipSx = centerX + dirX * 18 * sf + vibX
-            shipSy = centerY + dirY * 18 * sf + vibY
+            shipSx = startSx + (targetSx - startSx) * t1
+            shipSy = startSy + (targetSy - startSy) * t1
         else
-            -- Decelerate smoothly into the center of the incoming arena from the entry side
-            local arriveT = (p - 0.62) / 0.38
-            local eased = easeOutCubic(arriveT)
-            local entryOffset = (1 - eased) * 150
-            shipSx = centerX - dirX * entryOffset
-            shipSy = centerY - dirY * entryOffset
+            shipSx = targetSx
+            shipSy = targetSy
         end
 
         g.push("all")
