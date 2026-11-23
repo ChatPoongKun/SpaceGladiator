@@ -520,7 +520,6 @@ function Gladiator:drawPopups(camera, width, height, font)
     if #self.popups == 0 then return end
     local g = love.graphics
     g.push("all")
-    g.origin()
     g.setLineStyle("smooth")
     if font then g.setFont(font) end
     local activeFont = g.getFont()
@@ -633,7 +632,6 @@ function Gladiator:drawFeverOverlay(width, height, time)
     local g = love.graphics
     local t = time or self.elapsed
     g.push("all")
-    g.origin()
     g.setLineStyle("smooth")
 
     if self.feverFlash > 0 then

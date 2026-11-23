@@ -189,15 +189,25 @@ local function drawCapacitor(g, x, y, batteryFraction, alpha, destroyed, font)
     g.printf(tostring(percent), x - hub, y - font:getHeight() / 2, hub * 2, "center")
 end
 
-function Hud.new()
+function Hud.new(fontDpiScale)
     local g = love.graphics
-    return setmetatable({
-        tiny = g.newFont(7),
-        cap = g.newFont(10),
-        velocity = g.newFont(15),
+    local self = setmetatable({
+        fontDpiScale = nil,
         vignette = buildVignette(g, Hud.VIGNETTE_RADIUS),
         alpha = Hud.BASE_ALPHA,
     }, Hud)
+    self:setFontScale(fontDpiScale or 1)
+    return self
+end
+
+function Hud:setFontScale(dpiScale)
+    local scale = math.max(1, dpiScale or 1)
+    if self.fontDpiScale == scale and self.tiny and self.cap and self.velocity then return end
+    local g = love.graphics
+    self.fontDpiScale = scale
+    self.tiny = g.newFont(7, "normal", scale)
+    self.cap = g.newFont(10, "normal", scale)
+    self.velocity = g.newFont(15, "normal", scale)
 end
 
 function Hud:reset()
@@ -349,7 +359,6 @@ function Hud:draw(ship, width, height, time)
     local battery = fraction(ship.battery, ship.maxBattery)
     local destroyed = ship.isDestroyed and ship:isDestroyed() or false
     g.push("all")
-    g.origin()
     g.setShader()
     g.setScissor()
     g.setBlendMode("alpha")

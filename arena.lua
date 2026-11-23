@@ -1,10 +1,10 @@
-local Arena = { width = 1280, height = 800, baseWidth = 1280, baseHeight = 800 }
+local Arena = { width = 1280, height = 720, baseWidth = 1280, baseHeight = 720 }
 
-function Arena.resize(w, h)
-    if not w or not h or w <= 0 or h <= 0 then return end
-    local scale = math.min(w / Arena.baseWidth, h / Arena.baseHeight)
-    Arena.width = w / scale
-    Arena.height = h / scale
+-- Keep the playable arena fixed in logical world units so ship speeds, wrap distances,
+-- weapon ranges, and combat geometry remain identical across all resolutions and aspect ratios.
+function Arena.resize()
+    Arena.width = Arena.baseWidth
+    Arena.height = Arena.baseHeight
 end
 
 function Arena.draw(boost, fever)

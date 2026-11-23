@@ -9,7 +9,7 @@ local ReplayExport = {}
 ReplayExport.__index = ReplayExport
 
 ReplayExport.WIDTH = 1280
-ReplayExport.HEIGHT = 800
+ReplayExport.HEIGHT = 720
 ReplayExport.FPS = 60
 ReplayExport.SAMPLE_RATE = 44100
 ReplayExport.CHANNELS = 2

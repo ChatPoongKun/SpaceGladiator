@@ -5,6 +5,7 @@
 -- rewards appear in a temporary tray and are discarded if not placed into the
 -- main diamond inventory before advancing to the next stage.
 
+local Display = require("display")
 local Inventory = require("inventory")
 local ChipsData = require("chips_data")
 local Sfx = require("sfx")
@@ -364,9 +365,9 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
     self.hitRegions = {}
 
     g.push("all")
-    g.origin()
+    local ox, oy, ow, oh = Display.virtualOverscanBounds()
     g.setColor(0.015, 0.025, 0.050, 0.92)
-    g.rectangle("fill", 0, 0, width, height)
+    g.rectangle("fill", math.min(0, ox), math.min(0, oy), math.max(width, ow), math.max(height, oh))
 
     local panelW = math.min(1100, width - 48)
     local panelH = math.min(684, height - 44)

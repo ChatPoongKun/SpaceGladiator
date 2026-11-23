@@ -1,11 +1,13 @@
+local Display = require("display")
 local Menu = {}
-local panelWidth, inset, buttonHeight, buttonStep, rowHeight = 432, 28, 44, 54, 29
+local defaultPanelWidth, inset, buttonHeight, buttonStep, rowHeight = 432, 28, 44, 54, 29
 
 local function rowStep(menu)
     return menu.rows and #menu.rows > 11 and 26 or rowHeight
 end
 
 local function layout(menu, width, height)
+    local panelWidth = menu.panelWidth or defaultPanelWidth
     local step = rowStep(menu)
     local rowsHeight = menu.rows and #menu.rows * step + 16 or 0
     local buttonCount = menu.buttons and #menu.buttons or 0
@@ -14,11 +16,11 @@ local function layout(menu, width, height)
     local panelHeight = headerHeight + rowsHeight + buttonsHeight + inset
     local x = math.floor((width - panelWidth) / 2)
     local y = math.floor((height - panelHeight) / 2)
-    return x, y, panelHeight, y + headerHeight, y + headerHeight + rowsHeight, step
+    return x, y, panelWidth, panelHeight, y + headerHeight, y + headerHeight + rowsHeight, step
 end
 
 function Menu.buttonAt(menu, width, height, mouseX, mouseY)
-    local x, _, _, _, buttonsY = layout(menu, width, height)
+    local x, _, panelWidth, _, _, buttonsY = layout(menu, width, height)
     if mouseX < x + inset or mouseX >= x + panelWidth - inset then return end
     for i = 1, #menu.buttons do
         local y = buttonsY + (i - 1) * buttonStep
@@ -28,13 +30,14 @@ end
 
 function Menu.draw(menu, fonts, selected, width, height, overlay)
     local g = love.graphics
-    local x, y, panelHeight, rowsY, buttonsY, step = layout(menu, width, height)
+    local x, y, panelWidth, panelHeight, rowsY, buttonsY, step = layout(menu, width, height)
     local left, contentWidth = x + inset, panelWidth - 2 * inset
     g.push("all")
     g.setLineWidth(1)
     if overlay then
+        local ox, oy, ow, oh = Display.virtualOverscanBounds()
         g.setColor(0.012, 0.021, 0.045, 0.72)
-        g.rectangle("fill", 0, 0, width, height)
+        g.rectangle("fill", math.min(0, ox), math.min(0, oy), math.max(width, ow), math.max(height, oh))
     end
     g.setColor(0.035, 0.061, 0.10, 0.98)
     g.rectangle("fill", x, y, panelWidth, panelHeight, 8, 8)
@@ -96,9 +99,18 @@ function Menu.draw(menu, fonts, selected, width, height, overlay)
         else g.setColor(0.25, 0.43, 0.49, 1) end
         g.rectangle("line", left, buttonY, contentWidth, buttonHeight, 5, 5)
         g.setFont(fonts.menuButton)
-        g.setColor(0.85, 0.94, 0.97, 1)
+        local textY = buttonY + math.floor((buttonHeight - fonts.menuButton:getHeight()) / 2)
         local text = type(button.label) == "function" and button.label() or button.label
-        g.print(text, left + 15, buttonY + math.floor((buttonHeight - fonts.menuButton:getHeight()) / 2))
+        g.setColor(0.85, 0.94, 0.97, 1)
+        g.print(text, left + 15, textY)
+        if button.value then
+            local val = type(button.value) == "function" and button.value() or button.value
+            if val and val ~= "" then
+                if i == selected then g.setColor(0.46, 0.95, 0.90, 1)
+                else g.setColor(0.58, 0.80, 0.86, 0.95) end
+                g.printf(val, left + 15, textY, contentWidth - 30, "right")
+            end
+        end
     end
     g.pop()
 end

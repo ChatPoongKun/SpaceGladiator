@@ -1,3 +1,4 @@
+local Display = require("display")
 local Sfx = require("sfx")
 -- Interactive Gladiator Coin Plinko UI overlay shown at the end of each stage.
 -- Supports investing 10 / 25 / 50 / ALL coins (dropped randomly across the full
@@ -28,9 +29,9 @@ function PlinkoUI:draw(plinko, stage, fonts, width, height, pendingCount)
     self.hitRegions = {}
 
     g.push("all")
-    g.origin()
+    local ox, oy, ow, oh = Display.virtualOverscanBounds()
     g.setColor(0.014, 0.024, 0.048, 0.92)
-    g.rectangle("fill", 0, 0, width, height)
+    g.rectangle("fill", math.min(0, ox), math.min(0, oy), math.max(width, ow), math.max(height, oh))
 
     local panelW = math.min(980, width - 64)
     local panelH = math.min(640, height - 64)

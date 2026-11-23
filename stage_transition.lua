@@ -7,6 +7,7 @@
 --    streaming starlight and decelerating smoothly into the next stage.
 
 local Arena = require("arena")
+local Display = require("display")
 local Sfx = require("sfx")
 
 local StageTransition = {}
@@ -166,52 +167,59 @@ end
 local function drawShutters(closure, width, height)
     if closure <= 0.001 then return end
     local g = love.graphics
-    local halfW = width * 0.5
+    local ox, oy, ow, oh = Display.virtualOverscanBounds()
+    local leftX = math.min(0, ox)
+    local topY = math.min(0, oy)
+    local fullW = math.max(width, ow)
+    local fullH = math.max(height, oh)
+    local rightEdge = leftX + fullW
+    local centerX = leftX + fullW * 0.5
+    local halfW = fullW * 0.5
     local doorW = halfW * closure + 2
-    local rightX = width - doorW
+    local leftSeam = leftX + doorW
+    local rightX = rightEdge - doorW
 
     g.push("all")
-    g.origin()
 
     -- Left & Right heavy sci-fi bulkhead doors
     g.setColor(0.022, 0.036, 0.064, 0.98)
-    g.rectangle("fill", 0, 0, doorW, height)
-    g.rectangle("fill", rightX, 0, doorW, height)
+    g.rectangle("fill", leftX, topY, doorW, fullH)
+    g.rectangle("fill", rightX, topY, doorW, fullH)
 
     -- Subtle inner armor paneling stripes
     g.setColor(0.050, 0.095, 0.150, 0.85)
-    g.rectangle("fill", 0, height * 0.14, math.max(0, doorW - 22), height * 0.72)
-    g.rectangle("fill", rightX + 22, height * 0.14, math.max(0, doorW - 22), height * 0.72)
+    g.rectangle("fill", leftX, topY + fullH * 0.14, math.max(0, doorW - 22), fullH * 0.72)
+    g.rectangle("fill", rightX + 22, topY + fullH * 0.14, math.max(0, doorW - 22), fullH * 0.72)
 
     -- Horizontal tech ribs on both shutters
     g.setLineWidth(1)
     g.setColor(0.28, 0.58, 0.74, 0.22)
-    for y = 60, height - 60, 60 do
-        g.line(0, y, math.max(0, doorW - 14), y)
-        g.line(math.min(width, rightX + 14), y, width, y)
+    for y = topY + 60, topY + fullH - 60, 60 do
+        g.line(leftX, y, math.max(leftX, leftSeam - 14), y)
+        g.line(math.min(rightEdge, rightX + 14), y, rightEdge, y)
     end
 
     -- Glowing leading edge bevels where left & right shutters meet
     local seamGlow = 0.65 + 0.35 * closure
     g.setColor(1.0, 0.82, 0.36, 0.22 * seamGlow)
-    g.rectangle("fill", doorW - 12, 0, 12, height)
-    g.rectangle("fill", rightX, 0, 12, height)
+    g.rectangle("fill", leftSeam - 12, topY, 12, fullH)
+    g.rectangle("fill", rightX, topY, 12, fullH)
 
     g.setLineWidth(2.5)
     g.setColor(1.0, 0.86, 0.44, 0.92 * seamGlow)
-    g.line(doorW, 0, doorW, height)
-    g.line(rightX, 0, rightX, height)
+    g.line(leftSeam, topY, leftSeam, topY + fullH)
+    g.line(rightX, topY, rightX, topY + fullH)
 
     g.setLineWidth(1.2)
     g.setColor(0.45, 0.92, 1.0, 0.75 * seamGlow)
-    g.line(math.max(0, doorW - 16), 0, math.max(0, doorW - 16), height)
-    g.line(math.min(width, rightX + 16), 0, math.min(width, rightX + 16), height)
+    g.line(math.max(leftX, leftSeam - 16), topY, math.max(leftX, leftSeam - 16), topY + fullH)
+    g.line(math.min(rightEdge, rightX + 16), topY, math.min(rightEdge, rightX + 16), topY + fullH)
 
     -- Center lock flash right as the shutters seal
     if closure > 0.92 then
         local lockAlpha = (closure - 0.92) / 0.08
         g.setColor(1.0, 0.94, 0.70, lockAlpha * 0.55)
-        g.rectangle("fill", halfW - 3, 0, 6, height)
+        g.rectangle("fill", centerX - 3, topY, 6, fullH)
     end
 
     g.pop()
@@ -224,13 +232,13 @@ function StageTransition.drawStageClearOverlay(state, width, height, fonts)
     local enter = easeOutCubic(clamp(t / 0.32, 0, 1))
     local rawClose = StageTransition.stageClearCloseProgress(state)
     local closure = easeInOutCubic(rawClose)
+    local ox, oy, ow, oh = Display.virtualOverscanBounds()
 
     g.push("all")
-    g.origin()
 
     -- Subtle atmospheric dim + expanding victory shockwave ring
     g.setColor(0.015, 0.028, 0.055, 0.34 * enter)
-    g.rectangle("fill", 0, 0, width, height)
+    g.rectangle("fill", math.min(0, ox), math.min(0, oy), math.max(width, ow), math.max(height, oh))
 
     if t < 0.95 then
         local ringT = t / 0.95
@@ -760,8 +768,8 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
     warp.elapsed = warp.elapsed + dt
 
     local dirX, dirY = warp.dirX, warp.dirY
-    local viewW = math.max(1, width or 1280)
-    local viewH = math.max(1, height or 800)
+    local viewW = math.max(1, width or Display.VIRTUAL_WIDTH)
+    local viewH = math.max(1, height or Display.VIRTUAL_HEIGHT)
     local alignDuration = warp.alignDuration or 0
 
     -- Phase 1: Rotate ship nose cleanly onto its travel direction before engaging hyperspace warp
@@ -772,7 +780,10 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
         local currentAngle = (warp.startAngle + (warp.angleDiff or 0) * alignT) % (math.pi * 2)
 
         if stars then
-            stars:update(dt, dirX * 180, dirY * 180, 0, viewW, viewH, 0)
+            local bgW = Display.windowWidth or viewW
+            local bgH = Display.windowHeight or viewH
+            local bgScale = Display.scale or 1
+            stars:update(dt, dirX * 180 * bgScale, dirY * 180 * bgScale, 0, bgW, bgH, 0)
         end
 
         if ship then
@@ -814,8 +825,11 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
 
     -- Drive Starfield along travel direction so stars stretch & then calm down cleanly
     if stars then
-        local starSpeed = 240 + 4600 * speedFactor
-        stars:update(dt, dirX * starSpeed, dirY * starSpeed, speedFactor, viewW, viewH, speedFactor)
+        local bgW = Display.windowWidth or viewW
+        local bgH = Display.windowHeight or viewH
+        local bgScale = Display.scale or 1
+        local starSpeed = (240 + 4600 * speedFactor) * bgScale
+        stars:update(dt, dirX * starSpeed, dirY * starSpeed, speedFactor, bgW, bgH, speedFactor)
     end
 
     -- Stream hyperspace starlight streaks opposite the ship's travel direction at uniform pixel speed
@@ -884,15 +898,18 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
     local rc = warp.gate and warp.gate.reward and warp.gate.reward.color or { 0.45, 0.92, 1.0 }
     local viewDiag = math.sqrt(width * width + height * height)
 
+    local ox, oy, ow, oh = Display.virtualOverscanBounds()
+    local fillX, fillY = math.min(0, ox), math.min(0, oy)
+    local fillW, fillH = math.max(width, ow), math.max(height, oh)
+
     g.push("all")
-    g.origin()
 
     -- 1. Hyperspace starlight streaks streaming past the ship
     local streakVisibility = clamp(sf * 1.25, 0, 1)
     if streakVisibility > 0.01 then
         for _, st in ipairs(warp.streaks) do
-            local sx = st.nx * width
-            local sy = st.ny * height
+            local sx = fillX + st.nx * fillW
+            local sy = fillY + st.ny * fillH
             local len = st.len * (0.18 + 1.25 * sf) * st.depth
             local tx = sx - dirX * len
             local ty = sy - dirY * len
@@ -910,7 +927,7 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
 
         -- Subtle starlight tunnel edge glow
         g.setColor(0.32, 0.72, 1.0, 0.09 * sf)
-        g.rectangle("fill", 0, 0, width, height)
+        g.rectangle("fill", fillX, fillY, fillW, fillH)
     end
 
     -- 2. Old arena sliding behind & fading out along -travel during inter-stage departure (p < 0.36)
@@ -997,11 +1014,11 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         local flash = (1 - p / 0.16)
         local peakAlpha = isEntry and 0.28 or 0.42
         g.setColor(rc[1], rc[2], rc[3], flash * flash * peakAlpha)
-        g.rectangle("fill", 0, 0, width, height)
+        g.rectangle("fill", fillX, fillY, fillW, fillH)
     elseif p > 0.90 then
         local flash = math.sin(((p - 0.90) / 0.10) * math.pi)
         g.setColor(0.75, 0.95, 1.0, flash * 0.18)
-        g.rectangle("fill", 0, 0, width, height)
+        g.rectangle("fill", fillX, fillY, fillW, fillH)
     end
 
     -- 6. Sleek Warp Telemetry HUD Banner

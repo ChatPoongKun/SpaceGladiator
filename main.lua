@@ -1,5 +1,6 @@
 local Ship = require("ship")
 local Arena = require("arena")
+local Display = require("display")
 local Starfield = require("starfield")
 local StageBackground = require("stage_background")
 local Camera = require("camera")
@@ -31,11 +32,11 @@ local pauseReturnScreen = "playing"
 local permanentUnlocksFile = "grid_unlocks.txt"
 local lastFeverState, lastEvasionCount, lastWrapEvents, lastDamageCount = false, 0, 0, 0
 local wrapTriggerCooldown, shockwaveCooldown = 0, 0
-local width, height, time = 1280, 800, 0
+local width, height, time = Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT, 0
+local currentFontScale = nil
 local screen, selectedButton
 local focused = true
 local gameOverHold = 1.25
-local displayFile = "fullscreen.txt"
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
 local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay, testFullscreen, testBackground = false, false, false, false, false, false, false, false, false
@@ -50,7 +51,6 @@ function love.errorhandler(message)
 end
 
 local function setScreen(nextScreen)
-    local prevScreen = screen
     screen, selectedButton = nextScreen, 1
     input.boost, firing = false, false
     local preserveSfx = (screen == "gameOver" or screen == "stageClear" or screen == "plinko"
@@ -81,10 +81,8 @@ local function setScreen(nextScreen)
         coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
         pauseReturnScreen = "playing"
     end
-    local resumeFromOverlay = (prevScreen == "pause" or prevScreen == "inventory" or prevScreen == "settings")
     Bgm.syncScreen(screen, stage and stage.level or nil, {
         focused = focused or testMode,
-        restart = (screen == "playing" and not resumeFromOverlay),
     })
 end
 
@@ -346,7 +344,7 @@ local function closeReplay()
 end
 
 local function openReplay()
-    if replay and replay:openPlayback(width, height) then
+    if replay and replay:openPlayback(Display.windowWidth, Display.windowHeight) then
         setScreen("replay")
     end
 end
@@ -400,6 +398,29 @@ local function showResults(reason)
     setScreen("results")
 end
 
+local function buildFonts(dpiScale)
+    local scale = math.max(1, dpiScale or 1)
+    if currentFontScale == scale and fonts then return end
+    currentFontScale = scale
+    local menuFont = "assets/fonts/DriftMenu.ttf"
+    fonts = {
+        small = love.graphics.newFont(11, "normal", scale),
+        body = love.graphics.newFont(13, "normal", scale),
+        title = love.graphics.newFont(30, "normal", scale),
+        menuTitle = love.graphics.newFont(menuFont, 34, "normal", scale),
+        menuButton = love.graphics.newFont(menuFont, 18, "normal", scale),
+        menuBody = love.graphics.newFont(menuFont, 15, "normal", scale),
+        menuSmall = love.graphics.newFont(menuFont, 12, "normal", scale),
+    }
+    if hud and hud.setFontScale then
+        hud:setFontScale(scale)
+    end
+end
+
+local function rebuildFontsIfNeeded()
+    buildFonts(Display.fontDpiScale())
+end
+
 local function openSettings()
     menus.settings.subtitle = nil
     setScreen("settings")
@@ -409,21 +430,43 @@ local function closeSettings()
     setScreen(ship and "pause" or "title")
 end
 
-local function fullscreenLabel()
-    return love.window.getFullscreen() and "전체 화면  ·  켜짐" or "전체 화면  ·  꺼짐"
+local function displayModeValue()
+    local label = Display.MODE_LABELS[Display.mode] or Display.mode
+    return "< " .. label .. " >"
 end
 
-local function toggleFullscreen()
-    local fullscreen = not love.window.getFullscreen()
-    if not love.window.setFullscreen(fullscreen, "desktop") then
-        menus.settings.subtitle = "화면 모드를 변경할 수 없습니다."
+local function resolutionValue()
+    if Display.mode == "borderless" then
+        return Display.formatResolution(Display.windowWidth, Display.windowHeight) .. " (자동)"
+    end
+    return "< " .. Display.formatResolution(Display.selectedWidth, Display.selectedHeight) .. " >"
+end
+
+local function applyDisplayChange(mode, resW, resH)
+    local ok, err = Display.applyMode(mode, resW, resH)
+    if not ok then
+        menus.settings.subtitle = err or "화면 모드를 변경할 수 없습니다."
         return
     end
     love.resize(love.graphics.getDimensions())
     menus.settings.subtitle = nil
-    if not love.filesystem.write(displayFile, fullscreen and "1" or "0") then
+    if not Display.saveSettings() then
         menus.settings.subtitle = "화면 설정을 저장할 수 없습니다."
     end
+end
+
+local function changeDisplayMode(dir)
+    local nextMode = Display.nextMode(dir)
+    applyDisplayChange(nextMode, Display.selectedWidth, Display.selectedHeight)
+end
+
+local function changeResolution(dir)
+    if Display.mode == "borderless" then
+        menus.settings.subtitle = "테두리 없는 전체 화면은 모니터 기본 해상도를 사용합니다."
+        return
+    end
+    local nextRes = Display.nextResolution(dir)
+    applyDisplayChange(Display.mode, nextRes.w, nextRes.h)
 end
 
 menus.title = {title = "DRIFT", buttons = {
@@ -437,8 +480,21 @@ menus.pause = {title = "일시정지", buttons = {
     {label = "포기하기", action = function() showResults("전투 포기") end},
     {label = "타이틀로 나가기", action = function() setScreen("title") end},
 }}
-menus.settings = {title = "설정", buttons = {
-    {label = fullscreenLabel, action = toggleFullscreen},
+menus.settings = {title = "설정", panelWidth = 510, buttons = {
+    {
+        label = "화면 모드",
+        value = displayModeValue,
+        action = function() changeDisplayMode(1) end,
+        onLeft = function() changeDisplayMode(-1) end,
+        onRight = function() changeDisplayMode(1) end,
+    },
+    {
+        label = "해상도",
+        value = resolutionValue,
+        action = function() changeResolution(1) end,
+        onLeft = function() changeResolution(-1) end,
+        onRight = function() changeResolution(1) end,
+    },
     {label = "뒤로", action = closeSettings},
 }}
 menus.results = {title = "전투 정산", buttons = {
@@ -462,25 +518,18 @@ function love.load(args)
     end
     love.graphics.setBackgroundColor(0.018, 0.028, 0.055)
     love.graphics.setLineStyle("smooth")
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground) and love.filesystem.getInfo(displayFile)
-        and love.filesystem.read(displayFile) == "1" then
-        love.window.setFullscreen(true, "desktop")
+    local anyTest = testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground
+    if not anyTest then
+        local saved = Display.loadSettings()
+        Display.applyMode(saved.mode, saved.width, saved.height)
     end
-    width, height = love.graphics.getDimensions()
-    Arena.resize(width, height)
-    local menuFont = "assets/fonts/DriftMenu.ttf"
-    fonts = {
-        small = love.graphics.newFont(11),
-        body = love.graphics.newFont(13),
-        title = love.graphics.newFont(30),
-        menuTitle = love.graphics.newFont(menuFont, 34),
-        menuButton = love.graphics.newFont(menuFont, 18),
-        menuBody = love.graphics.newFont(menuFont, 15),
-        menuSmall = love.graphics.newFont(menuFont, 12),
-    }
-    hud = Hud.new()
-    stars = Starfield.new(width, height)
-    stageBackground = StageBackground.new(width, height)
+    Display.syncFromWindow()
+    width, height = Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT
+    Arena.resize()
+    hud = Hud.new(Display.fontDpiScale())
+    buildFonts(Display.fontDpiScale())
+    stars = Starfield.new(Display.windowWidth, Display.windowHeight)
+    stageBackground = StageBackground.new(Display.windowWidth, Display.windowHeight)
     if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground) then
         Sfx.load()
         Bgm.load()
@@ -574,13 +623,14 @@ function love.update(dt)
                 activeExporter = nil
             end
         else
-            replay:updatePlayback(dt, width, height)
+            replay:updatePlayback(dt, Display.windowWidth, Display.windowHeight)
         end
         return
     end
+    local bgW, bgH, bgScale = Display.windowWidth, Display.windowHeight, Display.scale or 1
     if not ship then
-        if stageBackground then stageBackground:update(dt, 0, 0, width, height) end
-        stars:update(dt, 12, -18, 0, width, height, 0)
+        if stageBackground then stageBackground:update(dt, 0, 0, bgW, bgH) end
+        stars:update(dt, 12 * bgScale, -18 * bgScale, 0, bgW, bgH, 0)
         return
     end
     if screen == "plinko" then
@@ -588,8 +638,8 @@ function love.update(dt)
             plinkoShutter = nil
         end
         if plinko then plinko:update(dt, inventory, ship) end
-        if stageBackground then stageBackground:update(dt, 0, 0, width, height) end
-        stars:update(dt, 18, -24, 0, width, height, 0)
+        if stageBackground then stageBackground:update(dt, 0, 0, bgW, bgH) end
+        stars:update(dt, 18 * bgScale, -24 * bgScale, 0, bgW, bgH, 0)
         return
     end
     if screen == "pause" or screen == "settings" or screen == "inventory" then return end
@@ -602,8 +652,8 @@ function love.update(dt)
         camera:update(dt, ship, width, height)
         updateHudProximity(dt)
         local vx, vy = ship:worldVelocity()
-        if stageBackground then stageBackground:update(dt, vx, vy, width, height) end
-        stars:update(dt, 90 + vx * 1.8, -210 + vy * 1.8, 0, width, height, 0)
+        if stageBackground then stageBackground:update(dt, vx * bgScale, vy * bgScale, bgW, bgH) end
+        stars:update(dt, (90 + vx * 1.8) * bgScale, (-210 + vy * 1.8) * bgScale, 0, bgW, bgH, 0)
         if StageTransition.updateStageClear(stageClearState, dt) then
             enterPlinkoStageEnd()
         end
@@ -613,7 +663,7 @@ function love.update(dt)
         local finished = StageTransition.updateWarp(warpState, dt, ship, stars, camera, width, height)
         if stageBackground and warpState then
             local warpDrift = 140 * (warpState.speedFactor or 0)
-            stageBackground:update(dt, warpState.dirX * warpDrift, warpState.dirY * warpDrift, width, height)
+            stageBackground:update(dt, warpState.dirX * warpDrift * bgScale, warpState.dirY * warpDrift * bgScale, bgW, bgH)
         end
         if finished then
             if warpState and warpState.mode == "entry" then
@@ -637,7 +687,7 @@ function love.update(dt)
         - (love.keyboard.isDown("a") and 1 or 0)
     input.thrust = love.keyboard.isDown("w")
     input.brake = love.keyboard.isDown("s")
-    mouseX, mouseY = love.mouse.getPosition()
+    mouseX, mouseY = Display.getMousePosition()
     if testMode then
         input.turn, input.thrust, input.brake = 0.55, true, false
         mouseX, mouseY, firing = width * 0.60, height * 0.24, true
@@ -662,11 +712,11 @@ function love.update(dt)
         local vx, vy = ship:worldVelocity()
         if stageBackground then
             local bgBoost = 120 * ship.boostLevel
-            stageBackground:update(dt, vx + ship.boostX * bgBoost, vy + ship.boostY * bgBoost, width, height)
+            stageBackground:update(dt, (vx + ship.boostX * bgBoost) * bgScale, (vy + ship.boostY * bgBoost) * bgScale, bgW, bgH)
         end
-        stars:update(dt, 120 + vx * 2.8 + ship.boostX * surge,
-            -290 + vy * 2.8 + ship.boostY * surge,
-            ship.accelerating and 1 or 0, width, height, ship.boostLevel)
+        stars:update(dt, (120 + vx * 2.8 + ship.boostX * surge) * bgScale,
+            (-290 + vy * 2.8 + ship.boostY * surge) * bgScale,
+            ship.accelerating and 1 or 0, bgW, bgH, ship.boostLevel)
         local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
         local activeWeaponBuild = currentBuild and currentBuild.weapons[turret.weapon] or nil
         turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeaponBuild)
@@ -681,11 +731,11 @@ function love.update(dt)
     local vx, vy = ship:worldVelocity()
     if stageBackground then
         local bgBoost = 120 * ship.boostLevel
-        stageBackground:update(dt, vx + ship.boostX * bgBoost, vy + ship.boostY * bgBoost, width, height)
+        stageBackground:update(dt, (vx + ship.boostX * bgBoost) * bgScale, (vy + ship.boostY * bgBoost) * bgScale, bgW, bgH)
     end
-    stars:update(dt, 120 + vx * 2.8 + ship.boostX * surge,
-        -290 + vy * 2.8 + ship.boostY * surge,
-        ship.accelerating and 1 or 0, width, height, ship.boostLevel)
+    stars:update(dt, (120 + vx * 2.8 + ship.boostX * surge) * bgScale,
+        (-290 + vy * 2.8 + ship.boostY * surge) * bgScale,
+        ship.accelerating and 1 or 0, bgW, bgH, ship.boostLevel)
     enemies:update(dt, ship, turret.angle, camera, width, height)
     if ship:isDestroyed() then
         setScreen("gameOver")
@@ -856,7 +906,8 @@ end
 local function drawPlayer(originX, originY)
     local g = love.graphics
     g.push("all")
-    g.intersectScissor(originX, originY, Arena.width * camera.zoom, Arena.height * camera.zoom)
+    local sx, sy, sw, sh = Display.virtualRectToWindow(originX, originY, Arena.width * camera.zoom, Arena.height * camera.zoom)
+    g.intersectScissor(sx, sy, sw, sh)
     local destroyed = ship:isDestroyed()
     if not destroyed then ship:drawBoostPulse() end
     -- Include the longer boost plume when deciding which copies can reach the arena.
@@ -911,7 +962,7 @@ local function drawFlight()
     end
     if (screen == "playing" or screen == "warpSelect") and (focused or testMode) then
         local g = love.graphics
-        local x, y = love.mouse.getPosition()
+        local x, y = Display.getMousePosition()
         if testMode then x, y = mouseX, mouseY end
         g.setLineWidth(1)
         if firing then g.setColor(1, 0.72, 0.36, 0.8)
@@ -925,6 +976,7 @@ local function drawFlight()
 end
 
 function love.draw()
+    local bgW, bgH = Display.windowWidth, Display.windowHeight
     if screen == "replay" and replay then
         replay:drawPlayback(width, height, fonts)
         return
@@ -933,7 +985,7 @@ function love.draw()
         if stageBackground then
             local p = StageTransition.warpProgress(warpState)
             local bgBlend = math.max(0, math.min(1, (p - 0.30) / 0.40))
-            stageBackground:draw(width, height, {
+            stageBackground:draw(bgW, bgH, {
                 nextLevel = stage and stage.level or StageBackground.DEFAULT_LEVEL,
                 blend = bgBlend,
             })
@@ -941,15 +993,20 @@ function love.draw()
         else
             stars:draw()
         end
+        love.graphics.push("all")
+        Display.applyTransform()
         StageTransition.drawWarp(warpState, ship, camera, width, height, time, fonts)
+        love.graphics.pop()
         return
     end
     if stageBackground then
-        stageBackground:draw(width, height)
+        stageBackground:draw(bgW, bgH)
         stars:draw({ transparent = true })
     else
         stars:draw()
     end
+    love.graphics.push("all")
+    Display.applyTransform()
     if ship then drawFlight() end
     local menu = menus[screen]
     if screen == "gameOver" and ship.destructionAge >= Ship.destructionDuration then
@@ -972,6 +1029,7 @@ function love.draw()
     elseif menu then
         Menu.draw(menu, fonts, selectedButton, width, height, ship ~= nil)
     end
+    love.graphics.pop()
     if testMode and not captureRequested then
         captureRequested = true
         love.graphics.captureScreenshot(function(data)
@@ -1066,6 +1124,12 @@ function love.keypressed(key, _, isRepeat)
         elseif key == "down" then
             selectedButton = selectedButton % #menu.buttons + 1
             Sfx.play("ui_hover")
+        elseif key == "left" and menu.buttons[selectedButton] and menu.buttons[selectedButton].onLeft then
+            Sfx.play("ui_click")
+            menu.buttons[selectedButton].onLeft()
+        elseif key == "right" and menu.buttons[selectedButton] and menu.buttons[selectedButton].onRight then
+            Sfx.play("ui_click")
+            menu.buttons[selectedButton].onRight()
         elseif key == "return" or key == "kpenter" then
             Sfx.play("ui_click")
             menu.buttons[selectedButton].action()
@@ -1080,6 +1144,7 @@ function love.keypressed(key, _, isRepeat)
 end
 
 function love.mousemoved(x, y)
+    x, y = Display.windowToVirtual(x, y)
     if screen == "inventory" and inventoryUI then
         inventoryUI:mousemoved(x, y)
         return
@@ -1098,6 +1163,7 @@ function love.mousemoved(x, y)
 end
 
 function love.mousepressed(x, y, button)
+    x, y = Display.windowToVirtual(x, y)
     if screen == "inventory" and inventory and inventoryUI then
         local action = inventoryUI:mousepressed(inventory, x, y, button, {
             stageEndMode = inventoryStageEndMode,
@@ -1149,6 +1215,7 @@ function love.mousepressed(x, y, button)
 end
 
 function love.mousereleased(x, y, button)
+    x, y = Display.windowToVirtual(x, y)
     if screen == "inventory" and inventory and inventoryUI then
         local action = inventoryUI:mousereleased(inventory, x, y, button, {
             stageEndMode = inventoryStageEndMode,
@@ -1174,35 +1241,12 @@ function love.focus(hasFocus)
 end
 
 function love.resize(w, h)
-    width, height = w, h
-    local prevW, prevH = Arena.width, Arena.height
-    Arena.resize(w, h)
-    if ship and prevW > 0 and prevH > 0 then
-        local sx, sy = Arena.width / prevW, Arena.height / prevH
-        ship.x, ship.y = ship.x * sx, ship.y * sy
-        if ship.prevX then ship.prevX = ship.prevX * sx end
-        if ship.prevY then ship.prevY = ship.prevY * sy end
-    end
-    if warpGates and warpGates.gates and prevW > 0 and prevH > 0 then
-        local sx, sy = Arena.width / prevW, Arena.height / prevH
-        warpGates.arenaW, warpGates.arenaH = Arena.width, Arena.height
-        if warpGates.lastShipX then warpGates.lastShipX = warpGates.lastShipX * sx end
-        if warpGates.lastShipY then warpGates.lastShipY = warpGates.lastShipY * sy end
-        for _, gate in ipairs(warpGates.gates) do
-            if gate.edge == "top" then
-                gate.x, gate.y = gate.x * sx, 0
-            elseif gate.edge == "bottom" then
-                gate.x, gate.y = gate.x * sx, Arena.height
-            elseif gate.edge == "left" then
-                gate.x, gate.y = 0, gate.y * sy
-            else
-                gate.x, gate.y = Arena.width, gate.y * sy
-            end
-        end
-    end
-    stars:resize(w, h)
-    if stageBackground then stageBackground:resize(w, h) end
-    if replay and replay.stars then replay.stars:resize(w, h) end
-    if replay and replay.stageBackground then replay.stageBackground:resize(w, h) end
-    if camera then camera:update(0, ship, w, h) end
+    Display.resize(w, h)
+    Arena.resize()
+    rebuildFontsIfNeeded()
+    if stars then stars:resize(Display.windowWidth, Display.windowHeight) end
+    if stageBackground then stageBackground:resize(Display.windowWidth, Display.windowHeight) end
+    if replay and replay.stars then replay.stars:resize(Display.windowWidth, Display.windowHeight) end
+    if replay and replay.stageBackground then replay.stageBackground:resize(Display.windowWidth, Display.windowHeight) end
+    if camera and ship then camera:update(0, ship, width, height) end
 end

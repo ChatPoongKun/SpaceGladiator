@@ -1,4 +1,5 @@
 local Arena = require("arena")
+local Display = require("display")
 local Ship = require("ship")
 local Turret = require("turret")
 local Enemies = require("enemies")
@@ -901,8 +902,10 @@ function Replay:openPlayback(width, height)
     self.exportStatus = nil
     self.exportError = nil
     if love and love.graphics then
-        self.stars = Starfield.new(width or 1280, height or 800)
-        self.stageBackground = StageBackground.new(width or 1280, height or 800, {
+        local bgW = width or Display.windowWidth or Display.VIRTUAL_WIDTH
+        local bgH = height or Display.windowHeight or Display.VIRTUAL_HEIGHT
+        self.stars = Starfield.new(bgW, bgH)
+        self.stageBackground = StageBackground.new(bgW, bgH, {
             level = self.bestClip.level or StageBackground.DEFAULT_LEVEL,
         })
     end
@@ -1018,19 +1021,22 @@ function Replay:updatePlayback(dt, width, height)
         local vx = lerp(f0.shipVx + f0.shipWrapVx, f1.shipVx + f1.shipWrapVx, alpha)
         local vy = lerp(f0.shipVy + f0.shipWrapVy, f1.shipVy + f1.shipWrapVy, alpha)
         local boostLevel = lerp(f0.shipBoostLevel, f1.shipBoostLevel, alpha)
+        local bgScale = Display.scale or 1
+        local bgW = width or Display.windowWidth or Display.VIRTUAL_WIDTH
+        local bgH = height or Display.windowHeight or Display.VIRTUAL_HEIGHT
         if self.stageBackground then
             local bgBoost = 120 * boostLevel
             self.stageBackground:update(dt * speed,
-                vx + f0.shipBoostX * bgBoost,
-                vy + f0.shipBoostY * bgBoost,
-                width, height)
+                (vx + f0.shipBoostX * bgBoost) * bgScale,
+                (vy + f0.shipBoostY * bgBoost) * bgScale,
+                bgW, bgH)
         end
         if self.stars then
             local surge = 1050 * boostLevel
             self.stars:update(dt * speed,
-                120 + vx * 2.8 + f0.shipBoostX * surge,
-                -290 + vy * 2.8 + f0.shipBoostY * surge,
-                f0.shipAccelerating and 1 or 0, width, height, boostLevel)
+                (120 + vx * 2.8 + f0.shipBoostX * surge) * bgScale,
+                (-290 + vy * 2.8 + f0.shipBoostY * surge) * bgScale,
+                f0.shipAccelerating and 1 or 0, bgW, bgH, boostLevel)
         end
     end
 end
@@ -1082,17 +1088,27 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
     local srcTime, speed = Replay.mapPlaybackTime(clip, playbackTime)
     local f0, f1, alpha = Replay.sampleClipFrame(clip, srcTime)
 
-    -- Background
+    -- Background (fills full physical window in live playback, or export canvas when exporting)
+    local bgW = forExport and width or (Display.windowWidth or width)
+    local bgH = forExport and height or (Display.windowHeight or height)
     if bgObj then
-        bgObj:draw(width, height)
+        bgObj:draw(bgW, bgH)
         if starsObj then
             starsObj:draw({ transparent = true })
         end
     elseif starsObj then
         starsObj:draw()
     else
+        g.push("all")
+        g.origin()
         g.setColor(0.018, 0.025, 0.065, 1)
-        g.rectangle("fill", 0, 0, width, height)
+        g.rectangle("fill", 0, 0, bgW, bgH)
+        g.pop()
+    end
+
+    g.push("all")
+    if not forExport then
+        Display.applyTransform()
     end
 
     -- Reconstruct camera matching target viewport size
@@ -1236,7 +1252,12 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
 
     -- Draw player with arena wrap scissor
     g.push("all")
-    g.intersectScissor(originX, originY, Arena.width * cam.zoom, Arena.height * cam.zoom)
+    if forExport then
+        g.intersectScissor(originX, originY, Arena.width * cam.zoom, Arena.height * cam.zoom)
+    else
+        local sx, sy, sw, sh = Display.virtualRectToWindow(originX, originY, Arena.width * cam.zoom, Arena.height * cam.zoom)
+        g.intersectScissor(sx, sy, sw, sh)
+    end
     local destroyed = shipProxy:isDestroyed()
     if not destroyed then shipProxy:drawBoostPulse() end
     local reach = destroyed and 90 or 75 + 70 * shipProxy.boostLevel
@@ -1323,6 +1344,7 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
     g.printf(string.format("%.1fs / %.1fs", playbackTime, clip.playbackDuration), rx, 55, 218, "center")
 
     g.pop()
+    g.pop()
 
     if forExport then return end
 end
@@ -1369,6 +1391,7 @@ function Replay:drawPlayback(width, height, fonts)
 
     local g = love.graphics
     g.push("all")
+    Display.applyTransform()
 
     -- Bottom control panel
     local panelY = height - 134
@@ -1407,7 +1430,7 @@ function Replay:drawPlayback(width, height, fonts)
 
     -- Buttons
     local buttons = self:layoutButtons(width, height)
-    local mx, my = love.mouse.getPosition()
+    local mx, my = Display.getMousePosition()
     local hovered = self:buttonAt(mx, my)
     g.setFont(fonts.menuBody or fonts.body)
     for _, b in ipairs(buttons) do
