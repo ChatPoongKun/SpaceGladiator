@@ -689,6 +689,108 @@ function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCa
     end
 end
 
+-- Opaque vertex-colored gradient meshes for enemy hulls (cached lazily on first draw).
+local hullMeshes
+
+local function vtx(x, y, c)
+    return { x, y, 0, 0, c[1], c[2], c[3], 1 }
+end
+
+local function fanMesh(g, cx, cy, cc, rim, rc)
+    local verts = { vtx(cx, cy, cc) }
+    for i = 1, #rim, 2 do
+        verts[#verts + 1] = vtx(rim[i], rim[i + 1], rc)
+    end
+    verts[#verts + 1] = vtx(rim[1], rim[2], rc)
+    return g.newMesh(verts, "fan", "static")
+end
+
+local function circleMesh(g, cx, cy, r, segments, cc, rc)
+    local verts = { vtx(cx, cy, cc) }
+    local step = 2 * math.pi / segments
+    for i = 0, segments do
+        local a = i * step
+        verts[#verts + 1] = vtx(cx + math.cos(a) * r, cy + math.sin(a) * r, rc)
+    end
+    return g.newMesh(verts, "fan", "static")
+end
+
+local function gradPolyMesh(g, pointsAndColors)
+    local verts = {}
+    local cx, cy, cr, cg, cb = 0, 0, 0, 0, 0
+    local n = #pointsAndColors
+    for i = 1, n do
+        local p = pointsAndColors[i]
+        cx, cy = cx + p[1], cy + p[2]
+        cr, cg, cb = cr + p[3][1], cg + p[3][2], cb + p[3][3]
+    end
+    verts[1] = { cx / n, cy / n, 0, 0, cr / n, cg / n, cb / n, 1 }
+    for i = 1, n do
+        local p = pointsAndColors[i]
+        verts[#verts + 1] = vtx(p[1], p[2], p[3])
+    end
+    verts[#verts + 1] = vtx(pointsAndColors[1][1], pointsAndColors[1][2], pointsAndColors[1][3])
+    return g.newMesh(verts, "fan", "static")
+end
+
+local function getHullMeshes(g)
+    if hullMeshes then return hullMeshes end
+    if not g.newMesh then return nil end
+
+    -- Kind 1: WEDGE (TRACER)
+    local wDark = { 0.085, 0.028, 0.055 }
+    local wWarm = { 0.44, 0.14, 0.08 }
+    local wCoreRim = { 1, 0.42, 0.16 }
+    local wCoreMid = { 1, 0.94, 0.72 }
+    local wLHi, wLLo = { 0.30, 0.12, 0.18 }, { 0.15, 0.055, 0.095 }
+    local wRHi, wRLo = { 0.46, 0.16, 0.23 }, { 0.25, 0.085, 0.135 }
+
+    -- Kind 2: EQUILATERAL (BEAMCASTER)
+    local eDark = { 0.085, 0.032, 0.075 }
+    local eGlow = { 0.48, 0.10, 0.28 }
+    local eLHi, eLLo = { 0.30, 0.11, 0.19 }, { 0.15, 0.055, 0.105 }
+    local eRHi, eRLo = { 0.45, 0.15, 0.23 }, { 0.24, 0.08, 0.14 }
+
+    -- Kind 3: OBTUSE (BULWARK-PRIME)
+    local oDark = { 0.09, 0.035, 0.065 }
+    local oAmber = { 0.52, 0.24, 0.09 }
+    local oLHi, oLLo = { 0.32, 0.13, 0.18 }, { 0.16, 0.065, 0.105 }
+    local oRHi, oRLo = { 0.45, 0.17, 0.23 }, { 0.25, 0.09, 0.135 }
+    local oCitHi, oCitLo = { 0.34, 0.14, 0.19 }, { 0.15, 0.06, 0.10 }
+
+    hullMeshes = {
+        [1] = {
+            underframe = fanMesh(g, 0, -1, wWarm, { 0, -12, -9, 9, 0, 6, 9, 9 }, wDark),
+            core = fanMesh(g, 0, -2, wCoreMid, { 0, -9, -2.5, 0, 0, 5, 2.5, 0 }, wCoreRim),
+            leftMain = gradPolyMesh(g, { { -2.2, -16.5, wLHi }, { -11.5, 10, wLLo }, { -7.5, 11, wLLo }, { -4.2, 4.5, wLHi } }),
+            leftInner = gradPolyMesh(g, { { -2.2, -16.5, wLHi }, { -4.2, 4.5, wLLo }, { -2.4, -4, wLHi } }),
+            rightMain = gradPolyMesh(g, { { 2.2, -16.5, wRHi }, { 11.5, 10, wRLo }, { 7.5, 11, wRLo }, { 4.2, 4.5, wRHi } }),
+            rightInner = gradPolyMesh(g, { { 2.2, -16.5, wRHi }, { 4.2, 4.5, wRLo }, { 2.4, -4, wRHi } }),
+        },
+        [2] = {
+            underframe = fanMesh(g, 0, -8, eGlow, { 0, -14, -16, 9, 16, 9 }, eDark),
+            orb = circleMesh(g, 0, -10, 3.4, 18, { 1, 1, 1 }, { 1, 0.20, 0.58 }),
+            leftRail = gradPolyMesh(g, { { -4, -23.5, eLHi }, { -9.5, -6, eLLo }, { -8, 13, eLLo }, { -4.5, 14, eLHi } }),
+            leftRailIn = gradPolyMesh(g, { { -4, -23.5, eLHi }, { -4.5, 14, eLLo }, { -3.2, -13, eLHi } }),
+            rightRail = gradPolyMesh(g, { { 4, -23.5, eRHi }, { 9.5, -6, eRLo }, { 8, 13, eRLo }, { 4.5, 14, eRHi } }),
+            rightRailIn = gradPolyMesh(g, { { 4, -23.5, eRHi }, { 4.5, 14, eRLo }, { 3.2, -13, eRHi } }),
+            leftWing = gradPolyMesh(g, { { -11.5, -3, eLHi }, { -21.5, 10.5, eLLo }, { -17.5, 14, eLLo }, { -10, 9.5, eLHi } }),
+            rightWing = gradPolyMesh(g, { { 11.5, -3, eRHi }, { 21.5, 10.5, eRLo }, { 17.5, 14, eRLo }, { 10, 9.5, eRHi } }),
+            bridge = gradPolyMesh(g, { { -4.5, 2, eLHi }, { 4.5, 2, eRHi }, { 3.5, 11, eRLo }, { -3.5, 11, eLLo } }),
+        },
+        [3] = {
+            underframe = fanMesh(g, 0, 3, oAmber, { 0, -13, -26, 8, 0, 13, 26, 8 }, oDark),
+            leftWing = gradPolyMesh(g, { { -13, -7, oLHi }, { -28.5, 6.5, oLLo }, { -24, 12.5, oLLo }, { -14, 9, oLHi }, { -11, -1, oLHi } }),
+            rightWing = gradPolyMesh(g, { { 13, -7, oRHi }, { 28.5, 6.5, oRLo }, { 24, 12.5, oRLo }, { 14, 9, oRHi }, { 11, -1, oRHi } }),
+            citadel = fanMesh(g, 0, 2, oCitHi, { 0, -16, -11, -8, -9.5, 11.5, -3.5, 13.5, 3.5, 13.5, 9.5, 11.5, 11, -8 }, oCitLo),
+            browLeft = gradPolyMesh(g, { { 0, -15.5, { 0.96, 0.76, 0.34 } }, { -9, -8, { 0.72, 0.48, 0.16 } }, { -6.5, -4.5, { 0.78, 0.54, 0.18 } }, { 0, -9.5, { 0.92, 0.68, 0.26 } } }),
+            browRight = gradPolyMesh(g, { { 0, -15.5, { 1, 0.92, 0.60 } }, { 9, -8, { 0.88, 0.64, 0.24 } }, { 6.5, -4.5, { 0.94, 0.72, 0.30 } }, { 0, -9.5, { 1, 0.86, 0.46 } } }),
+            core = fanMesh(g, 0, 2, { 1, 0.98, 0.88 }, { 0, -4.5, -4.2, 2, 0, 8, 4.2, 2 }, { 1, 0.68, 0.18 }),
+        },
+    }
+    return hullMeshes
+end
+
 -- Nova Assault enemy hull renderer (Option 1: TRACER, BEAMCASTER, BULWARK-PRIME).
 -- Drawn in local space centered at (0, 0), nose pointing up (-Y).
 function Enemies.drawHull(kind, aimed, time, opts)
@@ -697,9 +799,10 @@ function Enemies.drawHull(kind, aimed, time, opts)
     local pulse = 0.86 + 0.14 * math.sin(t * 7.2)
     local thrust = opts and opts.thrust or 0
     local flicker = 1 + math.sin(t * 48) * 0.14
+    local meshes = getHullMeshes(g)
 
     if kind == 1 then
-        -- WEDGE: TRACER (split obsidian pincer interceptor + exposed burning orange core)
+        -- WEDGE: TRACER (split obsidian pincer interceptor + opaque gradient core)
         if thrust > 0.05 then
             local len = (9 + 6 * thrust) * flicker
             g.setColor(1, 0.42, 0.18, 0.72 * thrust)
@@ -708,27 +811,31 @@ function Enemies.drawHull(kind, aimed, time, opts)
             g.polygon("fill", -1.4, 6, 0, 6 + len * 0.55, 1.4, 6)
         end
 
-        -- Dark underframe (split into 2 convex triangles)
-        g.setColor(0.07, 0.024, 0.05, 1)
-        g.polygon("fill", 0, -12, -9, 9, 0, 6)
-        g.polygon("fill", 0, -12, 0, 6, 9, 9)
-
-        -- Exposed hot-orange internal core in cleft
-        g.setColor(1, 0.46, 0.20, 0.30 * pulse)
-        g.circle("fill", 0, -1, 5.2)
-        g.setColor(1, aimed and 0.68 or 0.54, aimed and 0.42 or 0.25, 0.95 * pulse)
-        g.polygon("fill", 0, -9, -2.5, 0, 0, 5, 2.5, 0)
-        g.setColor(1, 0.97, 0.84, pulse)
+        if meshes then
+            g.setColor(1, 1, 1, 1)
+            g.draw(meshes[1].underframe)
+            g.setColor(1, aimed and 1 or (0.88 + 0.12 * pulse), aimed and 0.92 or 1, 1)
+            g.draw(meshes[1].core)
+            g.setColor(1, 1, 1, 1)
+            g.draw(meshes[1].leftMain)
+            g.draw(meshes[1].leftInner)
+            g.draw(meshes[1].rightMain)
+            g.draw(meshes[1].rightInner)
+        else
+            g.setColor(0.18, 0.06, 0.07, 1)
+            g.polygon("fill", 0, -12, -9, 9, 0, 6)
+            g.polygon("fill", 0, -12, 0, 6, 9, 9)
+            g.setColor(1, aimed and 0.72 or 0.58, aimed and 0.44 or 0.26, 1)
+            g.polygon("fill", 0, -9, -2.5, 0, 0, 5, 2.5, 0)
+            g.setColor(0.22, 0.09, 0.14, 1)
+            g.polygon("fill", -2.2, -16.5, -11.5, 10, -7.5, 11, -4.2, 4.5)
+            g.polygon("fill", -2.2, -16.5, -4.2, 4.5, -2.4, -4)
+            g.setColor(0.37, 0.12, 0.18, 1)
+            g.polygon("fill", 2.2, -16.5, 11.5, 10, 7.5, 11, 4.2, 4.5)
+            g.polygon("fill", 2.2, -16.5, 4.2, 4.5, 2.4, -4)
+        end
+        g.setColor(1, 0.97, 0.84, 1)
         g.circle("fill", 0, -2, 1.5)
-
-        -- Left obsidian pincer armor (convex quad + inner bridge)
-        g.setColor(0.22, 0.09, 0.14, 1)
-        g.polygon("fill", -2.2, -16.5, -11.5, 10, -7.5, 11, -4.2, 4.5)
-        g.polygon("fill", -2.2, -16.5, -4.2, 4.5, -2.4, -4)
-        -- Right lit ruby-obsidian pincer armor
-        g.setColor(0.37, 0.12, 0.18, 1)
-        g.polygon("fill", 2.2, -16.5, 11.5, 10, 7.5, 11, 4.2, 4.5)
-        g.polygon("fill", 2.2, -16.5, 4.2, 4.5, 2.4, -4)
 
         -- Crisp vermilion/coral outlines & leading-edge speculars
         g.setLineWidth(1.1)
@@ -750,7 +857,7 @@ function Enemies.drawHull(kind, aimed, time, opts)
         g.line(2.2, -15.5, 10.5, 9)
 
     elseif kind == 2 then
-        -- EQUILATERAL: BEAMCASTER (tuning-fork emitter rails + floating magenta laser orb)
+        -- EQUILATERAL: BEAMCASTER (tuning-fork emitter rails + opaque gradient laser orb)
         if thrust > 0.05 then
             local len = (8 + 6 * thrust) * flicker
             for _, side in ipairs({ -1, 1 }) do
@@ -762,44 +869,51 @@ function Enemies.drawHull(kind, aimed, time, opts)
             end
         end
 
-        -- Dark chassis frame
-        g.setColor(0.07, 0.028, 0.062, 1)
-        g.polygon("fill", 0, -14, -16, 9, 16, 9)
-        g.setLineWidth(0.9)
-        g.setColor(0.26, 0.08, 0.15, 0.9)
-        g.polygon("line", 0, -14, -16, 9, 16, 9)
+        if meshes then
+            g.setColor(1, 1, 1, 1)
+            g.draw(meshes[2].underframe)
+            g.setLineWidth(0.9)
+            g.setColor(0.26, 0.08, 0.15, 1)
+            g.polygon("line", 0, -14, -16, 9, 16, 9)
+            g.setColor(1, 1, 1, 1)
+            g.draw(meshes[2].orb)
+            g.draw(meshes[2].leftRail)
+            g.draw(meshes[2].leftRailIn)
+            g.draw(meshes[2].rightRail)
+            g.draw(meshes[2].rightRailIn)
+            g.draw(meshes[2].leftWing)
+            g.draw(meshes[2].rightWing)
+            g.draw(meshes[2].bridge)
+        else
+            g.setColor(0.16, 0.05, 0.12, 1)
+            g.polygon("fill", 0, -14, -16, 9, 16, 9)
+            g.setLineWidth(0.9)
+            g.setColor(0.26, 0.08, 0.15, 1)
+            g.polygon("line", 0, -14, -16, 9, 16, 9)
+            g.setColor(1, 0.23, 0.63, 1)
+            g.circle("fill", 0, -10, 3.4)
+            g.setColor(0.22, 0.085, 0.145, 1)
+            g.polygon("fill", -4, -23.5, -9.5, -6, -8, 13, -4.5, 14)
+            g.polygon("fill", -4, -23.5, -4.5, 14, -3.2, -13)
+            g.setColor(0.36, 0.11, 0.18, 1)
+            g.polygon("fill", 4, -23.5, 9.5, -6, 8, 13, 4.5, 14)
+            g.polygon("fill", 4, -23.5, 4.5, 14, 3.2, -13)
+            g.setColor(0.20, 0.08, 0.135, 1)
+            g.polygon("fill", -11.5, -3, -21.5, 10.5, -17.5, 14, -10, 9.5)
+            g.setColor(0.35, 0.11, 0.175, 1)
+            g.polygon("fill", 11.5, -3, 21.5, 10.5, 17.5, 14, 10, 9.5)
+            g.setColor(0.165, 0.05, 0.11, 1)
+            g.polygon("fill", -4.5, 2, 4.5, 2, 3.5, 11, -3.5, 11)
+        end
 
-        -- Suspended magenta laser focusing orb in front cleft
-        g.setColor(1, 0.24, 0.62, 0.28 * pulse)
-        g.circle("fill", 0, -10, 7.5)
-        g.setColor(1, 0.23, 0.63, 0.96 * pulse)
-        g.circle("fill", 0, -10, 3.4)
         g.setLineWidth(0.85)
-        g.setColor(1, 0.84, 0.94, 0.95 * pulse)
+        g.setColor(1, 0.84, 0.94, 1)
         g.circle("line", 0, -10, 3.4)
-        g.setColor(1, 1, 1, pulse)
+        g.setColor(1, 1, 1, 1)
         g.circle("fill", 0, -10, 1.5)
         g.setLineWidth(1.2)
-        g.setColor(1, 0.55, 0.82, 0.88 * pulse)
+        g.setColor(1, 0.55, 0.82, 0.92 * pulse)
         g.line(0, -21, 0, -13)
-
-        -- Split tuning-fork twin emitter rails
-        g.setColor(0.22, 0.085, 0.145, 1)
-        g.polygon("fill", -4, -23.5, -9.5, -6, -8, 13, -4.5, 14)
-        g.polygon("fill", -4, -23.5, -4.5, 14, -3.2, -13)
-        g.setColor(0.36, 0.11, 0.18, 1)
-        g.polygon("fill", 4, -23.5, 9.5, -6, 8, 13, 4.5, 14)
-        g.polygon("fill", 4, -23.5, 4.5, 14, 3.2, -13)
-
-        -- Separated outer delta stabilizer plates
-        g.setColor(0.20, 0.08, 0.135, 1)
-        g.polygon("fill", -11.5, -3, -21.5, 10.5, -17.5, 14, -10, 9.5)
-        g.setColor(0.35, 0.11, 0.175, 1)
-        g.polygon("fill", 11.5, -3, 21.5, 10.5, 17.5, 14, 10, 9.5)
-
-        -- Center rear bridge
-        g.setColor(0.165, 0.05, 0.11, 1)
-        g.polygon("fill", -4.5, 2, 4.5, 2, 3.5, 11, -3.5, 11)
 
         -- Crisp crimson/coral outlines
         g.setLineWidth(1.1)
@@ -822,7 +936,7 @@ function Enemies.drawHull(kind, aimed, time, opts)
         g.polygon("line", -4.5, 2, 4.5, 2, 3.5, 11, -3.5, 11)
 
     else
-        -- OBTUSE: BULWARK-PRIME (obsidian + ceremonial gold command flying wing + 6 missile bays)
+        -- OBTUSE: BULWARK-PRIME (obsidian + ceremonial gold command flying wing + opaque gradients)
         if thrust > 0.05 then
             local len = (9 + 6 * thrust) * flicker
             for _, spec in ipairs({ { -11, 9, 0.75 }, { 0, 11, 1.0 }, { 11, 9, 0.75 } }) do
@@ -834,18 +948,19 @@ function Enemies.drawHull(kind, aimed, time, opts)
             end
         end
 
-        -- Heavy armored underframe + glowing amber channel
-        g.setColor(0.07, 0.028, 0.055, 1)
-        g.polygon("fill", 0, -13, -26, 8, 0, 13, 26, 8)
-        g.setLineWidth(2.6)
-        g.setColor(1, 0.61, 0.19, 0.45 * pulse)
-        g.line(-22, 4, 22, 4)
-
-        -- Outer split armored wing plates (convex pentagons)
-        g.setColor(0.24, 0.10, 0.145, 1)
-        g.polygon("fill", -13, -7, -28.5, 6.5, -24, 12.5, -14, 9, -11, -1)
-        g.setColor(0.36, 0.13, 0.18, 1)
-        g.polygon("fill", 13, -7, 28.5, 6.5, 24, 12.5, 14, 9, 11, -1)
+        if meshes then
+            g.setColor(1, 1, 1, 1)
+            g.draw(meshes[3].underframe)
+            g.draw(meshes[3].leftWing)
+            g.draw(meshes[3].rightWing)
+        else
+            g.setColor(0.18, 0.08, 0.08, 1)
+            g.polygon("fill", 0, -13, -26, 8, 0, 13, 26, 8)
+            g.setColor(0.24, 0.10, 0.145, 1)
+            g.polygon("fill", -13, -7, -28.5, 6.5, -24, 12.5, -14, 9, -11, -1)
+            g.setColor(0.36, 0.13, 0.18, 1)
+            g.polygon("fill", 13, -7, 28.5, 6.5, 24, 12.5, 14, 9, 11, -1)
+        end
 
         g.setLineWidth(1.2)
         g.setColor(1, aimed and 0.74 or 0.60, aimed and 0.42 or 0.24, 1)
@@ -853,23 +968,33 @@ function Enemies.drawHull(kind, aimed, time, opts)
         g.setColor(1, aimed and 0.82 or 0.72, aimed and 0.52 or 0.33, 1)
         g.polygon("line", 13, -7, 28.5, 6.5, 24, 12.5, 14, 9, 11, -1)
 
-        -- Central command citadel (convex heptagon)
-        g.setColor(0.22, 0.095, 0.14, 1)
-        g.polygon("fill", 0, -16, -11, -8, -9.5, 11.5, -3.5, 13.5, 3.5, 13.5, 9.5, 11.5, 11, -8)
+        if meshes then
+            g.setColor(1, 1, 1, 1)
+            g.draw(meshes[3].citadel)
+        else
+            g.setColor(0.22, 0.095, 0.14, 1)
+            g.polygon("fill", 0, -16, -11, -8, -9.5, 11.5, -3.5, 13.5, 3.5, 13.5, 9.5, 11.5, 11, -8)
+        end
         g.setLineWidth(1.3)
         g.setColor(1, 0.82, 0.44, 1)
         g.polygon("line", 0, -16, -11, -8, -9.5, 11.5, -3.5, 13.5, 3.5, 13.5, 9.5, 11.5, 11, -8)
 
-        -- Sculpted ceremonial gold brow chevron (two convex quads)
-        g.setColor(0.86, 0.62, 0.22, 1)
-        g.polygon("fill", 0, -15.5, -9, -8, -6.5, -4.5, 0, -9.5)
-        g.setColor(1, 0.84, 0.44, 1)
-        g.polygon("fill", 0, -15.5, 9, -8, 6.5, -4.5, 0, -9.5)
+        -- Sculpted ceremonial gold brow chevron (opaque gradient)
+        if meshes then
+            g.setColor(1, 1, 1, 1)
+            g.draw(meshes[3].browLeft)
+            g.draw(meshes[3].browRight)
+        else
+            g.setColor(0.86, 0.62, 0.22, 1)
+            g.polygon("fill", 0, -15.5, -9, -8, -6.5, -4.5, 0, -9.5)
+            g.setColor(1, 0.84, 0.44, 1)
+            g.polygon("fill", 0, -15.5, 9, -8, 6.5, -4.5, 0, -9.5)
+        end
         g.setLineWidth(0.7)
         g.setColor(1, 0.96, 0.80, 0.9)
         g.line(-9, -8, 0, -15.5, 9, -8)
 
-        -- 6 recessed crimson missile bay blisters (3 per wing)
+        -- 6 recessed crimson missile bay blisters (3 per wing, opaque)
         local pods = {
             { -21.5, 5.2, -0.24 }, { -17.0, 3.2, -0.17 }, { -12.5, 1.7, -0.10 },
             { 12.5, 1.7, 0.10 }, { 17.0, 3.2, 0.17 }, { 21.5, 5.2, 0.24 },
@@ -879,20 +1004,23 @@ function Enemies.drawHull(kind, aimed, time, opts)
             g.push()
             g.translate(pod[1], pod[2])
             g.rotate(pod[3])
-            g.setColor(1, 0.24, 0.26, 0.95)
+            g.setColor(0.95, 0.22, 0.24, 1)
             g.rectangle("fill", -1.5, -2.2, 3.0, 4.4, 0.7, 0.7)
-            g.setColor(1, 0.84, 0.48, 0.9)
+            g.setColor(1, 0.84, 0.48, 0.95)
             g.rectangle("line", -1.5, -2.2, 3.0, 4.4, 0.7, 0.7)
             g.pop()
         end
 
-        -- Burning solar-gold reactor core
-        g.setColor(1, 0.76, 0.24, 0.32 * pulse)
-        g.circle("fill", 0, 2, 7.6)
-        g.setColor(1, 0.83, 0.36, 0.96 * pulse)
-        g.polygon("fill", 0, -4.5, -4.2, 2, 0, 8, 4.2, 2)
+        -- Burning solar-gold reactor core (opaque gradient)
+        if meshes then
+            g.setColor(1, 1, 1, 1)
+            g.draw(meshes[3].core)
+        else
+            g.setColor(1, 0.83, 0.36, 1)
+            g.polygon("fill", 0, -4.5, -4.2, 2, 0, 8, 4.2, 2)
+        end
         g.setLineWidth(0.8)
-        g.setColor(1, 1, 1, 0.95 * pulse)
+        g.setColor(1, 1, 1, 1)
         g.polygon("line", 0, -4.5, -4.2, 2, 0, 8, 4.2, 2)
         g.circle("fill", 0, 2, 1.8)
     end

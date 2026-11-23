@@ -347,129 +347,83 @@ function Ship:draw(time)
     g.translate(self.x, self.y)
     g.rotate(self.angle)
 
-    -- Twin Nova Drift-style ribbon thrusters aligned with the dual exhaust ports (x = +-6.2).
+    -- Twin thrusters aligned with the Option A exhaust ports (x = +-3.2, y = 17).
     if boost > 0 then
         local trail = (86 + math.sin(t * 96) * 14) * boost
         g.setColor(0.14, 0.57, 1, boost * 0.20 * blinkAlpha)
-        g.ellipse("fill", 0, 21 + trail * 0.30, 17, 13 + trail * 0.62)
+        g.ellipse("fill", 0, 22 + trail * 0.30, 15, 13 + trail * 0.62)
         for _, side in ipairs({ -1, 1 }) do
-            local nx = side * 6.2
+            local nx = side * 3.2
             g.setColor(0.20, 0.72, 1, boost * 0.88 * blinkAlpha)
-            g.polygon("fill", nx - 4.2, 15, nx, 22 + trail, nx + 4.2, 15)
+            g.polygon("fill", nx - 3.6, 16.5, nx, 22 + trail, nx + 3.6, 16.5)
             g.setColor(0.82, 0.99, 1, boost * blinkAlpha)
-            g.polygon("fill", nx - 2.2, 15, nx, 19 + trail * 0.56, nx + 2.2, 15)
+            g.polygon("fill", nx - 1.8, 16.5, nx, 19 + trail * 0.56, nx + 1.8, 16.5)
             g.setColor(0.48, 0.90, 1, boost * 0.65 * blinkAlpha)
             g.setLineWidth(1.6)
-            g.line(side * 12.5, 20, side * 13.5, 26 + trail * 0.66)
+            g.line(side * 10, 18, side * 11, 25 + trail * 0.66)
         end
     elseif self.accelerating then
-        local flame = 24 + math.sin(t * 57) * 6 + math.sin(t * 31) * 3
+        local flame = 23 + math.sin(t * 57) * 5 + math.sin(t * 31) * 3
         g.setColor(0.18, 0.74, 1, 0.14 * blinkAlpha)
-        g.ellipse("fill", 0, 21 + flame * 0.25, 14, flame * 0.75 + 8)
+        g.ellipse("fill", 0, 22 + flame * 0.25, 12, flame * 0.75 + 7)
         for _, side in ipairs({ -1, 1 }) do
-            local nx = side * 6.2
+            local nx = side * 3.2
             g.setColor(0.16, 0.62, 1, 0.78 * blinkAlpha)
-            g.polygon("fill", nx - 3.6, 15, nx, 16 + flame, nx + 3.6, 15)
+            g.polygon("fill", nx - 2.6, 16.5, nx, 17 + flame, nx + 2.6, 16.5)
             g.setColor(0.48, 0.96, 1, 0.92 * blinkAlpha)
-            g.polygon("fill", nx - 2.3, 15, nx, 16 + flame * 0.68, nx + 2.3, 15)
+            g.polygon("fill", nx - 1.7, 16.5, nx, 17 + flame * 0.68, nx + 1.7, 16.5)
             g.setColor(0.96, 1, 1, blinkAlpha)
-            g.polygon("fill", nx - 1.3, 15, nx, 15 + flame * 0.42, nx + 1.3, 15)
+            g.polygon("fill", nx - 1.0, 16.5, nx, 16 + flame * 0.42, nx + 1.0, 16.5)
         end
     end
 
-    -- Soft cyan ambient aura behind the chassis.
+    -- Soft cyan ambient aura behind the Option A Solid Silhouette hull.
     for scale = 2, 1, -1 do
-        local glowAlpha = (0.032 + 0.065 * blinkFlash) * (3 - scale) * blinkAlpha
-        setBlendedColor(g, 0.30, 0.86, 1, glowAlpha, blinkFlash, 1)
+        local glowAlpha = (0.04 + 0.065 * blinkFlash) * (3 - scale) * blinkAlpha
+        setBlendedColor(g, 0.50, 0.91, 1, glowAlpha, blinkFlash, 1)
         g.push()
-        g.scale(1 + scale * 0.10)
-        g.polygon("fill", 0, -23, -19, 13, -10, 16, 10, 16, 19, 13)
+        g.scale(1 + scale * 0.08)
+        g.polygon("fill", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, 0, 17)
+        g.polygon("fill", 0, -26, 0, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
         g.pop()
     end
 
-    -- 1. Recessed dark skeletal chassis underframe (visible inside negative-space slits).
-    setBlendedColor(g, 0.04, 0.075, 0.125, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", -5, -14, 5, -14, 17, 12, 10, 16, -10, 16, -17, 12)
-    setBlendedColor(g, 0.12, 0.23, 0.34, 0.9, blinkFlash, blinkAlpha)
-    g.setLineWidth(0.9)
-    g.polygon("line", -5, -14, 5, -14, 17, 12, 10, 16, -10, 16, -17, 12)
+    -- 1. Main hull (two-tone directional shading: lit right ice-white, shaded left cool-steel).
+    setBlendedColor(g, 0.894, 0.933, 0.969, 1, blinkFlash * 0.72, blinkAlpha)
+    g.polygon("fill", 0, -26, 5, -13, 7, -3, 8, 12, 5, 17, 0, 17)
+    g.polygon("fill", 7, -3, 20, 9, 20, 14, 8, 12)
 
-    -- 2. Internal glowing cyan reactor core & wing-gap plasma conduits.
-    setBlendedColor(g, 0.22, 0.88, 1, 0.26 * pulse, blinkFlash, blinkAlpha)
-    g.circle("fill", 0, -9, 6.2)
-    setBlendedColor(g, 0.38, 0.96, 1, 0.92 * pulse, blinkFlash, blinkAlpha)
-    g.polygon("fill", 0, -17, -2.6, -6, 0, 10, 2.6, -6)
-    g.setLineWidth(2.4)
-    setBlendedColor(g, 0.28, 0.92, 1, 0.35 * pulse, blinkFlash, blinkAlpha)
-    g.line(-6, 2, -13, 9)
-    g.line(6, 2, 13, 9)
-    g.setLineWidth(1.2)
-    setBlendedColor(g, 0.62, 0.98, 1, 0.90 * pulse, blinkFlash, blinkAlpha)
-    g.line(-6, 2, -13, 9)
-    g.line(6, 2, 13, 9)
+    setBlendedColor(g, 0.624, 0.702, 0.780, 1, blinkFlash * 0.72, blinkAlpha)
+    g.polygon("fill", 0, -26, 0, 17, -5, 17, -8, 12, -7, -3, -5, -13)
+    g.polygon("fill", -7, -3, -8, 12, -20, 14, -20, 9)
 
-    -- 3. Outer split delta wing armor plates (directional ice-titanium bevel shading).
-    -- Left wing (cooler mid-steel)
-    setBlendedColor(g, 0.50, 0.67, 0.82, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", -7, -3, -20, 12, -16.5, 16.5, -10.5, 11)
-    setBlendedColor(g, 0.34, 0.49, 0.64, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", -7, -3, -10.5, 11, -6, 8)
-    setBlendedColor(g, 0.26, 0.40, 0.55, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", -10.5, 11, -8.5, 14, -6, 8)
+    -- 2. Wing cyan energy stripes & center spine seam.
+    g.setLineWidth(1.6)
+    setBlendedColor(g, 0.173, 0.812, 1, 0.95, blinkFlash, blinkAlpha)
+    g.line(-8, 3, -17.5, 11)
+    g.line(8, 3, 17.5, 11)
 
-    -- Right wing (sunlit bright ice-titanium)
-    setBlendedColor(g, 0.72, 0.86, 0.96, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 7, -3, 20, 12, 16.5, 16.5, 10.5, 11)
-    setBlendedColor(g, 0.50, 0.67, 0.82, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 7, -3, 10.5, 11, 6, 8)
-    setBlendedColor(g, 0.38, 0.55, 0.70, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 10.5, 11, 8.5, 14, 6, 8)
+    g.setLineWidth(0.75)
+    setBlendedColor(g, 0.424, 0.506, 0.592, 0.9, blinkFlash, blinkAlpha)
+    g.line(0, -2, 0, 14)
 
-    g.setLineWidth(1.0 + blinkFlash * 0.6)
-    setBlendedColor(g, 0.84, 0.95, 1, 0.92, blinkFlash, blinkAlpha)
-    g.line(-7, -3, -20, 12, -16.5, 16.5, -10.5, 11, -8.5, 14, -6, 8, -7, -3)
-    setBlendedColor(g, 0.96, 0.99, 1, 0.98, blinkFlash, blinkAlpha)
-    g.line(7, -3, 20, 12, 16.5, 16.5, 10.5, 11, 8.5, 14, 6, 8, 7, -3)
+    -- 3. Cockpit canopy & glowing visor glint.
+    setBlendedColor(g, 0.051, 0.106, 0.173, 1, blinkFlash * 0.72, blinkAlpha)
+    g.polygon("fill", 0, -18, 3, -10, 2, -4, -2, -4, -3, -10)
+    setBlendedColor(g, 0.561, 0.953, 1, 0.95 * pulse, blinkFlash, blinkAlpha)
+    g.polygon("fill", 0, -16.5, 1.6, -10.5, 0, -8.5)
 
-    -- 4. Split forked Assault nose prow plates (signature Nova Drift cleft prow).
-    -- Left prow
-    setBlendedColor(g, 0.64, 0.80, 0.93, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", -2.5, -24, -7.5, -10, -5.8, 8, -2, -5, -1.4, -17)
-    setBlendedColor(g, 0.44, 0.61, 0.76, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", -5.8, 8, -9, 15.5, -3.5, 15.5, -2, -5)
+    -- 4. Twin plasma exhaust bars & wingtip emitter dots.
+    setBlendedColor(g, 0.435, 0.941, 1, 0.84 + 0.16 * pulse, blinkFlash, blinkAlpha)
+    g.rectangle("fill", -5.2, 15.6, 4, 2.6, 0.6, 0.6)
+    g.rectangle("fill", 1.2, 15.6, 4, 2.6, 0.6, 0.6)
+    g.circle("fill", -20, 11.5, 1.5)
+    g.circle("fill", 20, 11.5, 1.5)
 
-    -- Right prow (sunlit pale platinum)
-    setBlendedColor(g, 0.84, 0.94, 1, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 2.5, -24, 7.5, -10, 5.8, 8, 2, -5, 1.4, -17)
-    setBlendedColor(g, 0.58, 0.75, 0.89, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 5.8, 8, 9, 15.5, 3.5, 15.5, 2, -5)
-
-    g.setLineWidth(1.0 + blinkFlash * 0.6)
-    setBlendedColor(g, 0.88, 0.96, 1, 0.95, blinkFlash, blinkAlpha)
-    g.line(-2.5, -24, -7.5, -10, -5.8, 8, -9, 15.5, -3.5, 15.5, -2, -5, -1.4, -17, -2.5, -24)
-    setBlendedColor(g, 1, 1, 1, 0.98, blinkFlash, blinkAlpha)
-    g.line(2.5, -24, 7.5, -10, 5.8, 8, 9, 15.5, 3.5, 15.5, 2, -5, 1.4, -17, 2.5, -24)
-
-    -- 5. Central cockpit bridge, glowing visor glint & dorsal turret collar.
-    setBlendedColor(g, 0.08, 0.14, 0.21, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 0, -11, -3.6, -5, -4.2, 9, 0, 12, 4.2, 9, 3.6, -5)
-    g.setLineWidth(0.9)
-    setBlendedColor(g, 0.52, 0.84, 0.96, 0.92, blinkFlash, blinkAlpha)
-    g.polygon("line", 0, -11, -3.6, -5, -4.2, 9, 0, 12, 4.2, 9, 3.6, -5)
-
-    setBlendedColor(g, 0.80, 0.98, 1, 0.96 * pulse, blinkFlash, blinkAlpha)
-    g.polygon("fill", 0, -15.5, -1.8, -9.5, 0, -7.5, 1.8, -9.5)
-
-    setBlendedColor(g, 0.045, 0.085, 0.14, 1, blinkFlash * 0.72, blinkAlpha)
-    g.circle("fill", 0, 0, 7.5)
-    g.setLineWidth(0.9)
-    setBlendedColor(g, 0.46, 0.80, 0.92, 0.9, blinkFlash, blinkAlpha)
-    g.circle("line", 0, 0, 7.5)
-
-    -- 6. Recessed twin plasma exhaust bars.
-    setBlendedColor(g, 0.55, 0.97, 1, (0.78 + 0.22 * pulse), blinkFlash, blinkAlpha)
-    g.rectangle("fill", -8.4, 14.5, 4.4, 2, 0.6, 0.6)
-    g.rectangle("fill", 4.0, 14.5, 4.4, 2, 0.6, 0.6)
+    -- 5. Crisp outer silhouette outline.
+    g.setLineWidth(0.8 + blinkFlash * 0.6)
+    setBlendedColor(g, 1, 1, 1, 0.85, blinkFlash, blinkAlpha)
+    g.polygon("line", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
 
     g.pop()
     g.pop()
