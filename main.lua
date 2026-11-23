@@ -9,6 +9,7 @@ local Gladiator = require("gladiator")
 local Hud = require("hud")
 local Menu = require("menu")
 local Sfx = require("sfx")
+local Bgm = require("bgm")
 local Inventory = require("inventory")
 local InventoryUI = require("inventory_ui")
 local Stage = require("stage")
@@ -49,6 +50,7 @@ function love.errorhandler(message)
 end
 
 local function setScreen(nextScreen)
+    local prevScreen = screen
     screen, selectedButton = nextScreen, 1
     input.boost, firing = false, false
     local preserveSfx = (screen == "gameOver" or screen == "stageClear" or screen == "plinko"
@@ -79,6 +81,11 @@ local function setScreen(nextScreen)
         coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
         pauseReturnScreen = "playing"
     end
+    local resumeFromOverlay = (prevScreen == "pause" or prevScreen == "inventory" or prevScreen == "settings")
+    Bgm.syncScreen(screen, stage and stage.level or nil, {
+        focused = focused or testMode,
+        restart = (screen == "playing" and not resumeFromOverlay),
+    })
 end
 
 local function syncInventoryBuild()
@@ -116,6 +123,7 @@ local function startRun(opts)
         inventory:loadUnlockedCells(love.filesystem.read(permanentUnlocksFile))
     end
     Sfx.stop()
+    Bgm.stop()
     inventoryUI = InventoryUI.new()
     plinkoUI = PlinkoUI.new()
     plinko = nil
@@ -473,7 +481,10 @@ function love.load(args)
     hud = Hud.new()
     stars = Starfield.new(width, height)
     stageBackground = StageBackground.new(width, height)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground) then Sfx.load() end
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground) then
+        Sfx.load()
+        Bgm.load()
+    end
     setScreen("title")
     if testGladiator then
         require("tests.gladiator")(Ship, Enemies, Turret, Gladiator)
@@ -1159,6 +1170,7 @@ function love.focus(hasFocus)
         input.boost, firing = false, false
         Sfx.stop()
     end
+    Bgm.syncScreen(screen, stage and stage.level or nil, { focused = focused or testMode })
 end
 
 function love.resize(w, h)
