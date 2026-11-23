@@ -315,8 +315,9 @@ return function(Ship, Enemies, Camera, check)
         local g = love.graphics
         local originalArc, originalPrint, originalPrintf, originalCircle, originalPolygon =
             g.arc, g.print, g.printf, g.circle, g.polygon
-        local segments, printed, texts, rings, polygons = {}, {}, {}, 0, 0
+        local segments, printed, texts, rings, polygons, capTracks = {}, {}, {}, 0, 0, 0
         local expectedTrackAlpha = 0.15 * Hud.BASE_ALPHA
+        local expectedCapTrackAlpha = 0.22 * Hud.BASE_ALPHA
         g.arc = function(mode, arcType, x, y, radius, start, finish, ...)
             local _, _, _, alpha = g.getColor()
             if math.abs(alpha - expectedTrackAlpha) < 1e-5 then
@@ -324,6 +325,8 @@ return function(Ship, Enemies, Camera, check)
                 if start >= math.pi * 0.5 then
                     segments[radius] = (segments[radius] or 0) + 1
                 end
+            elseif math.abs(alpha - expectedCapTrackAlpha) < 1e-5 then
+                capTracks = capTracks + 1
             end
             return originalArc(mode, arcType, x, y, radius, start, finish, ...)
         end
@@ -351,13 +354,13 @@ return function(Ship, Enemies, Camera, check)
         local r1 = Hud.RING_OUTER_RADIUS
         local r2 = r1 - Hud.RING_STEP
         local r3 = r1 - Hud.RING_STEP * 2
-        local r4 = r1 - Hud.RING_STEP * 3
-        local hasSegments = segments[r1] == 10 and segments[r2] == 10 and segments[r3] == 3 and segments[r4] == 10
+        local expectedCapCells = Hud.CAPACITOR_COLUMNS * Hud.CAPACITOR_ROWS
+        local hasSegments = segments[r1] == 10 and segments[r2] == 10 and segments[r3] == 3
+            and capTracks == expectedCapCells
             and not printed.SHIELD and not printed.ARMOR and not printed.HULL
-            and texts.BATTERY and texts["75"] and texts.MJ
-            and texts["120"] and texts["PX/S"] and not texts["67% MAX"]
+            and not texts.MJ and texts["120"] and texts["PX/S"] and not texts["67% MAX"]
             and rings > 0 and polygons == 0
-        segments, printed, texts, rings = {}, {}, {}, 0
+        segments, printed, texts, rings, capTracks = {}, {}, {}, 0, 0
         ship.maxShield = 0
         local noShieldOk, noShieldMessage = pcall(function()
             ship:draw(0)
@@ -366,9 +369,10 @@ return function(Ship, Enemies, Camera, check)
         g.arc, g.print, g.printf, g.circle, g.polygon =
             originalArc, originalPrint, originalPrintf, originalCircle, originalPolygon
         check(ok and hasSegments,
-            "Circular HUD must draw shield/armor/hull/battery rings, MJ center, and bottom velocity without side panels: " .. tostring(message))
-        check(noShieldOk and segments[r1] == 10 and segments[r2] == 3 and segments[r3] == 10 and not segments[r4] and rings == 0,
-            "Zero maximum shield must omit the ring and reflow HUD armor, hull, and battery: " .. tostring(noShieldMessage))
+            "Circular HUD must draw shield/armor/hull rings, EVE radial capacitor cells, and bottom velocity without side panels: " .. tostring(message))
+        check(noShieldOk and segments[r1] == 10 and segments[r2] == 3 and not segments[r3]
+            and capTracks == expectedCapCells and rings == 0,
+            "Zero maximum shield must omit the ring and reflow HUD armor and hull while keeping the EVE capacitor: " .. tostring(noShieldMessage))
     end
 
     do

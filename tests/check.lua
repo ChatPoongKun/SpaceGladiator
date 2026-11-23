@@ -594,7 +594,7 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     panel:draw(statusShip, 800, 600, 1)
     check(true, "HUD must tolerate an empty resource capacity without invalid drawing coordinates")
 
-    -- Verify battery arc counter-clockwise depletion and proximity opacity fade (0.80 -> 0.10).
+    -- Verify EVE-style radial capacitor clockwise turn-off from 12 o'clock and proximity opacity fade (0.80 -> 0.10).
     do
         local hudPanel = Hud.new()
         local w, h = 1280, 800
@@ -603,28 +603,32 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
         hudCam:update(0, hudShip, w, h)
         local hx, hy = hudPanel:center(w, h)
 
-        -- Battery arc max angle must shrink counter-clockwise (smaller end angle) as battery depletes.
-        local function maxBatteryArcEnd(batteryVal)
+        -- Measure lit capacitor columns on the innermost capacitor ring; depletion must turn columns off clockwise from 12 o'clock (-pi/2).
+        local function litCapacitorAngles(batteryVal)
             hudShip.battery = batteryVal
-            local batRadius = Hud.RING_OUTER_RADIUS - 3 * Hud.RING_STEP
-            local maxEnd = -math.huge
+            local innerCapR = Hud.CAPACITOR_INNER_RADIUS
+            local litStarts = {}
             local origArc = love.graphics.arc
             love.graphics.arc = function(mode, arcType, x, y, radius, start, finish, ...)
-                local _, _, _, a = love.graphics.getColor()
-                if math.abs(radius - batRadius) < 1e-4 and a > 0.5 * Hud.BASE_ALPHA then
-                    if finish > maxEnd then maxEnd = finish end
+                local r, gg, b, a = love.graphics.getColor()
+                if math.abs(radius - innerCapR) < 1e-4 and a > 0.5 * Hud.BASE_ALPHA and gg < 0.8 then
+                    litStarts[#litStarts + 1] = start
                 end
                 return origArc(mode, arcType, x, y, radius, start, finish, ...)
             end
             hudPanel:draw(hudShip, w, h, 0)
             love.graphics.arc = origArc
-            return maxEnd
+            return litStarts
         end
-        local endFull = maxBatteryArcEnd(100)
-        local endHalf = maxBatteryArcEnd(50)
-        local endQuarter = maxBatteryArcEnd(25)
-        check(endFull > endHalf and endHalf > endQuarter,
-            "Battery circular bar must shrink counter-clockwise as battery is consumed")
+        local fullLit = litCapacitorAngles(100)
+        local threeQuarterLit = litCapacitorAngles(75)
+        local halfLit = litCapacitorAngles(50)
+        local emptyLit = litCapacitorAngles(0)
+        check(#fullLit == Hud.CAPACITOR_COLUMNS and #threeQuarterLit == Hud.CAPACITOR_COLUMNS * 0.75
+            and #halfLit == Hud.CAPACITOR_COLUMNS * 0.5 and #emptyLit == 0,
+            "EVE capacitor must light columns proportional to remaining battery")
+        check(fullLit[1] < 0 and threeQuarterLit[1] > 0 and halfLit[1] > math.pi * 0.5,
+            "EVE capacitor must extinguish columns clockwise starting from 12 o'clock")
 
         -- Clear area: opacity stays at BASE_ALPHA (0.80).
         hudShip.x, hudShip.y = w / 2, 160
