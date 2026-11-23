@@ -1013,13 +1013,18 @@ function love.draw()
     if screen == "warping" and warpState then
         if stageBackground then
             local p = StageTransition.warpProgress(warpState)
-            local bgBlend = math.max(0, math.min(1, (p - 0.30) / 0.40))
+            local isEntry = (warpState.mode == "entry")
+            local bgBlend = isEntry
+                and math.max(0, math.min(1, (p - 0.05) / 0.90))
+                or math.max(0, math.min(1, (p - 0.30) / 0.40))
             local warpSpeed = warpState.speedFactor or 0
             local pullback = math.max(camera and camera.pullback or 0, warpSpeed)
-            local planetMask = stageBackground.titleActive and stageBackground:titlePlanetMask(bgW, bgH) or nil
+            local titleVisible = stageBackground.titleActive and (not isEntry or p < 0.37)
+            local planetMask = titleVisible and stageBackground:titlePlanetMask(bgW, bgH) or nil
             stageBackground:draw(bgW, bgH, {
                 nextLevel = stage and stage.level or StageBackground.DEFAULT_LEVEL,
                 blend = bgBlend,
+                fadeThroughBlack = isEntry,
                 pullback = pullback,
                 shake = warpSpeed * warpSpeed,
             })

@@ -17,7 +17,7 @@ StageTransition.SHUTTER_CLOSE = 0.75
 StageTransition.CLEAR_TOTAL = StageTransition.CLEAR_HOLD + StageTransition.SHUTTER_CLOSE -- 2.0s
 StageTransition.SHUTTER_OPEN = 0.55
 StageTransition.WARP_DURATION = 2.40
-StageTransition.ENTRY_WARP_DURATION = 1.65
+StageTransition.ENTRY_WARP_DURATION = 2.95
 StageTransition.WARP_ALIGN_SPEED = 7.5
 StageTransition.WARP_ALIGN_MIN_DURATION = 0.08
 StageTransition.WARP_ALIGN_MAX_DURATION = 0.50
@@ -759,10 +759,10 @@ function StageTransition.entryWarpSpeedFactor(progress)
     local p = clamp(progress, 0, 1)
     if p < 0.14 then
         return 0.78 + 0.22 * easeOutCubic(p / 0.14)
-    elseif p < 0.34 then
+    elseif p < 0.42 then
         return 1.0
     else
-        local decelT = clamp((p - 0.34) / 0.66, 0, 1)
+        local decelT = clamp((p - 0.42) / 0.58, 0, 1)
         return math.pow(math.max(0, 1 - decelT), 2.2)
     end
 end

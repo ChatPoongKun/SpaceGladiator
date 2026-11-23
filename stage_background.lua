@@ -447,7 +447,20 @@ function StageBackground:draw(width, height, opts)
     local titleAlpha = clamp(finite(self.titleAlpha, StageBackground.TITLE_ALPHA), 0, 1)
     local useTitle = self.titleActive and self.titleImage ~= nil
     if useTitle then
-        if nextIndex and blend > 0.001 then
+        if opts and opts.fadeThroughBlack and nextIndex then
+            -- Fade title out to deep-space black first, hold briefly, then fade in the Level 1 backdrop.
+            if blend < 0.35 then
+                local currAlpha = titleAlpha * (1 - clamp(blend / 0.35, 0, 1))
+                if currAlpha > 0.001 then
+                    self:drawTitle(viewW, viewH, currAlpha)
+                end
+            elseif blend > 0.55 then
+                local nextAlpha = baseAlpha * clamp((blend - 0.55) / 0.45, 0, 1)
+                if nextAlpha > 0.001 then
+                    self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha, overscanOverride, shakeX, shakeY)
+                end
+            end
+        elseif nextIndex and blend > 0.001 then
             local nextAlpha = baseAlpha * blend
             if blend < 0.999 then
                 local denom = math.max(1e-6, 1 - nextAlpha)
