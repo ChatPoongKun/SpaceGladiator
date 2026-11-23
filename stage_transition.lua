@@ -16,6 +16,7 @@ StageTransition.SHUTTER_CLOSE = 0.75
 StageTransition.CLEAR_TOTAL = StageTransition.CLEAR_HOLD + StageTransition.SHUTTER_CLOSE -- 2.0s
 StageTransition.SHUTTER_OPEN = 0.55
 StageTransition.WARP_DURATION = 2.40
+StageTransition.ENTRY_WARP_DURATION = 1.65
 StageTransition.WARP_ALIGN_SPEED = 7.5
 StageTransition.WARP_ALIGN_MIN_DURATION = 0.08
 StageTransition.WARP_ALIGN_MAX_DURATION = 0.50
@@ -577,11 +578,8 @@ end
 -- 3. Hyperspace Starlight Warp Animation
 --------------------------------------------------------------------------------
 
-function StageTransition.newWarp(gate, nextStageNumber, ship, width, height, rng)
-    rng = rng or (love and love.math and love.math.random or math.random)
+local function buildWarpStreaks(rc, rng)
     local streaks = {}
-    local rc = gate.reward and gate.reward.color or { 0.45, 0.92, 1.0 }
-
     for i = 1, 96 do
         local tint = rng()
         local col
@@ -602,6 +600,13 @@ function StageTransition.newWarp(gate, nextStageNumber, ship, width, height, rng
             color = col,
         }
     end
+    return streaks
+end
+
+function StageTransition.newWarp(gate, nextStageNumber, ship, width, height, rng)
+    rng = rng or (love and love.math and love.math.random or math.random)
+    local rc = gate.reward and gate.reward.color or { 0.45, 0.92, 1.0 }
+    local streaks = buildWarpStreaks(rc, rng)
 
     local tau = math.pi * 2
     local startAngle = (ship and ship.angle or (gate and gate.angle) or 0) % tau
@@ -640,6 +645,7 @@ function StageTransition.newWarp(gate, nextStageNumber, ship, width, height, rng
     local warpDuration = StageTransition.WARP_DURATION
 
     return {
+        mode = "stage",
         gate = gate,
         nextStageNumber = nextStageNumber or 2,
         elapsed = 0,
@@ -663,12 +669,75 @@ function StageTransition.newWarp(gate, nextStageNumber, ship, width, height, rng
     }
 end
 
+function StageTransition.newEntryWarp(stageNumber, ship, width, height, rng)
+    rng = rng or (love and love.math and love.math.random or math.random)
+    local rc = { 0.45, 0.92, 1.0 }
+    local streaks = buildWarpStreaks(rc, rng)
+    local warpAngle = 0 -- Flying upward from below the bottom edge into Stage 1
+    local dirX, dirY = 0, -1
+    local warpDuration = StageTransition.ENTRY_WARP_DURATION
+    local startX = Arena.width * 0.5
+    local startY = Arena.height + 140
+    local initialSpeed = StageTransition.entryWarpSpeedFactor(0)
+
+    if ship then
+        ship.x = startX
+        ship.y = startY
+        ship.angle = warpAngle
+        local visualSpeed = 42 + (math.max(42, ship.maxSpeed or 180) - 42) * initialSpeed
+        ship.vx = dirX * visualSpeed
+        ship.vy = dirY * visualSpeed
+        ship.wrapVx, ship.wrapVy = 0, 0
+        ship.boostX, ship.boostY = dirX, dirY
+        ship.boostLevel = initialSpeed
+        ship.accelerating = true
+        ship.braking = false
+        ship.boostRemaining = initialSpeed * (ship.boostHold + ship.boostFalloff)
+    end
+
+    return {
+        mode = "entry",
+        gate = { reward = { color = rc, title = "" } },
+        nextStageNumber = stageNumber or 1,
+        elapsed = 0,
+        alignDuration = 0,
+        warpDuration = warpDuration,
+        duration = warpDuration,
+        phase = "warp",
+        startX = startX,
+        startY = startY,
+        startAngle = warpAngle,
+        angleDiff = 0,
+        angle = warpAngle,
+        dirX = dirX,
+        dirY = dirY,
+        entrySpeed = ship and (ship.maxSpeed or 180) or 180,
+        speedFactor = initialSpeed,
+        jumpSfxPlayed = false,
+        arriveSfxPlayed = false,
+        streaks = streaks,
+        done = false,
+    }
+end
+
 function StageTransition.warpProgress(warp)
     if not warp then return 0 end
     local alignDuration = warp.alignDuration or 0
     local warpDuration = warp.warpDuration or math.max(1e-6, (warp.duration or StageTransition.WARP_DURATION) - alignDuration)
     if warp.elapsed <= alignDuration then return 0 end
     return clamp((warp.elapsed - alignDuration) / math.max(1e-6, warpDuration), 0, 1)
+end
+
+function StageTransition.entryWarpSpeedFactor(progress)
+    local p = clamp(progress, 0, 1)
+    if p < 0.14 then
+        return 0.78 + 0.22 * easeOutCubic(p / 0.14)
+    elseif p < 0.34 then
+        return 1.0
+    else
+        local decelT = clamp((p - 0.34) / 0.66, 0, 1)
+        return math.pow(math.max(0, 1 - decelT), 2.2)
+    end
 end
 
 function StageTransition.warpSpeedFactor(progress)
@@ -732,11 +801,13 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
         Sfx.play("warp_jump")
     end
 
+    local isEntry = (warp.mode == "entry")
     local p = StageTransition.warpProgress(warp)
-    local speedFactor = StageTransition.warpSpeedFactor(p)
+    local speedFactor = isEntry and StageTransition.entryWarpSpeedFactor(p) or StageTransition.warpSpeedFactor(p)
     warp.speedFactor = speedFactor
 
-    if p >= 0.60 and not warp.arriveSfxPlayed then
+    local arriveSfxAt = isEntry and 0.42 or 0.60
+    if p >= arriveSfxAt and not warp.arriveSfxPlayed then
         warp.arriveSfxPlayed = true
         Sfx.play("warp_arrive")
     end
@@ -759,6 +830,11 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
 
     -- Keep ship heading & engine plume aligned with its travel direction throughout warp
     if ship then
+        if isEntry then
+            local travelT = easeOutCubic(clamp(p / 0.88, 0, 1))
+            ship.x = Arena.width * 0.5
+            ship.y = warp.startY + (Arena.height * 0.5 - warp.startY) * travelT
+        end
         ship.angle = warp.angle
         local visualSpeed = 42 + (math.max(42, ship.maxSpeed or 180) - 42) * speedFactor
         ship.vx = dirX * visualSpeed
@@ -800,11 +876,12 @@ end
 function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts)
     if not warp then return end
     local g = love.graphics
+    local isEntry = (warp.mode == "entry")
     local aligning = warp.elapsed < (warp.alignDuration or 0)
     local p = StageTransition.warpProgress(warp)
-    local sf = aligning and 0 or (warp.speedFactor or StageTransition.warpSpeedFactor(p))
+    local sf = aligning and 0 or (warp.speedFactor or (isEntry and StageTransition.entryWarpSpeedFactor(p) or StageTransition.warpSpeedFactor(p)))
     local dirX, dirY = warp.dirX, warp.dirY
-    local rc = warp.gate.reward and warp.gate.reward.color or { 0.45, 0.92, 1.0 }
+    local rc = warp.gate and warp.gate.reward and warp.gate.reward.color or { 0.45, 0.92, 1.0 }
     local viewDiag = math.sqrt(width * width + height * height)
 
     g.push("all")
@@ -836,9 +913,9 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         g.rectangle("fill", 0, 0, width, height)
     end
 
-    -- 2. Old arena sliding behind & fading out along -travel during initial warp departure (p < 0.36)
+    -- 2. Old arena sliding behind & fading out along -travel during inter-stage departure (p < 0.36)
     local originX, originY = camera:worldToScreen(0, 0, width, height)
-    if p < 0.36 then
+    if not isEntry and p < 0.36 then
         local departT = p / 0.36
         local departDist = math.max(1050, viewDiag * 0.85)
         local slide = easeInCubic(departT) * departDist
@@ -853,9 +930,11 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         g.pop()
     end
 
-    -- 3. Next stage arena sliding smoothly in from ahead along +travel during deceleration (p > 0.58)
-    if p > 0.58 then
-        local arriveT = (p - 0.58) / 0.42
+    -- 3. Destination arena sliding smoothly in from ahead along +travel during arrival
+    local arriveStart = isEntry and 0.10 or 0.58
+    local arriveSpan = isEntry and 0.82 or 0.42
+    if p > arriveStart then
+        local arriveT = clamp((p - arriveStart) / arriveSpan, 0, 1)
         local eased = easeOutCubic(arriveT)
         local arriveDist = math.max(950, viewDiag * 0.82)
         local slide = (1 - eased) * arriveDist
@@ -866,7 +945,7 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         g.pop()
     end
 
-    -- 4. Draw ship rotating onto travel vector, then gliding into travel-aligned cruise lunge & arrival center
+    -- 4. Draw ship streaking in from below (entry) or rotating & gliding into arrival center (stage warp)
     if ship then
         local centerX, centerY = camera:worldToScreen(Arena.width * 0.5, Arena.height * 0.5, width, height)
         local startSx, startSy = camera:worldToScreen(warp.startX, warp.startY, width, height)
@@ -877,7 +956,12 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         local targetSy = centerY + dirY * 18 * sf + vibY
         local shipSx, shipSy
 
-        if aligning then
+        if isEntry then
+            local entryStartSy = math.max(height + 110, startSy)
+            local travelT = easeOutCubic(clamp(p / 0.88, 0, 1))
+            shipSx = centerX + vibX
+            shipSy = entryStartSy + (targetSy - entryStartSy) * travelT
+        elseif aligning then
             shipSx, shipSy = startSx, startSy
         elseif p < 0.30 then
             local t1 = easeInOutCubic(p / 0.30)
@@ -911,7 +995,8 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
     -- 5. Brief ignition & arrival light flashes (only after alignment finishes and warp engages)
     if not aligning and p < 0.16 then
         local flash = (1 - p / 0.16)
-        g.setColor(rc[1], rc[2], rc[3], flash * flash * 0.42)
+        local peakAlpha = isEntry and 0.28 or 0.42
+        g.setColor(rc[1], rc[2], rc[3], flash * flash * peakAlpha)
         g.rectangle("fill", 0, 0, width, height)
     elseif p > 0.90 then
         local flash = math.sin(((p - 0.90) / 0.10) * math.pi)
@@ -936,6 +1021,9 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
     g.setColor(0.62, 0.88, 0.98, 0.95 * hudAlpha)
     if aligning then
         g.printf("HYPERDRIVE  ALIGNING  /  VECTOR LOCK", px + 10, py + 10, panelW - 20, "center")
+    elseif isEntry then
+        local speedC = 0.2 + sf * 9.8
+        g.printf(string.format("HYPERDRIVE  %.1fc  /  ARENA ENTRY", speedC), px + 10, py + 10, panelW - 20, "center")
     else
         local speedC = 0.2 + sf * 9.8
         g.printf(string.format("HYPERDRIVE  %.1fc  /  STARLIGHT TRANSIT", speedC), px + 10, py + 10, panelW - 20, "center")
@@ -947,7 +1035,11 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
 
     g.setFont(fonts.menuSmall or fonts.menuBody)
     g.setColor(rc[1], rc[2], rc[3], 0.95 * hudAlpha)
-    g.printf("선택 보상: " .. (warp.gate.reward and warp.gate.reward.title or ""), px + 10, py + 54, panelW - 20, "center")
+    if isEntry then
+        g.printf("전투 구역 진입 · 시스템 온라인", px + 10, py + 54, panelW - 20, "center")
+    else
+        g.printf("선택 보상: " .. (warp.gate and warp.gate.reward and warp.gate.reward.title or ""), px + 10, py + 54, panelW - 20, "center")
+    end
 
     g.pop()
 end

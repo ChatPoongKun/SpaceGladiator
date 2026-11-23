@@ -51,7 +51,30 @@ return function(state)
     click("뒤로")
     assert(state() == "title")
 
+    local function finishEntryWarp()
+        assert(state() == "warping", "Starting from title must begin with bottom entry warp")
+        for _ = 1, 50 do
+            if state() == "playing" then break end
+            love.update(0.05)
+        end
+        assert(state() == "playing", "Opening entry warp must transition cleanly into playing")
+    end
+
     click("게임 시작")
+    do
+        local entryScreen, entryShip = state()
+        assert(entryScreen == "warping" and not love.mouse.isVisible(),
+            "Clicking Start Game on title screen must launch the entry warp with hidden cursor")
+        assert(entryShip.y > require("arena").height,
+            "Opening entry warp must launch the player ship from below the bottom edge")
+        local _, entryValues = drawText()
+        local sawStage1Banner = false
+        for _, text in pairs(entryValues) do
+            if tostring(text):find("STAGE 01", 1, true) then sawStage1Banner = true end
+        end
+        assert(sawStage1Banner, "Opening entry warp must render Stage 01 warp banner")
+    end
+    finishEntryWarp()
     local screen, ship, enemies, turret, gladiator = state()
     assert(screen == "playing" and not love.mouse.isVisible())
     do
@@ -163,6 +186,7 @@ return function(state)
     assert(state() == "title")
 
     key("return")
+    finishEntryWarp()
     local _, fresh, freshEnemies, _, freshGladiator = state()
     assert(fresh ~= ship and fresh.shield == fresh.maxShield and freshEnemies.kills == 0 and freshGladiator.total == 0)
     key("escape")
@@ -171,6 +195,7 @@ return function(state)
     assert(state() == "title", "Return to Title must bypass the run summary")
 
     key("return")
+    finishEntryWarp()
     local _, doomed, attackers = state()
     doomed:takeDamage(doomed.maxShield + doomed.maxArmor)
     local enemy = attackers:spawn(doomed, 2, {x = doomed.x - 60, y = doomed.y})
@@ -203,6 +228,7 @@ return function(state)
 
     -- Ending a stage during Fever Time and returning from Plinko must clear all fever effects.
     click("게임 시작")
+    finishEntryWarp()
     local _, feverShip, _, _, feverGlad, triggerStageClear = state()
     feverGlad:award("destroy", 35, "DESTROY", feverShip.x, feverShip.y)
     love.update(0.05)
@@ -240,6 +266,7 @@ return function(state)
 
     -- Stage transition movement must not register boundary crossing or fire Wrapping Condenser on next stage start.
     click("게임 시작")
+    finishEntryWarp()
     local _, wrapShip, _, wrapTurret, _, triggerWrapStageClear, wrapInv, _, syncBuild = state()
     assert(wrapInv:equipChip(wrapInv.placed[1], 1, wrapInv:createChip("wrap_trigger")),
         "Wrapping Condenser must equip on starter projectile module")

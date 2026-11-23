@@ -95,7 +95,7 @@ local function savePermanentUnlocks()
     pcall(love.filesystem.write, permanentUnlocksFile, inventory:serializeUnlockedCells())
 end
 
-local function startRun()
+local function startRun(opts)
     ship = Ship.new(Arena.width, Arena.height)
     camera = Camera.new(ship.x, ship.y)
     camera:update(0, ship, width, height)
@@ -135,7 +135,14 @@ local function startRun()
     if hud then hud:reset() end
     input.turn, input.thrust, input.brake, input.boost = 0, false, false, false
     time = 0
-    setScreen("playing")
+    if opts and opts.entryWarp then
+        warpState = StageTransition.newEntryWarp(stage.number, ship, width, height)
+        warpState.jumpSfxPlayed = true
+        setScreen("warping")
+        Sfx.play("warp_jump")
+    else
+        setScreen("playing")
+    end
 end
 
 local function beginStageClear()
@@ -228,6 +235,29 @@ local function beginWarpToNextStage(gate)
         warpState.jumpSfxPlayed = true
         Sfx.play("warp_jump")
     end
+end
+
+local function completeEntryWarpAndStartStage()
+    warpState = nil
+    warpGates = nil
+    if ship then
+        ship.invulnTimer, ship.invulnDuration = 0, 0
+        lastWrapEvents = ship.wrapEvents or 0
+        lastDamageCount = ship.damageCount or 0
+    end
+    if turret and ship then
+        turret.angle = ship.angle
+    end
+    if gladiator then
+        lastEvasionCount = gladiator.evasionCount or 0
+    end
+    wrapTriggerCooldown, shockwaveCooldown = 0, 0
+    if camera and ship then
+        camera.pullback = 0
+        camera:update(0, ship, width, height)
+    end
+    syncInventoryBuild()
+    setScreen("playing")
 end
 
 local function completeWarpAndStartStage(gate)
@@ -389,7 +419,7 @@ local function toggleFullscreen()
 end
 
 menus.title = {title = "DRIFT", buttons = {
-    {label = "게임 시작", action = startRun},
+    {label = "게임 시작", action = function() startRun({ entryWarp = true }) end},
     {label = "설정", action = openSettings},
     {label = "게임 종료", action = function() love.event.quit() end},
 }}
@@ -575,7 +605,11 @@ function love.update(dt)
             stageBackground:update(dt, warpState.dirX * warpDrift, warpState.dirY * warpDrift, width, height)
         end
         if finished then
-            completeWarpAndStartStage(warpState.gate)
+            if warpState and warpState.mode == "entry" then
+                completeEntryWarpAndStartStage()
+            else
+                completeWarpAndStartStage(warpState.gate)
+            end
         end
         return
     end

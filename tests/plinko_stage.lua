@@ -184,6 +184,31 @@ local function runTests(Stage, Plinko, Inventory, Ship, Enemies, StageTransition
         assert(math.abs(testShip.vx - expectedDirX * 42) < 1e-5 and math.abs(testShip.vy - expectedDirY * 42) < 1e-5,
             "Ship arrival velocity must follow its travel direction")
 
+        -- Opening Stage 1 warp-in from below the bottom edge
+        local entryShip = Ship.new(Arena.width, Arena.height)
+        local entryWarp = StageTransition.newEntryWarp(1, entryShip, 1280, 800, detRng)
+        assert(entryWarp.mode == "entry" and entryWarp.dirX == 0 and entryWarp.dirY == -1 and entryWarp.angle == 0,
+            "Entry warp must fly straight upward from the bottom")
+        assert(entryShip.y > Arena.height, "Entry warp ship must start below the bottom edge of the arena")
+        local entryCam = Camera.new(Arena.width * 0.5, Arena.height * 0.5)
+        local entryStars = Starfield.new(1280, 800, detRng)
+        local prevY = entryShip.y
+        local entryDone = false
+        for _ = 1, 140 do
+            if StageTransition.updateWarp(entryWarp, 1 / 60, entryShip, entryStars, entryCam, 1280, 800) then
+                entryDone = true
+                break
+            end
+            assert(entryShip.y <= prevY + 1e-6, "Entry warp ship must travel upward from bottom toward arena center")
+            prevY = entryShip.y
+            assert(entryCam.zoom == entryCam.zoom and entryCam.zoom > 0)
+        end
+        assert(entryDone and entryWarp.done, "Opening entry warp must complete cleanly")
+        assert(math.abs(entryShip.x - Arena.width * 0.5) < 1e-3 and math.abs(entryShip.y - Arena.height * 0.5) < 1e-3,
+            "Opening entry warp must place the ship at arena center upon arrival")
+        assert(math.abs(entryShip.angle) < 1e-6 and entryShip.vy < 0,
+            "Opening entry warp must arrive facing upward with upward drift")
+
         -- Harmless sequential enemy projectile expiry on stage clear
         local EnemyFire = require("enemy_fire")
         local fire = EnemyFire.new()
@@ -329,6 +354,12 @@ local function runTests(Stage, Plinko, Inventory, Ship, Enemies, StageTransition
             StageTransition.drawWarp(drawWarp, drawShip, cam, 1280, 800, 1.6, fonts)
             StageTransition.updateWarp(drawWarp, 1.0, drawShip, nil, cam, 1280, 800)
             StageTransition.drawWarp(drawWarp, drawShip, cam, 1280, 800, 2.0, fonts)
+
+            -- Draw opening Stage 1 entry warp from below
+            local entryDrawShip = Ship.new(1080, 540)
+            local entryDrawWarp = StageTransition.newEntryWarp(1, entryDrawShip, 1280, 800, detRng)
+            StageTransition.updateWarp(entryDrawWarp, 0.35, entryDrawShip, nil, cam, 1280, 800)
+            StageTransition.drawWarp(entryDrawWarp, entryDrawShip, cam, 1280, 800, 0.35, fonts)
         end)
         g.print, g.printf = origPrint, origPrintf
         assert(ok, err)
