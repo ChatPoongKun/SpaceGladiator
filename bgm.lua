@@ -1,6 +1,7 @@
 -- Level background music (BGM) controller.
--- Plays the matching level track during active combat screens and keeps
--- non-combat screens (such as Plinko, title, transitions, and menus) silent.
+-- Starts the matching level track on combat entry and loops continuously across
+-- stage transitions (including Plinko, inventory, and warp selection) until
+-- the run ends or the level changes.
 
 local Bgm = {}
 
@@ -137,10 +138,18 @@ function Bgm.getCurrentLevel()
     return currentLevel
 end
 
+local CONTINUE_SCREENS = {
+    stageClear = true,
+    plinko = true,
+    warpSelect = true,
+    warping = true,
+    inventory = true,
+}
+
 -- Synchronizes BGM state to the active game screen and stage level.
--- Active combat ("playing") plays the level's BGM; overlay screens opened from
--- combat ("pause", "settings", "inventory") pause it; Plinko and all other
--- non-combat screens stop it.
+-- Active combat ("playing") ensures the level's BGM is looping; run-flow screens
+-- ("stageClear", "plinko", "warpSelect", "warping", "inventory") keep the active
+-- level's BGM looping continuously; pause/settings pause it; title/gameOver/results/replay stop it.
 function Bgm.syncScreen(screen, stageLevel, opts)
     opts = opts or {}
     local isFocused = (opts.focused ~= false)
@@ -158,7 +167,23 @@ function Bgm.syncScreen(screen, stageLevel, opts)
             return false
         end
         return Bgm.playForLevel(stageLevel, { restart = opts.restart })
-    elseif screen == "pause" or screen == "settings" or screen == "inventory" then
+    elseif CONTINUE_SCREENS[screen] then
+        if not stageLevel or not tracks[stageLevel] then
+            Bgm.stop()
+            return false
+        end
+        if currentLevel == stageLevel and (playing or paused) then
+            if not isFocused then
+                Bgm.pause()
+                return false
+            end
+            return Bgm.playForLevel(stageLevel, { restart = false })
+        end
+        if currentLevel and currentLevel ~= stageLevel then
+            Bgm.stop()
+        end
+        return false
+    elseif screen == "pause" or screen == "settings" then
         Bgm.pause()
         return false
     else
