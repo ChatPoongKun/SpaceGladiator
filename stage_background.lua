@@ -35,32 +35,77 @@ StageBackground.FALLBACK_COLOR = { 0.018, 0.025, 0.065 }
 StageBackground.DEFAULT_IMG_W = 1024
 StageBackground.DEFAULT_IMG_H = 571
 
-local TITLE_SHADER_CODE = [[
+StageBackground.TITLE_FX = {
+    mask1 = { 0.67, 0.36, 0.18 }, -- ringed planet
+    mask2 = { 0.86, 0.17, 0.10 }, -- spiral galaxy
+    amp = 0.0032,
+    shimmer = 0.10,
+    swirl = 0.0,
+}
+
+StageBackground.LEVEL_FX = {
+    [1] = {
+        mask1 = { 0.17, 0.78, 0.11 }, -- lower-left crescent planet
+        mask2 = { 0.0, 0.0, 0.0 },
+        amp = 0.0022,
+        shimmer = 0.06,
+        swirl = 0.0,
+    },
+    [2] = {
+        mask1 = { 0.0, 0.0, 0.0 },
+        mask2 = { 0.0, 0.0, 0.0 },
+        amp = 0.0028,
+        shimmer = 0.08,
+        swirl = 0.0,
+    },
+    [3] = {
+        mask1 = { 0.27, 0.56, 0.08 }, -- black hole event horizon core
+        mask2 = { 0.0, 0.0, 0.0 },
+        amp = 0.0024,
+        shimmer = 0.09,
+        swirl = 0.0035,
+    },
+}
+
+local NEBULA_SHADER_CODE = [[
 extern number u_time;
 extern vec2 u_aspect;
+extern vec3 u_mask1;
+extern vec3 u_mask2;
+extern number u_amp;
+extern number u_shimmer;
+extern number u_swirl;
+
+float bodyMask(vec2 tc, vec3 mask) {
+    if (mask.z <= 0.0) return 1.0;
+    float d = length((tc - mask.xy) * u_aspect);
+    return smoothstep(mask.z, mask.z + 0.11, d);
+}
 
 vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
-    vec2 planetPos = vec2(0.67, 0.36);
-    vec2 galaxyPos = vec2(0.86, 0.17);
-    float dPlanet = length((tc - planetPos) * u_aspect);
-    float dGalaxy = length((tc - galaxyPos) * u_aspect);
-
-    float planetMask = smoothstep(0.18, 0.30, dPlanet);
-    float galaxyMask = smoothstep(0.10, 0.20, dGalaxy);
     float edgeMask = smoothstep(0.0, 0.05, tc.x) * smoothstep(1.0, 0.95, tc.x)
                    * smoothstep(0.0, 0.05, tc.y) * smoothstep(1.0, 0.95, tc.y);
-    float nebulaMask = planetMask * galaxyMask * edgeMask;
+    float nebulaMask = bodyMask(tc, u_mask1) * bodyMask(tc, u_mask2) * edgeMask;
 
     float wave1 = sin(tc.y * 11.0 + u_time * 0.42 + cos(tc.x * 7.0 - u_time * 0.25));
     float wave2 = cos(tc.x * 9.5 - u_time * 0.36 + sin(tc.y * 8.0 + u_time * 0.29));
-    vec2 offset = vec2(wave1, wave2) * (0.0032 * nebulaMask);
-    vec2 uv = clamp(tc + offset, vec2(0.0), vec2(1.0));
+    vec2 offset = vec2(wave1, wave2) * (u_amp * nebulaMask);
 
+    if (u_swirl > 0.0 && u_mask1.z > 0.0) {
+        vec2 rel = (tc - u_mask1.xy) * u_aspect;
+        float r = length(rel);
+        float ring = smoothstep(u_mask1.z, u_mask1.z + 0.06, r)
+                   * (1.0 - smoothstep(u_mask1.z + 0.14, u_mask1.z + 0.28, r));
+        vec2 tang = r > 0.0001 ? vec2(-rel.y, rel.x) / r : vec2(0.0);
+        offset += tang * (u_swirl * ring * edgeMask * (0.65 + 0.35 * sin(u_time * 0.6 + r * 28.0)));
+    }
+
+    vec2 uv = clamp(tc + offset, vec2(0.0), vec2(1.0));
     vec4 pixel = Texel(tex, uv);
 
     float luma = dot(pixel.rgb, vec3(0.299, 0.587, 0.114));
     float shimmer = 0.5 + 0.5 * sin(u_time * 1.15 + tc.x * 13.0 + tc.y * 8.0);
-    float boost = 1.0 + 0.10 * smoothstep(0.38, 0.88, luma) * shimmer * nebulaMask;
+    float boost = 1.0 + u_shimmer * smoothstep(0.38, 0.88, luma) * shimmer * nebulaMask;
     pixel.rgb = min(pixel.rgb * boost, vec3(1.0));
 
     return pixel * color;
@@ -71,7 +116,7 @@ local function createTitleShader()
     if not (love and love.graphics and love.graphics.newShader) then
         return nil
     end
-    local ok, shader = pcall(love.graphics.newShader, TITLE_SHADER_CODE)
+    local ok, shader = pcall(love.graphics.newShader, NEBULA_SHADER_CODE)
     if ok and shader then
         return shader
     end
@@ -307,6 +352,27 @@ function StageBackground:currentOffset()
     return layout.offsetX, layout.offsetY
 end
 
+local function drawWithShader(self, img, layout, imgW, imgH, fx)
+    local g = love.graphics
+    local shader = self.titleShader
+    if shader and g.setShader and fx then
+        if shader.send then
+            shader:send("u_time", finite(self.time, 0))
+            shader:send("u_aspect", { imgW / math.max(1, imgH), 1 })
+            shader:send("u_mask1", fx.mask1 or { 0, 0, 0 })
+            shader:send("u_mask2", fx.mask2 or { 0, 0, 0 })
+            shader:send("u_amp", finite(fx.amp, 0.0024))
+            shader:send("u_shimmer", finite(fx.shimmer, 0.07))
+            shader:send("u_swirl", finite(fx.swirl, 0.0))
+        end
+        g.setShader(shader)
+        g.draw(img, layout.x, layout.y, 0, layout.scale, layout.scale)
+        g.setShader()
+    else
+        g.draw(img, layout.x, layout.y, 0, layout.scale, layout.scale)
+    end
+end
+
 function StageBackground:drawImageAt(index, viewW, viewH, u, v, alpha, overscanOverride, shakeX, shakeY)
     local img = self.images[index]
     if not img then return false end
@@ -315,7 +381,8 @@ function StageBackground:drawImageAt(index, viewW, viewH, u, v, alpha, overscanO
     local g = love.graphics
     local tint = StageBackground.TINT
     g.setColor(tint[1], tint[2], tint[3], clamp(finite(alpha, 1), 0, 1))
-    g.draw(img, layout.x, layout.y, 0, layout.scale, layout.scale)
+    local fx = StageBackground.LEVEL_FX[index] or StageBackground.LEVEL_FX[1]
+    drawWithShader(self, img, layout, imgW, imgH, fx)
     return true
 end
 
@@ -342,18 +409,7 @@ function StageBackground:drawTitle(viewW, viewH, alpha)
     local g = love.graphics
     local tint = StageBackground.TITLE_TINT
     g.setColor(tint[1], tint[2], tint[3], clamp(finite(alpha, 1), 0, 1))
-    local shader = self.titleShader
-    if shader and g.setShader then
-        if shader.send then
-            shader:send("u_time", finite(self.time, 0))
-            shader:send("u_aspect", { imgW / math.max(1, imgH), 1 })
-        end
-        g.setShader(shader)
-        g.draw(img, layout.x, layout.y, 0, layout.scale, layout.scale)
-        g.setShader()
-    else
-        g.draw(img, layout.x, layout.y, 0, layout.scale, layout.scale)
-    end
+    drawWithShader(self, img, layout, imgW, imgH, StageBackground.TITLE_FX)
     return true
 end
 
