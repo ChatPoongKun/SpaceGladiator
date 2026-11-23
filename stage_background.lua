@@ -19,8 +19,9 @@ StageBackground.OVERSCAN = 1.24
 StageBackground.PARALLAX = 0.09
 -- Exponential velocity smoothing for weighty deep-space drift.
 StageBackground.SMOOTHING = 5.0
--- Subtle atmospheric tint so foreground ships, bullets, and HUD stay legible.
+-- Subtle atmospheric tint and opacity so foreground ships, bullets, and HUD stay legible.
 StageBackground.TINT = { 0.88, 0.90, 0.94 }
+StageBackground.ALPHA = 0.80
 StageBackground.FALLBACK_COLOR = { 0.018, 0.025, 0.065 }
 StageBackground.DEFAULT_IMG_W = 1024
 StageBackground.DEFAULT_IMG_H = 571
@@ -95,6 +96,7 @@ function StageBackground.new(width, height, opts)
         overscan = finite(opts.overscan, StageBackground.OVERSCAN),
         parallax = finite(opts.parallax, StageBackground.PARALLAX),
         smoothing = finite(opts.smoothing, StageBackground.SMOOTHING),
+        alpha = clamp(finite(opts.alpha, StageBackground.ALPHA), 0, 1),
     }, StageBackground)
     self:setLevel(opts.level or StageBackground.DEFAULT_LEVEL, true)
     return self
@@ -241,13 +243,17 @@ function StageBackground:draw(width, height, opts)
     local nextLevel = opts and opts.nextLevel or nil
     local nextIndex = nextLevel and StageBackground.indexForLevel(nextLevel, self:count()) or nil
 
+    local baseAlpha = clamp(finite(self.alpha, StageBackground.ALPHA), 0, 1)
     if nextIndex and nextIndex ~= self.index and blend > 0.001 then
+        local nextAlpha = baseAlpha * blend
         if blend < 0.999 then
-            self:drawImageAt(self.index, viewW, viewH, self.u, self.v, 1)
+            local denom = math.max(1e-6, 1 - nextAlpha)
+            local currAlpha = clamp((baseAlpha * (1 - blend)) / denom, 0, 1)
+            self:drawImageAt(self.index, viewW, viewH, self.u, self.v, currAlpha)
         end
-        self:drawImageAt(nextIndex, viewW, viewH, 0, 0, blend)
+        self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha)
     else
-        self:drawImageAt(self.index, viewW, viewH, self.u, self.v, 1)
+        self:drawImageAt(self.index, viewW, viewH, self.u, self.v, baseAlpha)
     end
 
     g.pop()

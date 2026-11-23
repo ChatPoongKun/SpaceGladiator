@@ -143,7 +143,21 @@ if love and love.graphics then
     check(not rectAfterImage,
         "Transparent Starfield must not draw an opaque rectangle over the level background")
 
-    -- 10. Same-level warp draws only Level 1 (no crossfade); different-level warp crossfades cleanly
+    -- 10. Default image opacity is 80% (StageBackground.ALPHA)
+    local drawnAlpha = nil
+    g.draw = function(...)
+        local _, _, _, a = g.getColor()
+        drawnAlpha = a
+        return origDraw(...)
+    end
+    local okAlpha, errAlpha = pcall(function()
+        bg:draw(1280, 800)
+    end)
+    g.draw = origDraw
+    check(okAlpha and drawnAlpha ~= nil and near(drawnAlpha, 0.80) and near(StageBackground.ALPHA, 0.80),
+        "Stage background image must render at 80% opacity (got " .. tostring(drawnAlpha) .. "): " .. tostring(errAlpha))
+
+    -- 11. Same-level warp draws only Level 1 (no crossfade); different-level warp crossfades cleanly
     local sameLevelDraws = 0
     g.draw = function(...)
         sameLevelDraws = sameLevelDraws + 1
