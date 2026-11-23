@@ -482,17 +482,9 @@ function Turret:drawEffects(camera, width, height)
             if trail > 0 then
                 g.line(missile.x, missile.y, missile.x - dx * trail, missile.y - dy * trail)
             end
-        elseif missile.fading then
+        else
             local trail = math.min(24, missile.distance or 0)
             if trail > 0 then
-                g.line(missile.x, missile.y, missile.x - dx * trail, missile.y - dy * trail)
-            end
-        else
-            local tailX, tailY = missile.owner.x - missile.x, missile.owner.y - missile.y
-            local distance = math.sqrt(tailX * tailX + tailY * tailY)
-            if distance > 0 then
-                dx, dy = -tailX / distance, -tailY / distance
-                local trail = math.min(24, missile.distance, distance)
                 g.line(missile.x, missile.y, missile.x - dx * trail, missile.y - dy * trail)
             end
         end
