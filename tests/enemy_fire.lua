@@ -310,40 +310,65 @@ return function(Ship, Enemies, Camera, check)
         local Hud = require("hud")
         local panel = Hud.new()
         local ship = Ship.new(Arena.width, Arena.height)
-        ship.shield, ship.armor, ship.hull = 1, 68, 2
+        ship.shield, ship.armor, ship.hull, ship.battery = 1, 68, 2, 75
+        ship.vx, ship.vy = 120, 0
         local g = love.graphics
-        local originalArc, originalPrint, originalCircle = g.arc, g.print, g.circle
-        local segments, labels, rings = {}, {}, 0
+        local originalArc, originalPrint, originalPrintf, originalCircle, originalPolygon =
+            g.arc, g.print, g.printf, g.circle, g.polygon
+        local segments, printed, texts, rings, polygons = {}, {}, {}, 0, 0
+        local expectedTrackAlpha = 0.15 * Hud.BASE_ALPHA
         g.arc = function(mode, arcType, x, y, radius, start, finish, ...)
             local _, _, _, alpha = g.getColor()
-            if math.abs(alpha - 0.15) < 1e-6 then segments[radius] = (segments[radius] or 0) + 1 end
+            if math.abs(alpha - expectedTrackAlpha) < 1e-5 then
+                -- Distinguish upper resource arcs from the lower velocity arc (which starts near pi/6).
+                if start >= math.pi * 0.5 then
+                    segments[radius] = (segments[radius] or 0) + 1
+                end
+            end
             return originalArc(mode, arcType, x, y, radius, start, finish, ...)
         end
         g.print = function(label, ...)
-            labels[label] = true
+            printed[label] = true
             return originalPrint(label, ...)
+        end
+        g.printf = function(label, ...)
+            texts[tostring(label)] = true
+            return originalPrintf(label, ...)
         end
         g.circle = function(mode, x, y, radius, ...)
             if mode == "line" and math.abs(radius - ship.radius * ship.shieldMargin) < 1e-6 then rings = rings + 1 end
             return originalCircle(mode, x, y, radius, ...)
         end
+        g.polygon = function(...)
+            polygons = polygons + 1
+            return originalPolygon(...)
+        end
         local ok, message = pcall(function()
             ship:draw(0)
+            polygons = 0
             panel:draw(ship, 800, 600, 0)
         end)
-        local hasSegments = segments[70] == 10 and segments[59] == 10 and segments[48] == 3
-            and labels.SHIELD and labels.ARMOR and labels.HULL and labels["2 / 3"] and rings > 0
-        segments, labels, rings = {}, {}, 0
+        local r1 = Hud.RING_OUTER_RADIUS
+        local r2 = r1 - Hud.RING_STEP
+        local r3 = r1 - Hud.RING_STEP * 2
+        local r4 = r1 - Hud.RING_STEP * 3
+        local hasSegments = segments[r1] == 10 and segments[r2] == 10 and segments[r3] == 3 and segments[r4] == 10
+            and not printed.SHIELD and not printed.ARMOR and not printed.HULL
+            and texts.BATTERY and texts["75"] and texts.MJ
+            and texts["120"] and texts["PX/S"] and not texts["67% MAX"]
+            and rings > 0 and polygons == 0
+        segments, printed, texts, rings = {}, {}, {}, 0
         ship.maxShield = 0
         local noShieldOk, noShieldMessage = pcall(function()
             ship:draw(0)
             panel:draw(ship, 800, 600, 0)
         end)
-        g.arc, g.print, g.circle = originalArc, originalPrint, originalCircle
-        check(ok and hasSegments, "Shield and armor need ten ticks, hull three, and an active shield needs a ring: " .. tostring(message))
-        check(noShieldOk and not labels.SHIELD and labels.ARMOR and labels.HULL and segments[70] == 10
-            and segments[59] == 3 and not segments[48] and rings == 0,
-            "Zero maximum shield must omit the ring and reflow HUD armor and hull: " .. tostring(noShieldMessage))
+        g.arc, g.print, g.printf, g.circle, g.polygon =
+            originalArc, originalPrint, originalPrintf, originalCircle, originalPolygon
+        check(ok and hasSegments,
+            "Circular HUD must draw shield/armor/hull/battery rings, MJ center, and bottom velocity without side panels: " .. tostring(message))
+        check(noShieldOk and segments[r1] == 10 and segments[r2] == 3 and segments[r3] == 10 and not segments[r4] and rings == 0,
+            "Zero maximum shield must omit the ring and reflow HUD armor, hull, and battery: " .. tostring(noShieldMessage))
     end
 
     do

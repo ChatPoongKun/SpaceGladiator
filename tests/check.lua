@@ -594,6 +594,75 @@ return function(Ship, Starfield, Camera, Turret, Enemies, Hud)
     panel:draw(statusShip, 800, 600, 1)
     check(true, "HUD must tolerate an empty resource capacity without invalid drawing coordinates")
 
+    -- Verify battery arc counter-clockwise depletion and proximity opacity fade (0.80 -> 0.10).
+    do
+        local hudPanel = Hud.new()
+        local w, h = 1280, 800
+        local hudShip = Ship.new(w, h)
+        local hudCam = Camera.new(w / 2, h / 2)
+        hudCam:update(0, hudShip, w, h)
+        local hx, hy = hudPanel:center(w, h)
+
+        -- Battery arc max angle must shrink counter-clockwise (smaller end angle) as battery depletes.
+        local function maxBatteryArcEnd(batteryVal)
+            hudShip.battery = batteryVal
+            local batRadius = Hud.RING_OUTER_RADIUS - 3 * Hud.RING_STEP
+            local maxEnd = -math.huge
+            local origArc = love.graphics.arc
+            love.graphics.arc = function(mode, arcType, x, y, radius, start, finish, ...)
+                local _, _, _, a = love.graphics.getColor()
+                if math.abs(radius - batRadius) < 1e-4 and a > 0.5 * Hud.BASE_ALPHA then
+                    if finish > maxEnd then maxEnd = finish end
+                end
+                return origArc(mode, arcType, x, y, radius, start, finish, ...)
+            end
+            hudPanel:draw(hudShip, w, h, 0)
+            love.graphics.arc = origArc
+            return maxEnd
+        end
+        local endFull = maxBatteryArcEnd(100)
+        local endHalf = maxBatteryArcEnd(50)
+        local endQuarter = maxBatteryArcEnd(25)
+        check(endFull > endHalf and endHalf > endQuarter,
+            "Battery circular bar must shrink counter-clockwise as battery is consumed")
+
+        -- Clear area: opacity stays at BASE_ALPHA (0.80).
+        hudShip.x, hudShip.y = w / 2, 160
+        local clearAlpha = hudPanel:update(0, { ship = hudShip, camera = hudCam }, w, h)
+        check(near(clearAlpha, Hud.BASE_ALPHA), "HUD default opacity must be 80% when no entities are nearby")
+
+        -- Player near HUD: opacity drops to PROXIMITY_ALPHA (0.10).
+        hudShip.x, hudShip.y = hx, hy
+        local shipNearAlpha = hudPanel:update(0, { ship = hudShip, camera = hudCam }, w, h)
+        check(near(shipNearAlpha, Hud.PROXIMITY_ALPHA), "HUD must fade to 10% when the player approaches")
+
+        -- Enemy near HUD while player is far: opacity drops to 10%.
+        hudShip.x, hudShip.y = w / 2, 160
+        local nearEnemies = Enemies.new()
+        nearEnemies.items = { { x = hx + 20, y = hy, radius = 20 } }
+        local enemyNearAlpha = hudPanel:update(0, { ship = hudShip, enemies = nearEnemies, camera = hudCam }, w, h)
+        check(near(enemyNearAlpha, Hud.PROXIMITY_ALPHA), "HUD must fade to 10% when an enemy approaches")
+
+        -- Enemy projectile near HUD: opacity drops to 10%.
+        nearEnemies.items = {}
+        nearEnemies.fire.shots = { { x = hx, y = hy - 40, vx = 0, vy = 200, age = 0.1, profile = { radius = 4, trail = 14 } } }
+        local bulletNearAlpha = hudPanel:update(0, { ship = hudShip, enemies = nearEnemies, camera = hudCam }, w, h)
+        check(near(bulletNearAlpha, Hud.PROXIMITY_ALPHA), "HUD must fade to 10% when an enemy projectile approaches")
+
+        -- Bottom warp gate near HUD: opacity drops to 10%, then recovers smoothly when cleared.
+        nearEnemies.fire.shots = {}
+        local bottomGate = {
+            arenaW = w, arenaH = h,
+            gates = { { edge = "bottom", x = hx, y = h, dirX = 0, dirY = 1, width = 116 } },
+        }
+        local gateNearAlpha = hudPanel:update(0, { ship = hudShip, warpGates = bottomGate, camera = hudCam }, w, h)
+        check(near(gateNearAlpha, Hud.PROXIMITY_ALPHA), "HUD must fade to 10% when a bottom warp gate overlaps it")
+
+        local recovered = hudPanel:update(0.25, { ship = hudShip, camera = hudCam }, w, h)
+        check(recovered > Hud.PROXIMITY_ALPHA and recovered <= Hud.BASE_ALPHA,
+            "HUD opacity must smoothly recover toward 80% once nearby entities leave")
+    end
+
     local stars = Starfield.new(800, 600, function() return 0.5 end)
     check(#stars.layers == 3, "Background must contain exactly three star layers")
     stars:update(1, 100, -50, 0, 800, 600)

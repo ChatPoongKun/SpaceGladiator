@@ -132,6 +132,7 @@ local function startRun()
     lastEvasionCount, lastWrapEvents, lastDamageCount = 0, 0, 0
     wrapTriggerCooldown, shockwaveCooldown = 0, 0
     syncInventoryBuild()
+    if hud then hud:reset() end
     input.turn, input.thrust, input.brake, input.boost = 0, false, false, false
     time = 0
     setScreen("playing")
@@ -495,6 +496,19 @@ function love.load(args)
     end
 end
 
+local function updateHudProximity(dt)
+    if not hud then return end
+    hud:update(dt, {
+        ship = ship,
+        enemies = enemies,
+        turret = turret,
+        warpGates = screen == "warpSelect" and warpGates or nil,
+        camera = camera,
+        arenaWidth = Arena.width,
+        arenaHeight = Arena.height,
+    }, width, height)
+end
+
 function love.update(dt)
     if not focused and not testMode then return end
     dt = math.min(dt, 1 / 20)
@@ -542,6 +556,7 @@ function love.update(dt)
             enemies.fire:updateHarmless(dt)
         end
         camera:update(dt, ship, width, height)
+        updateHudProximity(dt)
         local vx, vy = ship:worldVelocity()
         if stageBackground then stageBackground:update(dt, vx, vy, width, height) end
         stars:update(dt, 90 + vx * 1.8, -210 + vy * 1.8, 0, width, height, 0)
@@ -564,6 +579,7 @@ function love.update(dt)
     if screen == "gameOver" then
         ship:update(dt, input)
         gladiator:update(dt, ship)
+        updateHudProximity(dt)
         if ship.destructionAge >= Ship.destructionDuration + gameOverHold then
             showResults("기체 파괴")
         end
@@ -606,6 +622,7 @@ function love.update(dt)
         local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
         local activeWeaponBuild = currentBuild and currentBuild.weapons[turret.weapon] or nil
         turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeaponBuild)
+        updateHudProximity(dt)
         return
     end
 
@@ -633,6 +650,7 @@ function love.update(dt)
     local activeWeaponBuild = currentBuild and currentBuild.weapons[turret.weapon] or nil
     turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeaponBuild)
     gladiator:update(dt, ship)
+    updateHudProximity(dt)
     if replay then
         replay:recordFrame(dt, ship, camera, turret, enemies, gladiator, stage)
     end
