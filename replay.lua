@@ -18,7 +18,7 @@ if okFfi then
             float shipX, shipY, shipVx, shipVy, shipWrapVx, shipWrapVy, shipAngle;
             float shipBoostRemaining, shipBoostLevel, shipBoostX, shipBoostY, shipBoostOriginX, shipBoostOriginY;
             float shipShield, shipMaxShield, shipArmor, shipMaxArmor, shipHull, shipMaxHull;
-            float shipBattery, shipMaxBattery, shipDestructionAge;
+            float shipBattery, shipMaxBattery, shipDestructionAge, shipInvulnTimer, shipInvulnDuration;
             float turretAngle;
             int32_t turretWeapon;
             uint8_t shipAccelerating, shipBraking;
@@ -293,6 +293,8 @@ function Replay:captureSnapshot(ship, camera, turret, enemies, gladiator, stage)
     h.shipBattery = ship.battery or 0
     h.shipMaxBattery = ship.maxBattery or 100
     h.shipDestructionAge = ship.destructionAge or 0
+    h.shipInvulnTimer = ship.invulnTimer or 0
+    h.shipInvulnDuration = ship.invulnDuration or 0
     h.turretAngle = turret.angle or 0
     h.turretWeapon = turret.weapon or 1
     h.shipAccelerating = ship.accelerating and 1 or 0
@@ -733,6 +735,8 @@ function Replay:extractClip(window)
                 shipHull = h.shipHull, shipMaxHull = h.shipMaxHull,
                 shipBattery = h.shipBattery, shipMaxBattery = h.shipMaxBattery,
                 shipDestructionAge = h.shipDestructionAge,
+                shipInvulnTimer = h.shipInvulnTimer,
+                shipInvulnDuration = h.shipInvulnDuration,
                 turretAngle = h.turretAngle, turretWeapon = h.turretWeapon,
                 shipAccelerating = h.shipAccelerating == 1,
                 shipBraking = h.shipBraking == 1,
@@ -1128,6 +1132,8 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
         battery = lerp(f0.shipBattery, f1.shipBattery, alpha),
         maxBattery = f0.shipMaxBattery,
         destructionAge = lerp(f0.shipDestructionAge, f1.shipDestructionAge, alpha),
+        invulnTimer = (f0.shipInvulnTimer or 0) > 0 and lerp(f0.shipInvulnTimer, f1.shipInvulnTimer or 0, alpha) or 0,
+        invulnDuration = f0.shipInvulnDuration or Ship.hitInvulnDuration,
         radius = Ship.radius,
         shieldMargin = Ship.shieldMargin,
         maxSpeed = Ship.maxSpeed,

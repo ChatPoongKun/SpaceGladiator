@@ -174,8 +174,11 @@ return function(state)
     local _, doomed, attackers = state()
     doomed:takeDamage(doomed.maxShield + doomed.maxArmor)
     local enemy = attackers:spawn(doomed, 2, {x = doomed.x - 60, y = doomed.y})
-    for _ = 1, doomed.maxHull do attackers.fire:shoot(enemy, doomed) end
-    love.update(0.05)
+    for _ = 1, doomed.maxHull do
+        doomed.invulnTimer, doomed.invulnDuration = 0, 0
+        attackers.fire:shoot(enemy, doomed)
+        love.update(0.05)
+    end
     assert(state() == "gameOver" and not drawText()["GAME OVER"], "The explosion must play first")
     key("escape")
     key("r")

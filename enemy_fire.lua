@@ -239,7 +239,7 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
             if missileSteps and shot.profile == missile then
                 missileSteps[#missileSteps + 1] = {shot = shot, oldX = oldX, oldY = oldY, start = start, step = step}
             end
-            if not ship:isDestroyed() then
+            if not ship:isDestroyed() and not ship:isInvulnerable() then
                 local x, y, at = playerHit(shot, motion, oldX, oldY, start, step, hitRadius)
                 if x then
                     contacts[#contacts + 1] = {shot = shot, x = x, y = y, at = at,
@@ -249,7 +249,7 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
         end
     end
 
-    while #contacts > 0 and not ship:isDestroyed() do
+    while #contacts > 0 and not ship:isDestroyed() and not ship:isInvulnerable() do
         local first = 1
         for i = 2, #contacts do
             if contacts[i].at < contacts[first].at then first = i end
@@ -261,7 +261,7 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
         hit.shot.spent = true
 
         -- A broken shield exposes the smaller hull to the remaining shots in this step.
-        if ship:hitRadius() ~= hitRadius then
+        if not ship:isInvulnerable() and ship:hitRadius() ~= hitRadius then
             hitRadius = ship:hitRadius()
             for i = #contacts, 1, -1 do
                 local contact = contacts[i]
@@ -273,7 +273,7 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
     end
 
     local missileThreatened = false
-    if missileSteps and not ship:isDestroyed() then
+    if missileSteps and not ship:isDestroyed() and not ship:isInvulnerable() then
         for _, entry in ipairs(missileSteps) do
             local shot = entry.shot
             if not shot.spent then

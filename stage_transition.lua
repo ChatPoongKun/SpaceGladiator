@@ -625,7 +625,7 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
             ship.vx = dirX * 42
             ship.vy = dirY * 42
             ship.wrapVx, ship.wrapVy = 0, 0
-            ship.invulnTimer = 0
+            ship.invulnTimer, ship.invulnDuration = 0, 0
             ship.boostLevel = 0
             ship.boostRemaining = 0
             ship.accelerating = false

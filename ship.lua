@@ -10,6 +10,8 @@ Ship.turnSpeed = 3.5
 Ship.radius = 23
 Ship.shieldMargin = 1.3
 Ship.destructionDuration = 0.7
+Ship.hitInvulnDuration = 0.5
+Ship.invulnBlinkInterval = 0.05
 Ship.driftThreshold = 50
 Ship.driftDeceleration = 50
 Ship.naturalDrag = 0.5
@@ -38,7 +40,7 @@ function Ship.new(width, height)
         baseMaxSpeed = Ship.maxSpeed, baseBoostSpeed = Ship.boostSpeed,
         baseBoostCost = Ship.boostCost, baseWrapBonusSpeed = Ship.wrapBonusSpeed,
         wrapBonusSpeed = Ship.wrapBonusSpeed,
-        wrapInvulnDuration = 0, invulnTimer = 0, wrapEvents = 0,
+        wrapInvulnDuration = 0, invulnTimer = 0, invulnDuration = 0, wrapEvents = 0,
         combatPower = Ship.combatPower,
         damageCount = 0,
         shieldDamageTaken = 0,
@@ -65,6 +67,29 @@ end
 
 function Ship:isDestroyed()
     return self.hull <= 0
+end
+
+function Ship:isInvulnerable()
+    return (self.invulnTimer or 0) > 0
+end
+
+function Ship:invulnBlinkAlpha()
+    if not self:isInvulnerable() then return 1, 0 end
+    local duration = math.max(self.invulnDuration or self.hitInvulnDuration, self.invulnTimer)
+    local elapsed = math.max(0, duration - self.invulnTimer)
+    local cycle = math.floor((elapsed + 1e-9) / self.invulnBlinkInterval) % 2
+    if cycle == 0 then
+        return 1, 0.85
+    end
+    return 0.22, 0
+end
+
+function Ship:grantInvulnerability(duration)
+    if not duration or duration <= 0 then return end
+    if duration > (self.invulnTimer or 0) then
+        self.invulnTimer = duration
+        self.invulnDuration = duration
+    end
 end
 
 function Ship:applyBuild(build)
@@ -100,7 +125,7 @@ function Ship:rechargeBattery(amount)
 end
 
 function Ship:takeDamage(amount)
-    if amount <= 0 or self:isDestroyed() or (self.invulnTimer or 0) > 0 then return end
+    if amount <= 0 or self:isDestroyed() or self:isInvulnerable() then return end
     self.damageCount = (self.damageCount or 0) + 1
     Sfx.play("player_hit")
     if self:hasShield() then
@@ -109,19 +134,26 @@ function Ship:takeDamage(amount)
         self.shieldDamageTaken = (self.shieldDamageTaken or 0) + absorbed
         amount = amount - absorbed
     end
+    if amount <= 0 then return end
+
     local absorbed = math.min(self.armor, amount)
     self.armor = self.armor - absorbed
     self.armorDamageTaken = (self.armorDamageTaken or 0) + absorbed
-    if amount <= absorbed then return end
-
-    self.hull = math.max(0, self.hull - 1)
-    if self:isDestroyed() then
-        Sfx.play("ship_destroy")
-        self.destructionAge = 0
-        self.vx, self.vy, self.wrapVx, self.wrapVy = 0, 0, 0, 0
-        self.accelerating, self.braking = false, false
-        self.boostRemaining, self.boostLevel = 0, 0
+    if amount > absorbed then
+        self.hull = math.max(0, self.hull - 1)
+        if self:isDestroyed() then
+            Sfx.play("ship_destroy")
+            self.destructionAge = 0
+            self.invulnTimer = 0
+            self.invulnDuration = 0
+            self.vx, self.vy, self.wrapVx, self.wrapVy = 0, 0, 0, 0
+            self.accelerating, self.braking = false, false
+            self.boostRemaining, self.boostLevel = 0, 0
+            return
+        end
     end
+
+    self:grantInvulnerability(self.hitInvulnDuration)
 end
 
 local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin, dt, wrapBonusSpeed)
@@ -229,7 +261,13 @@ function Ship:update(dt, input, options)
     local cap = self.maxSpeed + (self.boostSpeed - self.maxSpeed) * self.boostLevel
     local oldVx, oldVy = self:updateVelocity(dt, input.thrust, input.brake, cap, rechargeTime)
 
-    self.invulnTimer = math.max(0, (self.invulnTimer or 0) - dt)
+    if (self.invulnTimer or 0) > 0 then
+        self.invulnTimer = math.max(0, self.invulnTimer - dt)
+        if self.invulnTimer <= 1e-9 then
+            self.invulnTimer = 0
+            self.invulnDuration = 0
+        end
+    end
     local margin = self:hitRadius() + 1
     local detectWrap = not (options and options.disableWrapDetection)
     local wrapBonusSpeed = detectWrap and self.wrapBonusSpeed or Ship.wrapBonusSpeed
@@ -239,7 +277,7 @@ function Ship:update(dt, input, options)
     if detectWrap and (wrappedX or wrappedY) then
         self.wrapEvents = (self.wrapEvents or 0) + 1
         if (self.wrapInvulnDuration or 0) > 0 then
-            self.invulnTimer = math.max(self.invulnTimer, self.wrapInvulnDuration)
+            self:grantInvulnerability(self.wrapInvulnDuration)
         end
     end
 end
@@ -255,19 +293,24 @@ function Ship:drawBoostPulse()
     end
 end
 
+local function blendWhite(r, g, b, amount)
+    return r + (1 - r) * amount, g + (1 - g) * amount, b + (1 - b) * amount
+end
+
 function Ship:draw(time)
     local g = love.graphics
     local speed = self:speed()
     local boost = self.boostLevel
+    local blinkAlpha, blinkFlash = self:invulnBlinkAlpha()
     if self:hasShield() then
         local radius = self:hitRadius()
-        g.setColor(0.12, 0.36, 0.95, 0.14)
+        g.setColor(0.12, 0.36, 0.95, 0.14 * blinkAlpha)
         g.circle("fill", self.x, self.y, radius)
         g.setLineWidth(4)
-        g.setColor(0.17, 0.44, 1, 0.21)
+        g.setColor(0.17, 0.44, 1, 0.21 * blinkAlpha)
         g.circle("line", self.x, self.y, radius)
         g.setLineWidth(1.3)
-        g.setColor(0.40, 0.76, 1, 0.90)
+        g.setColor(0.40, 0.76, 1, 0.90 * blinkAlpha)
         g.circle("line", self.x, self.y, radius)
     end
     if speed > 4 then
@@ -276,14 +319,14 @@ function Ship:draw(time)
         local length = 36 + speed / self.maxSpeed * 30
         local x, y = self.x + dx * length, self.y + dy * length
         g.setLineWidth(1)
-        g.setColor(0.40, 0.85, 0.92, 0.23)
+        g.setColor(0.40, 0.85, 0.92, 0.23 * blinkAlpha)
         g.line(self.x + dx * 29, self.y + dy * 29, x, y)
         g.circle("line", x, y, 3)
     end
 
     if self.braking and speed > 1 then
         local pulse = 0.22 + math.sin(time * 18) * 0.08
-        g.setColor(0.35, 0.92, 0.91, pulse)
+        g.setColor(0.35, 0.92, 0.91, pulse * blinkAlpha)
         g.setLineWidth(2)
         g.arc("line", "open", self.x, self.y, 30, time * 2, time * 2 + 4.5)
     end
@@ -294,30 +337,32 @@ function Ship:draw(time)
 
     if boost > 0 then
         local trail = (92 + math.sin(time * 96) * 14) * boost
-        g.setColor(0.14, 0.57, 1, boost * 0.20)
+        g.setColor(0.14, 0.57, 1, boost * 0.20 * blinkAlpha)
         g.ellipse("fill", 0, 21 + trail * 0.33, 17, 13 + trail * 0.68)
-        g.setColor(0.23, 0.70, 1, boost * 0.9)
+        g.setColor(0.23, 0.70, 1, boost * 0.9 * blinkAlpha)
         g.polygon("fill", -10, 15, 0, 23 + trail, 10, 15)
-        g.setColor(0.81, 0.99, 1, boost)
+        g.setColor(0.81, 0.99, 1, boost * blinkAlpha)
         g.polygon("fill", -5, 15, 0, 20 + trail * 0.56, 5, 15)
-        g.setColor(0.48, 0.88, 1, boost * 0.68)
+        g.setColor(0.48, 0.88, 1, boost * 0.68 * blinkAlpha)
         g.setLineWidth(2)
         g.line(-12, 22, -13, 28 + trail * 0.72)
         g.line(12, 22, 13, 28 + trail * 0.72)
     elseif self.accelerating then
         local flame = 27 + math.sin(time * 57) * 7 + math.sin(time * 31) * 3
-        g.setColor(1, 0.40, 0.16, 0.08)
+        g.setColor(1, 0.40, 0.16, 0.08 * blinkAlpha)
         g.ellipse("fill", 0, 23, 18, flame + 12)
-        g.setColor(1, 0.46, 0.16, 0.8)
+        g.setColor(1, 0.46, 0.16, 0.8 * blinkAlpha)
         g.polygon("fill", -7, 15, 0, 16 + flame, 7, 15)
-        g.setColor(1, 0.85, 0.48, 1)
+        g.setColor(1, 0.85, 0.48, blinkAlpha)
         g.polygon("fill", -4, 15, 0, 29 + flame * 0.3, 4, 15)
-        g.setColor(0.92, 1, 1, 1)
+        g.setColor(0.92, 1, 1, blinkAlpha)
         g.polygon("fill", -3, 15, 0, 27, 3, 15)
     end
 
     for scale = 3, 1, -1 do
-        g.setColor(0.26, 0.78, 1, 0.025 * (4 - scale))
+        local gr, gg, gb = blendWhite(0.26, 0.78, 1, blinkFlash)
+        local glowAlpha = (0.025 + 0.06 * blinkFlash) * (4 - scale) * blinkAlpha
+        g.setColor(gr, gg, gb, glowAlpha)
         g.push()
         g.scale(1 + scale * 0.12)
         g.polygon("fill", 0, -23, -15, 17, 15, 17)
@@ -325,18 +370,23 @@ function Ship:draw(time)
     end
 
     -- Symmetric silhouette: one tip, two equal sides, one flat base.
-    g.setColor(0.075, 0.14, 0.20, 1)
+    local r, gg, b = blendWhite(0.075, 0.14, 0.20, blinkFlash * 0.72)
+    g.setColor(r, gg, b, blinkAlpha)
     g.polygon("fill", 0, -23, -15, 17, 15, 17)
-    g.setColor(0.46, 0.84, 0.91, 0.95)
-    g.setLineWidth(1.6)
+    r, gg, b = blendWhite(0.46, 0.84, 0.91, blinkFlash)
+    g.setColor(r, gg, b, 0.95 * blinkAlpha)
+    g.setLineWidth(1.6 + blinkFlash * 0.9)
     g.polygon("line", 0, -23, -15, 17, 15, 17)
-    g.setColor(0.75, 0.94, 1, 0.75)
+    r, gg, b = blendWhite(0.75, 0.94, 1, blinkFlash)
+    g.setColor(r, gg, b, 0.75 * blinkAlpha)
     g.setLineWidth(1)
     g.line(0, -23, 0, 7, -15, 17)
     g.line(0, 7, 15, 17)
-    g.setColor(0.36, 0.86, 1, 0.9)
+    r, gg, b = blendWhite(0.36, 0.86, 1, blinkFlash)
+    g.setColor(r, gg, b, 0.9 * blinkAlpha)
     g.polygon("fill", 0, -11, -4, 1, 4, 1)
-    g.setColor(0.58, 0.93, 1, 0.9)
+    r, gg, b = blendWhite(0.58, 0.93, 1, blinkFlash)
+    g.setColor(r, gg, b, 0.9 * blinkAlpha)
     g.line(-6, 17, 6, 17)
     g.pop()
 end

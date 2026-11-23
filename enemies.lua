@@ -410,6 +410,11 @@ end
 
 local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     if ship:isDestroyed() then return end
+    if ship:isInvulnerable() then
+        enemy.contactRadius = nil
+        enemy.nearMiss = nil
+        return
+    end
     local dx, dy = enemy.x - x, enemy.y - y
     local margin = enemy.radius
     -- An enemy moving outside the arena can only hit the player if its hitbox reaches inside.
@@ -441,7 +446,7 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     -- Keep the contact latched until separation, even if the shield broke on impact.
     local endX, endY = rx + vx, ry + vy
     local endDistSq = endX * endX + endY * endY
-    enemy.contactRadius = last == 1 and endDistSq <= radius * radius and radius or nil
+    enemy.contactRadius = (not ship:isInvulnerable()) and last == 1 and endDistSq <= radius * radius and radius or nil
     if gladiator and not ship:isDestroyed() then
         local minDist, minT = Collision.closestDistance(startRx, startRy, segVx, segVy)
         local endDist = math.sqrt(endDistSq)

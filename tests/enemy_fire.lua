@@ -197,23 +197,113 @@ return function(Ship, Enemies, Camera, check)
 
     do
         local ship = Ship.new(Arena.width, Arena.height)
+        local coast = { turn = 0, thrust = false, brake = false }
         ship.maxShield, ship.armor = 0, 0
         check(not ship:hasShield() and ship:hitRadius() == ship.radius,
             "Zero maximum shield must disable the shield even with a stale charge value")
         ship:takeDamage(1)
-        check(ship.hull == 2 and not ship:isDestroyed(), "A small hull hit must remove exactly one of three slots")
+        check(ship.hull == 2 and not ship:isDestroyed() and ship:isInvulnerable()
+            and math.abs(ship.invulnTimer - Ship.hitInvulnDuration) < 1e-9,
+            "A small hull hit must remove one slot and grant 0.5s invulnerability")
         ship:takeDamage(1000)
-        check(ship.hull == 1 and not ship:isDestroyed(), "A large hull hit must also remove exactly one slot")
+        check(ship.hull == 2, "Damage during post-hit invulnerability must be ignored")
+        ship:update(Ship.hitInvulnDuration, coast)
+        check(not ship:isInvulnerable(), "Post-hit invulnerability must expire after 0.5 seconds")
+        ship:takeDamage(1000)
+        check(ship.hull == 1 and not ship:isDestroyed() and ship:isInvulnerable(),
+            "A large hull hit after invulnerability ends must also remove exactly one slot")
+        ship:update(Ship.hitInvulnDuration, coast)
         ship.vx, ship.vy = 40, 10
         ship:takeDamage(1)
-        check(ship:isDestroyed() and ship.hull == 0 and ship:speed() == 0 and ship.destructionAge == 0,
-            "The third hull hit must destroy the craft and stop movement")
+        check(ship:isDestroyed() and ship.hull == 0 and not ship:isInvulnerable()
+            and ship:speed() == 0 and ship.destructionAge == 0,
+            "The third hull hit must destroy the craft, clear invulnerability, and stop movement")
         local x, y, battery = ship.x, ship.y, ship.battery
         ship:takeDamage(100)
         ship:update(dt, {turn = 1, thrust = true, boost = true})
         check(ship.hull == 0 and ship.x == x and ship.y == y and ship.battery == battery and ship.destructionAge == dt,
             "A destroyed ship must advance its explosion without responding to flight input")
         ship:drawDestruction()
+    end
+
+    -- Post-hit invulnerability: shield-blocked hits grant none; armor/hull hits grant 0.5s with blinking and no hit detection.
+    do
+        local coast = { turn = 0, thrust = false, brake = false }
+
+        -- 1. Shield completely blocking enemy collision or missile grants NO invulnerability.
+        local ship, group, enemy = fixture(3)
+        ship.shield, ship.armor = 20, 100
+        enemy.x, enemy.y = ship.x, ship.y
+        enemy.prevX, enemy.prevY = enemy.x, enemy.y
+        enemy.thrust, enemy.vx, enemy.vy, enemy.maxSpeed = 0, 0, 0, 0
+        group:update(dt, ship)
+        check(ship.shield == 0 and ship.armor == 100 and not ship:isInvulnerable() and ship.invulnTimer == 0,
+            "An enemy collision fully absorbed by shield must not grant invulnerability")
+
+        -- 2. Missile hitting armor grants 0.5s invulnerability and skips hit detection on remaining shots in the salvo.
+        local mShip, mGroup, launcher = fixture(3)
+        mShip.shield, mShip.armor = 0, 100
+        mGroup.fire:shoot(launcher, mShip)
+        local firstDuration = mGroup.fire.shots[1].lifetime
+        mGroup.fire:update(firstDuration, mShip)
+        check(mShip.armor == 92 and mShip:isInvulnerable()
+            and math.abs(mShip.invulnTimer - 0.5) < 1e-9
+            and #mGroup.fire.impacts == 1 and #mGroup.fire.shots == 5,
+            "First missile hitting armor must grant 0.5s invulnerability and let companion missiles pass without hit detection")
+
+        -- Blinking visual alternates between bright flash and dim transparency during invulnerability.
+        local a0, f0 = mShip:invulnBlinkAlpha()
+        mShip:draw(0)
+        mShip:update(Ship.invulnBlinkInterval, coast)
+        local a1, f1 = mShip:invulnBlinkAlpha()
+        mShip:draw(Ship.invulnBlinkInterval)
+        check(a0 == 1 and f0 > 0 and a1 < 0.5 and f1 == 0,
+            "Post-hit invulnerability must alternate between bright flash and dim blink phases")
+
+        -- 3. During remaining invulnerability, incoming shots and overlapping enemy ships do not register hits at all.
+        local wedge = mGroup:spawn(mShip, 1, { x = mShip.x - 40, y = mShip.y, entryTime = 5 })
+        wedge.thrust, wedge.vx, wedge.vy, wedge.maxSpeed = 0, 0, 0, 0
+        mGroup.fire:clear()
+        mGroup.fire:shoot(wedge, mShip)
+        mGroup.fire.bursts = {}
+        local dmgBefore = mShip.damageCount
+        local armorBefore = mShip.armor
+        local passedShot = mGroup.fire.shots[1]
+        for _ = 1, 10 do
+            mShip:update(dt, coast)
+            mGroup:update(dt, mShip)
+        end
+        check(mShip:isInvulnerable() and mShip.armor == armorBefore and mShip.damageCount == dmgBefore
+            and #mGroup.fire.impacts == 0 and not passedShot.spent and passedShot.x > mShip.x,
+            "Shots crossing an invulnerable player must pass through with zero hit detection or impact effects")
+
+        -- Overlapping enemy ship during invulnerability must also skip collision entirely.
+        wedge.x, wedge.y = mShip.x, mShip.y
+        wedge.prevX, wedge.prevY = wedge.x, wedge.y
+        mShip:update(dt, coast)
+        mGroup:update(dt, mShip)
+        check(mShip:isInvulnerable() and mShip.armor == armorBefore and mShip.damageCount == dmgBefore
+            and wedge.contactRadius == nil,
+            "Enemy ship overlap during invulnerability must not trigger contact hit detection")
+
+        -- Once the 0.5s window expires, blinking ends and hit detection resumes normally.
+        mShip:update(mShip.invulnTimer, coast)
+        local aEnd, fEnd = mShip:invulnBlinkAlpha()
+        check(not mShip:isInvulnerable() and aEnd == 1 and fEnd == 0,
+            "After 0.5s invulnerability expires, blink must stop")
+        mGroup:update(dt, mShip)
+        check(mShip.armor == armorBefore - 20 and mShip.damageCount == dmgBefore + 1 and mShip:isInvulnerable(),
+            "After 0.5s invulnerability expires, enemy contact must resume and trigger a new 0.5s window")
+
+        -- 4. Shield overflow into armor also grants 0.5s invulnerability.
+        local oShip, oGroup, oEnemy = fixture(1)
+        oShip.shield, oShip.armor = 2, 100
+        oGroup.fire:shoot(oEnemy, oShip)
+        oGroup.fire.bursts = {}
+        oGroup.fire.shots[1].x = oShip.x - oShip:hitRadius() - 2
+        oGroup.fire:update(dt, oShip)
+        check(oShip.shield == 0 and oShip.armor == 96 and oShip:isInvulnerable(),
+            "Damage breaking through shield into armor must grant 0.5s invulnerability")
     end
 
     do

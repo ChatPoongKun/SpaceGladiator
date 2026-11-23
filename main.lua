@@ -208,7 +208,7 @@ local function enterWarpSelect(keepExistingGates)
         if ship then
             ship.x, ship.y = Arena.width * 0.5, Arena.height * 0.5
             ship.vx, ship.vy, ship.wrapVx, ship.wrapVy = 0, 0, 0, 0
-            ship.invulnTimer = 0
+            ship.invulnTimer, ship.invulnDuration = 0, 0
             ship.boostRemaining, ship.boostLevel = 0, 0
             ship.accelerating, ship.braking = false, false
         end
@@ -242,7 +242,7 @@ local function completeWarpAndStartStage(gate)
     warpState = nil
     warpGates = nil
     if ship then
-        ship.invulnTimer = 0
+        ship.invulnTimer, ship.invulnDuration = 0, 0
         lastWrapEvents = ship.wrapEvents or 0
         lastDamageCount = ship.damageCount or 0
     end

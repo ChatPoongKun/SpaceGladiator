@@ -463,21 +463,34 @@ function Turret:drawEffects(camera, width, height)
     g.pop()
 end
 
+local function blendWhite(r, g, b, amount)
+    return r + (1 - r) * amount, g + (1 - g) * amount, b + (1 - b) * amount
+end
+
 function Turret:drawMount(ship, time)
     local g = love.graphics
+    local alpha, flash = 1, 0
+    if ship and ship.invulnBlinkAlpha then
+        alpha, flash = ship:invulnBlinkAlpha()
+    end
     g.push("all")
     g.translate(ship.x, ship.y)
     g.rotate(self.angle)
-    g.setColor(0.06, 0.11, 0.16, 1)
+    local r, gg, b = blendWhite(0.06, 0.11, 0.16, flash * 0.72)
+    g.setColor(r, gg, b, alpha)
     g.circle("fill", 0, 0, 8)
-    g.setColor(0.92, 0.69, 0.30, 1)
+    r, gg, b = blendWhite(0.92, 0.69, 0.30, flash)
+    g.setColor(r, gg, b, alpha)
     g.setLineWidth(1.2)
     g.circle("line", 0, 0, 7)
-    g.setColor(0.14, 0.22, 0.27, 1)
+    r, gg, b = blendWhite(0.14, 0.22, 0.27, flash * 0.72)
+    g.setColor(r, gg, b, alpha)
     g.rectangle("fill", -2.5, -muzzleLength, 5, muzzleLength)
-    g.setColor(1, 0.82, 0.44, 1)
+    r, gg, b = blendWhite(1, 0.82, 0.44, flash)
+    g.setColor(r, gg, b, alpha)
     g.rectangle("line", -2.5, -muzzleLength, 5, muzzleLength)
-    g.setColor(1, 0.90, 0.59, 0.8 + math.sin((time or 0) * 7) * 0.15)
+    r, gg, b = blendWhite(1, 0.90, 0.59, flash)
+    g.setColor(r, gg, b, (0.8 + math.sin((time or 0) * 7) * 0.15) * alpha)
     g.circle("fill", 0, 0, 3)
     g.pop()
 end

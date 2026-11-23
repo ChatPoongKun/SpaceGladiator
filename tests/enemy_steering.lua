@@ -387,14 +387,15 @@ return function(Ship, Enemies, Camera, check)
     end
 
     do
+        local coast = { turn = 0, thrust = false, brake = false }
         for kind, definition in ipairs(Enemies.types) do
             local ship, group = fixture()
             ship.shield = 5
             local offset = (ship:hitRadius() + ship.radius) * 0.5 + definition.radius
             local enemy = group:spawn(ship, kind, {x = ship.x + offset, y = ship.y, entryTime = 1})
             group:update(dt, ship)
-            check(ship.shield == 0 and ship.armor == 85 and group.items[1] == enemy,
-                "Contact with " .. definition.name .. " must deal 20 damage through the shield and armor")
+            check(ship.shield == 0 and ship.armor == 85 and ship:isInvulnerable() and group.items[1] == enemy,
+                "Contact with " .. definition.name .. " must deal 20 damage through the shield and armor and grant invulnerability")
 
             group:update(dt, ship)
             enemy.x = ship.x
@@ -405,8 +406,29 @@ return function(Ship, Enemies, Camera, check)
             group:update(dt, ship)
             enemy.x = ship.x
             group:update(dt, ship)
-            check(ship.armor == 65, "Separating and touching the same enemy again must deal another hit")
+            check(ship.armor == 85, "Separating and touching again during 0.5s post-hit invulnerability must not deal damage")
+
+            ship:update(Ship.hitInvulnDuration, coast)
+            enemy.x = ship.x
+            group:update(dt, ship)
+            check(ship.armor == 65, "Touching the same enemy again after post-hit invulnerability expires must deal another hit")
         end
+
+        -- Shield-only contact grants no invulnerability, latches until separation, and immediately hits again on re-entry.
+        local shielded, sGroup = fixture()
+        shielded.shield = 40
+        local sEnemy = sGroup:spawn(shielded, 1, {x = shielded.x, y = shielded.y, entryTime = 1})
+        sGroup:update(dt, shielded)
+        check(shielded.shield == 20 and not shielded:isInvulnerable(),
+            "Shield-absorbed contact must not grant invulnerability")
+        sEnemy.x = shielded.x
+        sGroup:update(dt, shielded)
+        check(shielded.shield == 20, "Continuous shield-absorbed contact must stay latched until separation")
+        sEnemy.x = shielded.x + 100
+        sGroup:update(dt, shielded)
+        sEnemy.x = shielded.x
+        sGroup:update(dt, shielded)
+        check(shielded.shield == 0, "Separating and re-entering after a shield-only hit must immediately deal another hit")
     end
 
     do
