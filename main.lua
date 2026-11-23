@@ -72,7 +72,10 @@ local function setScreen(nextScreen)
             activeExporter = nil
         end
         replay = nil
-        if stageBackground then stageBackground:setLevel(StageBackground.DEFAULT_LEVEL, true) end
+        if stageBackground then
+            stageBackground:setLevel(StageBackground.DEFAULT_LEVEL, true)
+            stageBackground:setTitle(true)
+        end
     end
     if screen == "title" or screen == "results" then
         ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
@@ -131,7 +134,13 @@ local function startRun(opts)
     inventoryStageEndMode = false
     pauseReturnScreen = "playing"
     stage = Stage.new(1)
-    if stageBackground then stageBackground:setLevel(stage.level, true) end
+    if stageBackground then
+        if opts and opts.entryWarp then
+            stageBackground:setTitle(true)
+        else
+            stageBackground:setLevel(stage.level, true)
+        end
+    end
     if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then
         stage:configureEnemies(enemies)
     end
@@ -253,6 +262,9 @@ end
 local function completeEntryWarpAndStartStage()
     warpState = nil
     warpGates = nil
+    if stageBackground then
+        stageBackground:setLevel(stage and stage.level or StageBackground.DEFAULT_LEVEL, true)
+    end
     if ship then
         ship.invulnTimer, ship.invulnDuration = 0, 0
         lastWrapEvents = ship.wrapEvents or 0

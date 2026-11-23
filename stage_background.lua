@@ -10,11 +10,13 @@ StageBackground.LEVEL_PATHS = {
     [2] = "assets/backgrounds/level_2.jpg",
     [3] = "assets/backgrounds/level_3.jpg",
 }
+StageBackground.TITLE_PATH = "assets/backgrounds/GameTitle.jpg"
 StageBackground.DEFAULT_LEVEL = 1
 
 -- Overscan factor ensures every viewport aspect ratio retains smooth parallax
 -- travel margin on all four sides without ever exposing image borders.
 StageBackground.OVERSCAN = 1.24
+StageBackground.TITLE_OVERSCAN = 1.0
 -- Slow parallax relative to player velocity (significantly slower than Starfield layers).
 StageBackground.PARALLAX = 0.09
 -- Exponential velocity smoothing for weighty deep-space drift.
@@ -22,6 +24,8 @@ StageBackground.SMOOTHING = 5.0
 -- Subtle atmospheric tint and opacity so foreground ships, bullets, and HUD stay legible.
 StageBackground.TINT = { 0.88, 0.90, 0.94 }
 StageBackground.ALPHA = 0.80
+StageBackground.TITLE_TINT = { 1, 1, 1 }
+StageBackground.TITLE_ALPHA = 1.0
 StageBackground.FALLBACK_COLOR = { 0.018, 0.025, 0.065 }
 StageBackground.DEFAULT_IMG_W = 1024
 StageBackground.DEFAULT_IMG_H = 571
@@ -61,17 +65,28 @@ function StageBackground.indexForLevel(levelNumber, count)
     return ((num - 1) % total) + 1
 end
 
+local function loadSingleImage(path)
+    if not path or not (love and love.graphics and love.graphics.newImage) then
+        return nil
+    end
+    local ok, img = pcall(love.graphics.newImage, path)
+    if ok and img then
+        if img.setFilter then
+            img:setFilter("linear", "linear")
+        end
+        return img
+    end
+    return nil
+end
+
 local function loadImages(paths)
     local images = {}
     if not (love and love.graphics and love.graphics.newImage) then
         return images
     end
     for i = 1, #paths do
-        local ok, img = pcall(love.graphics.newImage, paths[i])
-        if ok and img then
-            if img.setFilter then
-                img:setFilter("linear", "linear")
-            end
+        local img = loadSingleImage(paths[i])
+        if img then
             images[i] = img
         end
     end
@@ -82,11 +97,19 @@ function StageBackground.new(width, height, opts)
     opts = opts or {}
     local paths = opts.paths or StageBackground.LEVEL_PATHS
     local images = opts.images or loadImages(paths)
+    local titlePath = opts.titlePath or StageBackground.TITLE_PATH
+    local titleImage = opts.titleImage
+    if titleImage == nil then
+        titleImage = loadSingleImage(titlePath)
+    end
     local self = setmetatable({
         width = math.max(1, finite(width, 1280)),
         height = math.max(1, finite(height, 800)),
         paths = paths,
         images = images,
+        titlePath = titlePath,
+        titleImage = titleImage,
+        titleActive = false,
         level = StageBackground.DEFAULT_LEVEL,
         index = 1,
         u = 0,
@@ -94,11 +117,16 @@ function StageBackground.new(width, height, opts)
         velX = 0,
         velY = 0,
         overscan = finite(opts.overscan, StageBackground.OVERSCAN),
+        titleOverscan = finite(opts.titleOverscan, StageBackground.TITLE_OVERSCAN),
         parallax = finite(opts.parallax, StageBackground.PARALLAX),
         smoothing = finite(opts.smoothing, StageBackground.SMOOTHING),
         alpha = clamp(finite(opts.alpha, StageBackground.ALPHA), 0, 1),
+        titleAlpha = clamp(finite(opts.titleAlpha, StageBackground.TITLE_ALPHA), 0, 1),
     }, StageBackground)
     self:setLevel(opts.level or StageBackground.DEFAULT_LEVEL, true)
+    if opts.title then
+        self:setTitle(true)
+    end
     return self
 end
 
@@ -108,8 +136,17 @@ function StageBackground:count()
     return #self.paths
 end
 
+function StageBackground:setTitle(resetOffset)
+    self.titleActive = true
+    if resetOffset ~= false then
+        self.u, self.v = 0, 0
+        self.velX, self.velY = 0, 0
+    end
+end
+
 function StageBackground:setLevel(levelNumber, resetOffset)
     local num = math.max(1, math.floor(finite(levelNumber, StageBackground.DEFAULT_LEVEL)))
+    self.titleActive = false
     self.level = num
     self.index = StageBackground.indexForLevel(num, self:count())
     if resetOffset then
@@ -123,8 +160,7 @@ function StageBackground:resize(width, height)
     self.height = math.max(1, finite(height, self.height))
 end
 
-function StageBackground:imageDimensions(index)
-    local img = self.images[index or self.index]
+local function dimensionsOf(img)
     if img and img.getDimensions then
         local iw, ih = img:getDimensions()
         if iw and ih and iw > 0 and ih > 0 then
@@ -136,7 +172,15 @@ function StageBackground:imageDimensions(index)
     return StageBackground.DEFAULT_IMG_W, StageBackground.DEFAULT_IMG_H
 end
 
-function StageBackground:computeLayout(imgW, imgH, viewW, viewH, u, v)
+function StageBackground:imageDimensions(index)
+    return dimensionsOf(self.images[index or self.index])
+end
+
+function StageBackground:titleDimensions()
+    return dimensionsOf(self.titleImage)
+end
+
+function StageBackground:computeLayout(imgW, imgH, viewW, viewH, u, v, overscanOverride)
     viewW = math.max(1, finite(viewW, self.width))
     viewH = math.max(1, finite(viewH, self.height))
     imgW = math.max(1, finite(imgW, StageBackground.DEFAULT_IMG_W))
@@ -145,7 +189,8 @@ function StageBackground:computeLayout(imgW, imgH, viewW, viewH, u, v)
     v = clamp(finite(v, self.v), -1, 1)
 
     local coverScale = math.max(viewW / imgW, viewH / imgH)
-    local scale = coverScale * math.max(1, self.overscan)
+    local overscan = math.max(1, finite(overscanOverride, self.overscan))
+    local scale = coverScale * overscan
     local drawW = imgW * scale
     local drawH = imgH * scale
     local marginX = math.max(0, (drawW - viewW) * 0.5)
@@ -223,8 +268,20 @@ function StageBackground:drawImageAt(index, viewW, viewH, u, v, alpha)
     return true
 end
 
--- Draws the active level backdrop at the lowest layer.
--- Optional opts: { nextLevel = number, blend = 0..1 } crossfades only when transitioning to a different level.
+function StageBackground:drawTitle(viewW, viewH, alpha)
+    local img = self.titleImage
+    if not img then return false end
+    local imgW, imgH = self:titleDimensions()
+    local layout = self:computeLayout(imgW, imgH, viewW, viewH, 0, 0, self.titleOverscan)
+    local g = love.graphics
+    local tint = StageBackground.TITLE_TINT
+    g.setColor(tint[1], tint[2], tint[3], clamp(finite(alpha, 1), 0, 1))
+    g.draw(img, layout.x, layout.y, 0, layout.scale, layout.scale)
+    return true
+end
+
+-- Draws the active level (or main title) backdrop at the lowest layer.
+-- Optional opts: { nextLevel = number, blend = 0..1 } crossfades when transitioning to a different level or leaving the title screen.
 function StageBackground:draw(width, height, opts)
     local viewW = math.max(1, finite(width, self.width))
     local viewH = math.max(1, finite(height, self.height))
@@ -244,7 +301,21 @@ function StageBackground:draw(width, height, opts)
     local nextIndex = nextLevel and StageBackground.indexForLevel(nextLevel, self:count()) or nil
 
     local baseAlpha = clamp(finite(self.alpha, StageBackground.ALPHA), 0, 1)
-    if nextIndex and nextIndex ~= self.index and blend > 0.001 then
+    local titleAlpha = clamp(finite(self.titleAlpha, StageBackground.TITLE_ALPHA), 0, 1)
+    local useTitle = self.titleActive and self.titleImage ~= nil
+    if useTitle then
+        if nextIndex and blend > 0.001 then
+            local nextAlpha = baseAlpha * blend
+            if blend < 0.999 then
+                local denom = math.max(1e-6, 1 - nextAlpha)
+                local currAlpha = clamp((titleAlpha * (1 - blend)) / denom, 0, 1)
+                self:drawTitle(viewW, viewH, currAlpha)
+            end
+            self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha)
+        else
+            self:drawTitle(viewW, viewH, titleAlpha)
+        end
+    elseif nextIndex and nextIndex ~= self.index and blend > 0.001 then
         local nextAlpha = baseAlpha * blend
         if blend < 0.999 then
             local denom = math.max(1e-6, 1 - nextAlpha)
