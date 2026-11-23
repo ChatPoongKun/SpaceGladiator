@@ -920,7 +920,6 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
     local sf = aligning and 0 or (warp.speedFactor or (isEntry and StageTransition.entryWarpSpeedFactor(p) or StageTransition.warpSpeedFactor(p)))
     local dirX, dirY = warp.dirX, warp.dirY
     local rc = warp.gate and warp.gate.reward and warp.gate.reward.color or { 0.45, 0.92, 1.0 }
-    local viewDiag = math.sqrt(width * width + height * height)
 
     local ox, oy, ow, oh = Display.virtualOverscanBounds()
     local fillX, fillY = math.min(0, ox), math.min(0, oy)
@@ -954,39 +953,7 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         g.rectangle("fill", fillX, fillY, fillW, fillH)
     end
 
-    -- 2. Old arena sliding behind & fading out along -travel during inter-stage departure (p < 0.36)
-    local originX, originY = camera:worldToScreen(0, 0, width, height)
-    if not isEntry and p < 0.36 then
-        local departT = p / 0.36
-        local departDist = math.max(1050, viewDiag * 0.85)
-        local slide = easeInCubic(departT) * departDist
-        local alpha = 1 - departT
-        g.push("all")
-        g.translate(originX - dirX * slide, originY - dirY * slide)
-        g.scale(camera.zoom)
-        Arena.draw(sf, 0)
-        -- Fade mask to darken retiring arena smoothly
-        g.setColor(0.018, 0.025, 0.065, 1 - alpha)
-        g.rectangle("fill", -16, -16, Arena.width + 32, Arena.height + 32)
-        g.pop()
-    end
-
-    -- 3. Destination arena sliding smoothly in from ahead along +travel during arrival
-    local arriveStart = isEntry and 0.10 or 0.58
-    local arriveSpan = isEntry and 0.82 or 0.42
-    if p > arriveStart then
-        local arriveT = clamp((p - arriveStart) / arriveSpan, 0, 1)
-        local eased = easeOutCubic(arriveT)
-        local arriveDist = math.max(950, viewDiag * 0.82)
-        local slide = (1 - eased) * arriveDist
-        g.push("all")
-        g.translate(originX + dirX * slide, originY + dirY * slide)
-        g.scale(camera.zoom)
-        Arena.draw(sf * 0.7, 0)
-        g.pop()
-    end
-
-    -- 4. Draw ship streaking in from below (entry) or rotating & gliding into arrival center (stage warp)
+    -- 2. Draw ship streaking in from below (entry) or rotating & gliding into arrival center (stage warp)
     if ship then
         local centerX, centerY = camera:worldToScreen(Arena.width * 0.5, Arena.height * 0.5, width, height)
         local startSx, startSy = camera:worldToScreen(warp.startX, warp.startY, width, height)
