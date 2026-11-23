@@ -224,7 +224,10 @@ local function beginWarpToNextStage(gate)
     warpState = StageTransition.newWarp(gate, (stage and stage.number or 1) + 1, ship, width, height)
     warpGates = nil
     setScreen("warping")
-    Sfx.play("warp_jump")
+    if (warpState.alignDuration or 0) <= 0 then
+        warpState.jumpSfxPlayed = true
+        Sfx.play("warp_jump")
+    end
 end
 
 local function completeWarpAndStartStage(gate)
@@ -883,7 +886,7 @@ function love.draw()
     end
     if screen == "warping" and warpState then
         if stageBackground then
-            local p = math.max(0, math.min(1, warpState.elapsed / math.max(1e-6, warpState.duration)))
+            local p = StageTransition.warpProgress(warpState)
             local bgBlend = math.max(0, math.min(1, (p - 0.30) / 0.40))
             stageBackground:draw(width, height, {
                 nextLevel = stage and stage.level or StageBackground.DEFAULT_LEVEL,
@@ -1137,6 +1140,8 @@ function love.resize(w, h)
     if warpGates and warpGates.gates and prevW > 0 and prevH > 0 then
         local sx, sy = Arena.width / prevW, Arena.height / prevH
         warpGates.arenaW, warpGates.arenaH = Arena.width, Arena.height
+        if warpGates.lastShipX then warpGates.lastShipX = warpGates.lastShipX * sx end
+        if warpGates.lastShipY then warpGates.lastShipY = warpGates.lastShipY * sy end
         for _, gate in ipairs(warpGates.gates) do
             if gate.edge == "top" then
                 gate.x, gate.y = gate.x * sx, 0
