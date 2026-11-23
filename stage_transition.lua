@@ -490,18 +490,24 @@ function StageTransition.applyRewardOnArrival(reward, inventory, ship, coinWalle
     return bonusCoins
 end
 
-function StageTransition.drawWarpGates(warpGates, ship, time, fonts)
+function StageTransition.drawWarpGates(warpGates, ship, time, fonts, screenW, screenH)
     if not warpGates or not warpGates.gates then return end
     local g = love.graphics
     local fade = easeOutCubic(clamp(warpGates.age / 0.35, 0, 1))
-    local w = warpGates.arenaW or Arena.width
-    local h = warpGates.arenaH or Arena.height
+    local arenaW = warpGates.arenaW or Arena.width
+    local arenaH = warpGates.arenaH or Arena.height
+    local w = screenW or arenaW
+    local h = screenH or arenaH
+    local scaleX = arenaW > 0 and (w / arenaW) or 1
+    local scaleY = arenaH > 0 and (h / arenaH) or 1
 
     g.push("all")
     for _, gate in ipairs(warpGates.gates) do
         local rc = gate.reward.color or { 0.45, 0.92, 1.0 }
         local halfW = gate.width * 0.5
         local horizontal = (gate.edge == "top" or gate.edge == "bottom")
+        local gateX = gate.x * scaleX
+        local gateY = gate.y * scaleY
         local pulse = 0.72 + 0.28 * math.sin(time * 5.2 + gate.index * 1.9)
 
         -- Proximity boost when ship flies near this gate
@@ -512,44 +518,44 @@ function StageTransition.drawWarpGates(warpGates, ship, time, fonts)
             nearFactor = clamp(1 - dist / 200, 0, 1)
         end
 
-        -- 1. Glowing energy portal aperture on the arena boundary
+        -- 1. Glowing energy portal aperture on the screen/arena boundary
         local glowDepth = 22 + 12 * nearFactor
         if horizontal then
             local gy = gate.edge == "top" and -4 or (h - glowDepth + 4)
             g.setColor(rc[1], rc[2], rc[3], (0.20 + 0.16 * nearFactor) * pulse * fade)
-            g.rectangle("fill", gate.x - halfW, gy, gate.width, glowDepth, 6, 6)
+            g.rectangle("fill", gateX - halfW, gy, gate.width, glowDepth, 6, 6)
             -- Crisp bright beam right along boundary edge
             g.setColor(rc[1], rc[2], rc[3], (0.85 + 0.15 * nearFactor) * fade)
             g.setLineWidth(4 + 2 * nearFactor)
-            g.line(gate.x - halfW, gate.y, gate.x + halfW, gate.y)
+            g.line(gateX - halfW, gateY, gateX + halfW, gateY)
             g.setColor(1, 1, 1, 0.85 * pulse * fade)
             g.setLineWidth(1.8)
-            g.line(gate.x - halfW * 0.72, gate.y, gate.x + halfW * 0.72, gate.y)
+            g.line(gateX - halfW * 0.72, gateY, gateX + halfW * 0.72, gateY)
             -- End pylons
             g.setColor(rc[1], rc[2], rc[3], 0.95 * fade)
-            g.circle("fill", gate.x - halfW, gate.y, 5)
-            g.circle("fill", gate.x + halfW, gate.y, 5)
+            g.circle("fill", gateX - halfW, gateY, 5)
+            g.circle("fill", gateX + halfW, gateY, 5)
         else
             local gx = gate.edge == "left" and -4 or (w - glowDepth + 4)
             g.setColor(rc[1], rc[2], rc[3], (0.20 + 0.16 * nearFactor) * pulse * fade)
-            g.rectangle("fill", gx, gate.y - halfW, glowDepth, gate.width, 6, 6)
+            g.rectangle("fill", gx, gateY - halfW, glowDepth, gate.width, 6, 6)
             g.setColor(rc[1], rc[2], rc[3], (0.85 + 0.15 * nearFactor) * fade)
             g.setLineWidth(4 + 2 * nearFactor)
-            g.line(gate.x, gate.y - halfW, gate.x, gate.y + halfW)
+            g.line(gateX, gateY - halfW, gateX, gateY + halfW)
             g.setColor(1, 1, 1, 0.85 * pulse * fade)
             g.setLineWidth(1.8)
-            g.line(gate.x, gate.y - halfW * 0.72, gate.x, gate.y + halfW * 0.72)
+            g.line(gateX, gateY - halfW * 0.72, gateX, gateY + halfW * 0.72)
             g.setColor(rc[1], rc[2], rc[3], 0.95 * fade)
-            g.circle("fill", gate.x, gate.y - halfW, 5)
-            g.circle("fill", gate.x, gate.y + halfW, 5)
+            g.circle("fill", gateX, gateY - halfW, 5)
+            g.circle("fill", gateX, gateY + halfW, 5)
         end
 
         -- 2. Animated directional chevrons pulling toward the warp boundary
         for c = 0, 2 do
             local phase = (time * 1.9 + c * 0.33) % 1
             local distIn = (1 - phase) * 46 + 8
-            local cx = gate.x - gate.dirX * distIn
-            local cy = gate.y - gate.dirY * distIn
+            local cx = gateX - gate.dirX * distIn
+            local cy = gateY - gate.dirY * distIn
             local cAlpha = math.sin(phase * math.pi) * (0.78 + 0.22 * nearFactor) * fade
             g.push()
             g.translate(cx, cy)
@@ -560,12 +566,12 @@ function StageTransition.drawWarpGates(warpGates, ship, time, fonts)
             g.pop()
         end
 
-        -- 3. Holographic major reward card anchored neatly inside the arena
+        -- 3. Holographic major reward card anchored neatly inside the screen
         local cardW, cardH = 196, 62
         local anchorDistX = horizontal and 0 or 118
         local anchorDistY = horizontal and 66 or 0
-        local cardCx = clamp(gate.x - gate.dirX * anchorDistX, cardW * 0.5 + 14, w - cardW * 0.5 - 14)
-        local cardCy = clamp(gate.y - gate.dirY * anchorDistY, cardH * 0.5 + 12, h - cardH * 0.5 - 12)
+        local cardCx = clamp(gateX - gate.dirX * anchorDistX, cardW * 0.5 + 14, w - cardW * 0.5 - 14)
+        local cardCy = clamp(gateY - gate.dirY * anchorDistY, cardH * 0.5 + 12, h - cardH * 0.5 - 12)
         local cardX = cardCx - cardW * 0.5
         local cardY = cardCy - cardH * 0.5
 

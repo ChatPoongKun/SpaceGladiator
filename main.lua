@@ -965,14 +965,14 @@ local function drawFlight()
     love.graphics.translate(originX, originY)
     love.graphics.scale(camera.zoom)
     Arena.draw(ship.boostLevel, gladiator.feverAura)
-    if screen == "warpSelect" and warpGates then
-        StageTransition.drawWarpGates(warpGates, ship, time, fonts)
-    end
     enemies:draw(time)
     gladiator:drawFeverWorld(ship, time)
     drawPlayer(originX, originY)
     turret:drawEffects(camera, width, height)
     love.graphics.pop()
+    if screen == "warpSelect" and warpGates then
+        StageTransition.drawWarpGates(warpGates, ship, time, fonts, width, height)
+    end
     gladiator:drawFeverOverlay(width, height, time)
     gladiator:drawPopups(camera, width, height, fonts.small)
     drawHud()
