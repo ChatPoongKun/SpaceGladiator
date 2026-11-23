@@ -17,6 +17,8 @@ StageBackground.DEFAULT_LEVEL = 1
 -- travel margin on all four sides without ever exposing image borders.
 StageBackground.OVERSCAN = 1.24
 StageBackground.TITLE_OVERSCAN = 1.0
+-- Subtle zoom-out factor for the farthest backdrop when camera pulls back during boost.
+StageBackground.BOOST_ZOOM_OUT = 0.045
 -- Slow parallax relative to player velocity (significantly slower than Starfield layers).
 StageBackground.PARALLAX = 0.09
 -- Exponential velocity smoothing for weighty deep-space drift.
@@ -303,11 +305,11 @@ function StageBackground:currentOffset()
     return layout.offsetX, layout.offsetY
 end
 
-function StageBackground:drawImageAt(index, viewW, viewH, u, v, alpha)
+function StageBackground:drawImageAt(index, viewW, viewH, u, v, alpha, overscanOverride)
     local img = self.images[index]
     if not img then return false end
     local imgW, imgH = self:imageDimensions(index)
-    local layout = self:computeLayout(imgW, imgH, viewW, viewH, u, v)
+    local layout = self:computeLayout(imgW, imgH, viewW, viewH, u, v, overscanOverride)
     local g = love.graphics
     local tint = StageBackground.TINT
     g.setColor(tint[1], tint[2], tint[3], clamp(finite(alpha, 1), 0, 1))
@@ -370,6 +372,8 @@ function StageBackground:draw(width, height, opts)
     g.rectangle("fill", 0, 0, viewW, viewH)
 
     local blend = opts and clamp(finite(opts.blend, 0), 0, 1) or 0
+    local pullback = opts and clamp(finite(opts.pullback, 0), 0, 1) or 0
+    local overscanOverride = pullback > 0 and (self.overscan * (1 - StageBackground.BOOST_ZOOM_OUT * pullback)) or nil
     local nextLevel = opts and opts.nextLevel or nil
     local nextIndex = nextLevel and StageBackground.indexForLevel(nextLevel, self:count()) or nil
 
@@ -384,7 +388,7 @@ function StageBackground:draw(width, height, opts)
                 local currAlpha = clamp((titleAlpha * (1 - blend)) / denom, 0, 1)
                 self:drawTitle(viewW, viewH, currAlpha)
             end
-            self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha)
+            self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha, overscanOverride)
         else
             self:drawTitle(viewW, viewH, titleAlpha)
         end
@@ -393,11 +397,11 @@ function StageBackground:draw(width, height, opts)
         if blend < 0.999 then
             local denom = math.max(1e-6, 1 - nextAlpha)
             local currAlpha = clamp((baseAlpha * (1 - blend)) / denom, 0, 1)
-            self:drawImageAt(self.index, viewW, viewH, self.u, self.v, currAlpha)
+            self:drawImageAt(self.index, viewW, viewH, self.u, self.v, currAlpha, overscanOverride)
         end
-        self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha)
+        self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha, overscanOverride)
     else
-        self:drawImageAt(self.index, viewW, viewH, self.u, self.v, baseAlpha)
+        self:drawImageAt(self.index, viewW, viewH, self.u, self.v, baseAlpha, overscanOverride)
     end
 
     g.pop()

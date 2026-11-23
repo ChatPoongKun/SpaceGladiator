@@ -1018,6 +1018,7 @@ function love.draw()
             stageBackground:draw(bgW, bgH, {
                 nextLevel = stage and stage.level or StageBackground.DEFAULT_LEVEL,
                 blend = bgBlend,
+                pullback = camera and camera.pullback or 0,
             })
             stars:draw({ transparent = true, excludeZone = planetMask })
         else
@@ -1031,7 +1032,7 @@ function love.draw()
     end
     if stageBackground then
         local planetMask = stageBackground.titleActive and stageBackground:titlePlanetMask(bgW, bgH) or nil
-        stageBackground:draw(bgW, bgH)
+        stageBackground:draw(bgW, bgH, { pullback = camera and camera.pullback or 0 })
         stars:draw({ transparent = true, excludeZone = planetMask })
     else
         stars:draw()
