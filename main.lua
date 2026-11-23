@@ -1014,12 +1014,14 @@ function love.draw()
         if stageBackground then
             local p = StageTransition.warpProgress(warpState)
             local bgBlend = math.max(0, math.min(1, (p - 0.30) / 0.40))
-            local pullback = math.max(camera and camera.pullback or 0, warpState.speedFactor or 0)
+            local warpSpeed = warpState.speedFactor or 0
+            local pullback = math.max(camera and camera.pullback or 0, warpSpeed)
             local planetMask = stageBackground.titleActive and stageBackground:titlePlanetMask(bgW, bgH) or nil
             stageBackground:draw(bgW, bgH, {
                 nextLevel = stage and stage.level or StageBackground.DEFAULT_LEVEL,
                 blend = bgBlend,
                 pullback = pullback,
+                shake = warpSpeed * warpSpeed,
             })
             stars:draw({ transparent = true, excludeZone = planetMask })
         else

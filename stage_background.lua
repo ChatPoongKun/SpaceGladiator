@@ -19,6 +19,8 @@ StageBackground.OVERSCAN = 1.24
 StageBackground.TITLE_OVERSCAN = 1.0
 -- Subtle zoom-out factor for the farthest backdrop when camera pulls back during boost.
 StageBackground.BOOST_ZOOM_OUT = 0.045
+-- Maximum pixel shake amplitude for the backdrop during hyperspace warp.
+StageBackground.WARP_SHAKE_PX = 8.0
 -- Slow parallax relative to player velocity (significantly slower than Starfield layers).
 StageBackground.PARALLAX = 0.09
 -- Exponential velocity smoothing for weighty deep-space drift.
@@ -228,7 +230,7 @@ function StageBackground:titleDimensions()
     return dimensionsOf(self.titleImage)
 end
 
-function StageBackground:computeLayout(imgW, imgH, viewW, viewH, u, v, overscanOverride)
+function StageBackground:computeLayout(imgW, imgH, viewW, viewH, u, v, overscanOverride, shakeX, shakeY)
     viewW = math.max(1, finite(viewW, self.width))
     viewH = math.max(1, finite(viewH, self.height))
     imgW = math.max(1, finite(imgW, StageBackground.DEFAULT_IMG_W))
@@ -247,8 +249,8 @@ function StageBackground:computeLayout(imgW, imgH, viewW, viewH, u, v, overscanO
     local maxShiftX = math.max(0, marginX - 1)
     local maxShiftY = math.max(0, marginY - 1)
 
-    local offsetX = u * maxShiftX
-    local offsetY = v * maxShiftY
+    local offsetX = clamp(u * maxShiftX + finite(shakeX, 0), -maxShiftX, maxShiftX)
+    local offsetY = clamp(v * maxShiftY + finite(shakeY, 0), -maxShiftY, maxShiftY)
     local x = (viewW - drawW) * 0.5 + offsetX
     local y = (viewH - drawH) * 0.5 + offsetY
 
@@ -305,11 +307,11 @@ function StageBackground:currentOffset()
     return layout.offsetX, layout.offsetY
 end
 
-function StageBackground:drawImageAt(index, viewW, viewH, u, v, alpha, overscanOverride)
+function StageBackground:drawImageAt(index, viewW, viewH, u, v, alpha, overscanOverride, shakeX, shakeY)
     local img = self.images[index]
     if not img then return false end
     local imgW, imgH = self:imageDimensions(index)
-    local layout = self:computeLayout(imgW, imgH, viewW, viewH, u, v, overscanOverride)
+    local layout = self:computeLayout(imgW, imgH, viewW, viewH, u, v, overscanOverride, shakeX, shakeY)
     local g = love.graphics
     local tint = StageBackground.TINT
     g.setColor(tint[1], tint[2], tint[3], clamp(finite(alpha, 1), 0, 1))
@@ -373,7 +375,15 @@ function StageBackground:draw(width, height, opts)
 
     local blend = opts and clamp(finite(opts.blend, 0), 0, 1) or 0
     local pullback = opts and clamp(finite(opts.pullback, 0), 0, 1) or 0
+    local shake = opts and clamp(finite(opts.shake, 0), 0, 1) or 0
     local overscanOverride = pullback > 0 and (self.overscan * (1 - StageBackground.BOOST_ZOOM_OUT * pullback)) or nil
+    local shakeX, shakeY = 0, 0
+    if shake > 0.001 then
+        local t = finite(self.time, 0)
+        local amp = StageBackground.WARP_SHAKE_PX * shake
+        shakeX = (math.sin(t * 47.0) * 0.65 + math.sin(t * 83.0 + 1.1) * 0.35) * amp
+        shakeY = (math.cos(t * 53.0 + 0.7) * 0.65 + math.cos(t * 91.0 + 2.3) * 0.35) * amp
+    end
     local nextLevel = opts and opts.nextLevel or nil
     local nextIndex = nextLevel and StageBackground.indexForLevel(nextLevel, self:count()) or nil
 
@@ -388,7 +398,7 @@ function StageBackground:draw(width, height, opts)
                 local currAlpha = clamp((titleAlpha * (1 - blend)) / denom, 0, 1)
                 self:drawTitle(viewW, viewH, currAlpha)
             end
-            self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha, overscanOverride)
+            self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha, overscanOverride, shakeX, shakeY)
         else
             self:drawTitle(viewW, viewH, titleAlpha)
         end
@@ -397,11 +407,11 @@ function StageBackground:draw(width, height, opts)
         if blend < 0.999 then
             local denom = math.max(1e-6, 1 - nextAlpha)
             local currAlpha = clamp((baseAlpha * (1 - blend)) / denom, 0, 1)
-            self:drawImageAt(self.index, viewW, viewH, self.u, self.v, currAlpha, overscanOverride)
+            self:drawImageAt(self.index, viewW, viewH, self.u, self.v, currAlpha, overscanOverride, shakeX, shakeY)
         end
-        self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha, overscanOverride)
+        self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha, overscanOverride, shakeX, shakeY)
     else
-        self:drawImageAt(self.index, viewW, viewH, self.u, self.v, baseAlpha, overscanOverride)
+        self:drawImageAt(self.index, viewW, viewH, self.u, self.v, baseAlpha, overscanOverride, shakeX, shakeY)
     end
 
     g.pop()
