@@ -390,16 +390,100 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
     until remaining <= 0
 end
 
+function Turret:clearEffects()
+    self.missiles = {}
+    self.explosions = {}
+    self.beams = {}
+    self.beam = nil
+    self.burstQueue = {}
+end
+
+function Turret:beginStageClear()
+    self.burstQueue = {}
+    for _, missile in ipairs(self.missiles) do
+        if not missile.fading then
+            local fadeSpan = missile.targetScreenX and 0.65 or 0.55
+            missile.fading = true
+            missile.fadeStartAge = missile.age
+            missile.fadeEndAge = math.min(missile.lifetime, missile.age + fadeSpan)
+        end
+    end
+end
+
+function Turret:updateEffects(dt, camera, width, height)
+    dt = math.max(0, dt or 0)
+    if dt <= 0 then return end
+    self.cooldown = math.max(0, self.cooldown - dt)
+
+    local agedPrimary = false
+    if self.beams then
+        for bi = #self.beams, 1, -1 do
+            local beam = self.beams[bi]
+            if beam == self.beam then agedPrimary = true end
+            beam.age = beam.age + dt
+            if beam.age >= beamLifetime then
+                if beam == self.beam then self.beam = nil end
+                table.remove(self.beams, bi)
+            end
+        end
+    end
+    if self.beam and not agedPrimary then
+        self.beam.age = self.beam.age + dt
+        if self.beam.age >= beamLifetime then
+            self.beam = nil
+        end
+    end
+
+    for i = #self.explosions, 1, -1 do
+        local explosion = self.explosions[i]
+        explosion.age = explosion.age + dt
+        if explosion.age >= explosion.lifetime then
+            table.remove(self.explosions, i)
+        end
+    end
+
+    for i = #self.missiles, 1, -1 do
+        local missile = self.missiles[i]
+        local isRocket = missile.targetScreenX ~= nil
+        local expireAt = missile.fadeEndAge or missile.lifetime
+        local flightTime = math.min(dt, math.max(0, expireAt - missile.age))
+        local elapsed = missile.age + dt
+        missile.age = math.min(expireAt, elapsed)
+        if isRocket then
+            if camera and width and height then
+                updateRocketPose(missile, camera, width, height)
+            end
+        elseif flightTime > 0 then
+            missile.x = missile.x + missile.vx * flightTime
+            missile.y = missile.y + missile.vy * flightTime
+            missile.distance = (missile.distance or 0) + (missile.speed or 0) * flightTime
+        end
+        if elapsed >= expireAt - 1e-9 then
+            table.remove(self.missiles, i)
+        end
+    end
+end
+
 function Turret:drawEffects(camera, width, height)
     local g = love.graphics
     g.push("all")
     for _, missile in ipairs(self.missiles) do
+        local fade = 1
+        if missile.fading and missile.fadeEndAge then
+            local span = math.max(1e-4, missile.fadeEndAge - (missile.fadeStartAge or 0))
+            fade = math.max(0, math.min(1, (missile.fadeEndAge - missile.age) / span))
+        end
         local speed = missile.speed > 0 and missile.speed or 1
         local dx, dy = missile.vx / speed, missile.vy / speed
         g.setLineWidth(3)
-        g.setColor(1, 0.42, 0.12, 0.45)
+        g.setColor(1, 0.42, 0.12, 0.45 * fade)
         if missile.targetScreenX then
             local trail = math.min(32, missile.speed * math.min(0.03, missile.age))
+            if trail > 0 then
+                g.line(missile.x, missile.y, missile.x - dx * trail, missile.y - dy * trail)
+            end
+        elseif missile.fading then
+            local trail = math.min(24, missile.distance or 0)
             if trail > 0 then
                 g.line(missile.x, missile.y, missile.x - dx * trail, missile.y - dy * trail)
             end
@@ -413,10 +497,10 @@ function Turret:drawEffects(camera, width, height)
             end
         end
         g.setLineWidth(2)
-        g.setColor(1, 0.87, 0.46, 1)
+        g.setColor(1, 0.87, 0.46, fade)
         g.line(missile.x - dx * 6, missile.y - dy * 6, missile.x, missile.y)
         if missile.targetScreenX then
-            g.setColor(1, 0.34, 0.20, 1)
+            g.setColor(1, 0.34, 0.20, fade)
             g.polygon("fill", missile.x + dx * 7, missile.y + dy * 7,
                 missile.x - dx * 5 - dy * 4, missile.y - dy * 5 + dx * 4,
                 missile.x - dx * 5 + dy * 4, missile.y - dy * 5 - dx * 4)
@@ -433,7 +517,7 @@ function Turret:drawEffects(camera, width, height)
             if exit then x, y = beam.x + beam.dx * exit, beam.y + beam.dy * exit end
         end
         if x then
-            local alpha = 1 - beam.age / beamLifetime
+            local alpha = math.max(0, 1 - beam.age / beamLifetime)
             g.setColor(0.12, 0.82, 1, alpha * 0.4)
             g.setLineWidth(6)
             g.line(beam.x, beam.y, x, y)
@@ -443,7 +527,7 @@ function Turret:drawEffects(camera, width, height)
         end
     end
     for _, explosion in ipairs(self.explosions) do
-        local progress = explosion.age / explosion.lifetime
+        local progress = math.max(0, math.min(1, explosion.age / explosion.lifetime))
         local radius, alpha = 5 + progress * ((explosion.radius or 41) - 5), 1 - progress
         local colors = explosion.colors or explosionColors
         local glow, ring, core = colors.glow, colors.ring, colors.core

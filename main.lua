@@ -167,6 +167,9 @@ local function beginStageClear()
         enemies.items = {}
         if enemies.fire then enemies.fire:beginHarmlessExpiry() end
     end
+    if turret then
+        turret:beginStageClear()
+    end
     stageClearState = StageTransition.newStageClear(stage)
     setScreen("stageClear")
     Sfx.play("stage_clear")
@@ -183,6 +186,7 @@ local function enterPlinkoStageEnd()
     end
     syncInventoryBuild()
     if enemies and enemies.fire then enemies.fire:clear() end
+    if turret then turret:clearEffects() end
     plinko = Plinko.new({
         stageNumber = stage and stage.number or 1,
         coins = coinWallet,
@@ -217,6 +221,9 @@ local function enterWarpSelect(keepExistingGates)
     if enemies then
         enemies.items = {}
         if enemies.fire then enemies.fire:clear() end
+    end
+    if not keepExistingGates and turret then
+        turret:clearEffects()
     end
     if not keepExistingGates or not warpGates then
         if ship then
@@ -277,6 +284,7 @@ local function completeWarpAndStartStage(gate)
     coinWallet = coinWallet + bonusCoins
     enemies.items = {}
     if enemies.fire then enemies.fire:clear() end
+    if turret then turret:clearEffects() end
     enemies.spawnAccumulator = 0.5
     stage:configureEnemies(enemies)
     warpState = nil
@@ -285,6 +293,9 @@ local function completeWarpAndStartStage(gate)
         ship.invulnTimer, ship.invulnDuration = 0, 0
         lastWrapEvents = ship.wrapEvents or 0
         lastDamageCount = ship.damageCount or 0
+    end
+    if turret and ship then
+        turret.angle = ship.angle
     end
     if gladiator then
         lastEvasionCount = gladiator.evasionCount or 0
@@ -650,6 +661,12 @@ function love.update(dt)
             enemies.fire:updateHarmless(dt)
         end
         camera:update(dt, ship, width, height)
+        if turret then
+            turret:updateEffects(dt, camera, width, height)
+        end
+        if gladiator then
+            gladiator:updateVisuals(dt)
+        end
         updateHudProximity(dt)
         local vx, vy = ship:worldVelocity()
         if stageBackground then stageBackground:update(dt, vx * bgScale, vy * bgScale, bgW, bgH) end
@@ -660,7 +677,7 @@ function love.update(dt)
         return
     end
     if screen == "warping" then
-        local finished = StageTransition.updateWarp(warpState, dt, ship, stars, camera, width, height)
+        local finished = StageTransition.updateWarp(warpState, dt, ship, stars, camera, width, height, turret)
         if stageBackground and warpState then
             local warpDrift = 140 * (warpState.speedFactor or 0)
             stageBackground:update(dt, warpState.dirX * warpDrift * bgScale, warpState.dirY * warpDrift * bgScale, bgW, bgH)
@@ -995,7 +1012,7 @@ function love.draw()
         end
         love.graphics.push("all")
         Display.applyTransform()
-        StageTransition.drawWarp(warpState, ship, camera, width, height, time, fonts)
+        StageTransition.drawWarp(warpState, ship, camera, width, height, time, fonts, turret)
         love.graphics.pop()
         return
     end

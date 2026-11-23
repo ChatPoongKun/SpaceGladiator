@@ -491,6 +491,44 @@ function Gladiator:update(dt, ship)
     end
 end
 
+function Gladiator:updateVisuals(dt)
+    if dt <= 0 then return end
+    if self.feverFlash > 0 then
+        self.feverFlash = math.max(0, self.feverFlash - dt / self.feverFlashDuration)
+    end
+    if self.feverAura > 0 then
+        self.feverAura = self.feverAura * math.max(0, 1 - math.min(1, dt * 3))
+        if self.feverAura < 0.005 then self.feverAura = 0 end
+    end
+    for i = #self.feverBursts, 1, -1 do
+        local burst = self.feverBursts[i]
+        burst.age = burst.age + dt
+        if burst.age >= burst.duration then table.remove(self.feverBursts, i) end
+    end
+    for i = #self.feverSparks, 1, -1 do
+        local spark = self.feverSparks[i]
+        spark.age = spark.age + dt
+        spark.x = spark.x + spark.vx * dt
+        spark.y = spark.y + spark.vy * dt
+        spark.vx = spark.vx * math.max(0, 1 - dt * 2.4)
+        spark.vy = spark.vy * math.max(0, 1 - dt * 2.4)
+        if spark.age >= spark.duration then table.remove(self.feverSparks, i) end
+    end
+    if self.lastEvent then
+        self.lastEvent.age = self.lastEvent.age + dt
+        if self.lastEvent.age >= self.noticeDuration then
+            self.lastEvent = nil
+        end
+    end
+    for i = #self.popups, 1, -1 do
+        local popup = self.popups[i]
+        popup.age = popup.age + dt
+        if popup.age >= popup.duration then
+            table.remove(self.popups, i)
+        end
+    end
+end
+
 local function drawPopupIcon(g, category, cx, cy, color, alpha)
     local r, gr, b = color[1], color[2], color[3]
     if category == "destroy" then

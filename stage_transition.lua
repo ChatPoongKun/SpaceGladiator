@@ -102,6 +102,19 @@ local function shortestAngleDiff(from, to)
     return (to - from + math.pi) % tau - math.pi
 end
 
+local function slewTurretAngle(turret, targetAngle, dt)
+    if not turret or targetAngle == nil then return end
+    local tau = math.pi * 2
+    local diff = shortestAngleDiff(turret.angle or 0, targetAngle)
+    local turnSpeed = turret.turnSpeed or tau
+    local limit = turnSpeed * dt
+    if math.abs(diff) <= limit then
+        turret.angle = targetAngle % tau
+    else
+        turret.angle = ((turret.angle or 0) + (diff > 0 and limit or -limit)) % tau
+    end
+end
+
 --------------------------------------------------------------------------------
 -- 1. Stage Clear + Left/Right Blast Shutter Transition
 --------------------------------------------------------------------------------
@@ -763,7 +776,7 @@ function StageTransition.warpSpeedFactor(progress)
     end
 end
 
-function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height)
+function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height, turret)
     if not warp or warp.done or dt <= 0 then return warp and warp.done or false end
     warp.elapsed = warp.elapsed + dt
 
@@ -798,6 +811,7 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
             ship.boostX, ship.boostY = dirX, dirY
             ship.boostRemaining = 0
         end
+        slewTurretAngle(turret, warp.angle, dt)
 
         if camera and ship then
             camera:update(dt, ship, viewW, viewH)
@@ -860,6 +874,7 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
         ship.boostX, ship.boostY = dirX, dirY
         ship.boostRemaining = speedFactor * (ship.boostHold + ship.boostFalloff)
     end
+    slewTurretAngle(turret, warp.angle, dt)
 
     if camera and ship then
         camera:update(dt, ship, viewW, viewH)
@@ -882,12 +897,15 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
             ship.accelerating = false
             ship.braking = false
         end
+        if turret then
+            turret.angle = warp.angle % (math.pi * 2)
+        end
         return true
     end
     return false
 end
 
-function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts)
+function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts, turret)
     if not warp then return end
     local g = love.graphics
     local isEntry = (warp.mode == "entry")
@@ -1006,6 +1024,9 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         end
         g.translate(-ship.x, -ship.y)
         ship:draw(time)
+        if turret then
+            turret:drawMount(ship, time)
+        end
         g.pop()
     end
 
