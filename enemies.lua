@@ -689,29 +689,230 @@ function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCa
     end
 end
 
+-- Nova Assault enemy hull renderer (Option 1: TRACER, BEAMCASTER, BULWARK-PRIME).
+-- Drawn in local space centered at (0, 0), nose pointing up (-Y).
+function Enemies.drawHull(kind, aimed, time, opts)
+    local g = love.graphics
+    local t = time or 0
+    local pulse = 0.86 + 0.14 * math.sin(t * 7.2)
+    local thrust = opts and opts.thrust or 0
+    local flicker = 1 + math.sin(t * 48) * 0.14
+
+    if kind == 1 then
+        -- WEDGE: TRACER (split obsidian pincer interceptor + exposed burning orange core)
+        if thrust > 0.05 then
+            local len = (9 + 6 * thrust) * flicker
+            g.setColor(1, 0.42, 0.18, 0.72 * thrust)
+            g.polygon("fill", -3.4, 6, 0, 6 + len, 3.4, 6)
+            g.setColor(1, 0.95, 0.78, 0.92 * thrust)
+            g.polygon("fill", -1.4, 6, 0, 6 + len * 0.55, 1.4, 6)
+        end
+
+        -- Dark underframe (split into 2 convex triangles)
+        g.setColor(0.07, 0.024, 0.05, 1)
+        g.polygon("fill", 0, -12, -9, 9, 0, 6)
+        g.polygon("fill", 0, -12, 0, 6, 9, 9)
+
+        -- Exposed hot-orange internal core in cleft
+        g.setColor(1, 0.46, 0.20, 0.30 * pulse)
+        g.circle("fill", 0, -1, 5.2)
+        g.setColor(1, aimed and 0.68 or 0.54, aimed and 0.42 or 0.25, 0.95 * pulse)
+        g.polygon("fill", 0, -9, -2.5, 0, 0, 5, 2.5, 0)
+        g.setColor(1, 0.97, 0.84, pulse)
+        g.circle("fill", 0, -2, 1.5)
+
+        -- Left obsidian pincer armor (convex quad + inner bridge)
+        g.setColor(0.22, 0.09, 0.14, 1)
+        g.polygon("fill", -2.2, -16.5, -11.5, 10, -7.5, 11, -4.2, 4.5)
+        g.polygon("fill", -2.2, -16.5, -4.2, 4.5, -2.4, -4)
+        -- Right lit ruby-obsidian pincer armor
+        g.setColor(0.37, 0.12, 0.18, 1)
+        g.polygon("fill", 2.2, -16.5, 11.5, 10, 7.5, 11, 4.2, 4.5)
+        g.polygon("fill", 2.2, -16.5, 4.2, 4.5, 2.4, -4)
+
+        -- Crisp vermilion/coral outlines & leading-edge speculars
+        g.setLineWidth(1.1)
+        if aimed then
+            g.setColor(1, 0.66, 0.48, 1)
+        else
+            g.setColor(1, 0.30, 0.32, 1)
+        end
+        g.line(-2.2, -16.5, -11.5, 10, -7.5, 11, -4.2, 4.5, -2.4, -4, -2.2, -16.5)
+        if aimed then
+            g.setColor(1, 0.78, 0.58, 1)
+        else
+            g.setColor(1, 0.42, 0.39, 1)
+        end
+        g.line(2.2, -16.5, 11.5, 10, 7.5, 11, 4.2, 4.5, 2.4, -4, 2.2, -16.5)
+        g.setLineWidth(0.75)
+        g.setColor(1, 0.72, 0.64, 0.82)
+        g.line(-2.2, -15.5, -10.5, 9)
+        g.line(2.2, -15.5, 10.5, 9)
+
+    elseif kind == 2 then
+        -- EQUILATERAL: BEAMCASTER (tuning-fork emitter rails + floating magenta laser orb)
+        if thrust > 0.05 then
+            local len = (8 + 6 * thrust) * flicker
+            for _, side in ipairs({ -1, 1 }) do
+                local nx = side * 7.5
+                g.setColor(1, 0.32, 0.54, 0.72 * thrust)
+                g.polygon("fill", nx - 3.0, 11, nx, 11 + len, nx + 3.0, 11)
+                g.setColor(1, 0.88, 0.95, 0.90 * thrust)
+                g.polygon("fill", nx - 1.2, 11, nx, 11 + len * 0.55, nx + 1.2, 11)
+            end
+        end
+
+        -- Dark chassis frame
+        g.setColor(0.07, 0.028, 0.062, 1)
+        g.polygon("fill", 0, -14, -16, 9, 16, 9)
+        g.setLineWidth(0.9)
+        g.setColor(0.26, 0.08, 0.15, 0.9)
+        g.polygon("line", 0, -14, -16, 9, 16, 9)
+
+        -- Suspended magenta laser focusing orb in front cleft
+        g.setColor(1, 0.24, 0.62, 0.28 * pulse)
+        g.circle("fill", 0, -10, 7.5)
+        g.setColor(1, 0.23, 0.63, 0.96 * pulse)
+        g.circle("fill", 0, -10, 3.4)
+        g.setLineWidth(0.85)
+        g.setColor(1, 0.84, 0.94, 0.95 * pulse)
+        g.circle("line", 0, -10, 3.4)
+        g.setColor(1, 1, 1, pulse)
+        g.circle("fill", 0, -10, 1.5)
+        g.setLineWidth(1.2)
+        g.setColor(1, 0.55, 0.82, 0.88 * pulse)
+        g.line(0, -21, 0, -13)
+
+        -- Split tuning-fork twin emitter rails
+        g.setColor(0.22, 0.085, 0.145, 1)
+        g.polygon("fill", -4, -23.5, -9.5, -6, -8, 13, -4.5, 14)
+        g.polygon("fill", -4, -23.5, -4.5, 14, -3.2, -13)
+        g.setColor(0.36, 0.11, 0.18, 1)
+        g.polygon("fill", 4, -23.5, 9.5, -6, 8, 13, 4.5, 14)
+        g.polygon("fill", 4, -23.5, 4.5, 14, 3.2, -13)
+
+        -- Separated outer delta stabilizer plates
+        g.setColor(0.20, 0.08, 0.135, 1)
+        g.polygon("fill", -11.5, -3, -21.5, 10.5, -17.5, 14, -10, 9.5)
+        g.setColor(0.35, 0.11, 0.175, 1)
+        g.polygon("fill", 11.5, -3, 21.5, 10.5, 17.5, 14, 10, 9.5)
+
+        -- Center rear bridge
+        g.setColor(0.165, 0.05, 0.11, 1)
+        g.polygon("fill", -4.5, 2, 4.5, 2, 3.5, 11, -3.5, 11)
+
+        -- Crisp crimson/coral outlines
+        g.setLineWidth(1.1)
+        if aimed then
+            g.setColor(1, 0.62, 0.50, 1)
+        else
+            g.setColor(1, 0.27, 0.40, 1)
+        end
+        g.line(-4, -23.5, -9.5, -6, -8, 13, -4.5, 14, -3.2, -13, -4, -23.5)
+        g.polygon("line", -11.5, -3, -21.5, 10.5, -17.5, 14, -10, 9.5)
+        if aimed then
+            g.setColor(1, 0.72, 0.62, 1)
+        else
+            g.setColor(1, 0.37, 0.50, 1)
+        end
+        g.line(4, -23.5, 9.5, -6, 8, 13, 4.5, 14, 3.2, -13, 4, -23.5)
+        g.polygon("line", 11.5, -3, 21.5, 10.5, 17.5, 14, 10, 9.5)
+        g.setLineWidth(0.85)
+        g.setColor(1, 0.44, 0.72, 0.9)
+        g.polygon("line", -4.5, 2, 4.5, 2, 3.5, 11, -3.5, 11)
+
+    else
+        -- OBTUSE: BULWARK-PRIME (obsidian + ceremonial gold command flying wing + 6 missile bays)
+        if thrust > 0.05 then
+            local len = (9 + 6 * thrust) * flicker
+            for _, spec in ipairs({ { -11, 9, 0.75 }, { 0, 11, 1.0 }, { 11, 9, 0.75 } }) do
+                local nx, ny, s = spec[1], spec[2], spec[3]
+                g.setColor(1, 0.72, 0.24, 0.72 * s * thrust)
+                g.polygon("fill", nx - 3.6 * s, ny, nx, ny + len * s, nx + 3.6 * s, ny)
+                g.setColor(1, 0.97, 0.85, 0.92 * s * thrust)
+                g.polygon("fill", nx - 1.5 * s, ny, nx, ny + len * 0.55 * s, nx + 1.5 * s, ny)
+            end
+        end
+
+        -- Heavy armored underframe + glowing amber channel
+        g.setColor(0.07, 0.028, 0.055, 1)
+        g.polygon("fill", 0, -13, -26, 8, 0, 13, 26, 8)
+        g.setLineWidth(2.6)
+        g.setColor(1, 0.61, 0.19, 0.45 * pulse)
+        g.line(-22, 4, 22, 4)
+
+        -- Outer split armored wing plates (convex pentagons)
+        g.setColor(0.24, 0.10, 0.145, 1)
+        g.polygon("fill", -13, -7, -28.5, 6.5, -24, 12.5, -14, 9, -11, -1)
+        g.setColor(0.36, 0.13, 0.18, 1)
+        g.polygon("fill", 13, -7, 28.5, 6.5, 24, 12.5, 14, 9, 11, -1)
+
+        g.setLineWidth(1.2)
+        g.setColor(1, aimed and 0.74 or 0.60, aimed and 0.42 or 0.24, 1)
+        g.polygon("line", -13, -7, -28.5, 6.5, -24, 12.5, -14, 9, -11, -1)
+        g.setColor(1, aimed and 0.82 or 0.72, aimed and 0.52 or 0.33, 1)
+        g.polygon("line", 13, -7, 28.5, 6.5, 24, 12.5, 14, 9, 11, -1)
+
+        -- Central command citadel (convex heptagon)
+        g.setColor(0.22, 0.095, 0.14, 1)
+        g.polygon("fill", 0, -16, -11, -8, -9.5, 11.5, -3.5, 13.5, 3.5, 13.5, 9.5, 11.5, 11, -8)
+        g.setLineWidth(1.3)
+        g.setColor(1, 0.82, 0.44, 1)
+        g.polygon("line", 0, -16, -11, -8, -9.5, 11.5, -3.5, 13.5, 3.5, 13.5, 9.5, 11.5, 11, -8)
+
+        -- Sculpted ceremonial gold brow chevron (two convex quads)
+        g.setColor(0.86, 0.62, 0.22, 1)
+        g.polygon("fill", 0, -15.5, -9, -8, -6.5, -4.5, 0, -9.5)
+        g.setColor(1, 0.84, 0.44, 1)
+        g.polygon("fill", 0, -15.5, 9, -8, 6.5, -4.5, 0, -9.5)
+        g.setLineWidth(0.7)
+        g.setColor(1, 0.96, 0.80, 0.9)
+        g.line(-9, -8, 0, -15.5, 9, -8)
+
+        -- 6 recessed crimson missile bay blisters (3 per wing)
+        local pods = {
+            { -21.5, 5.2, -0.24 }, { -17.0, 3.2, -0.17 }, { -12.5, 1.7, -0.10 },
+            { 12.5, 1.7, 0.10 }, { 17.0, 3.2, 0.17 }, { 21.5, 5.2, 0.24 },
+        }
+        g.setLineWidth(0.7)
+        for _, pod in ipairs(pods) do
+            g.push()
+            g.translate(pod[1], pod[2])
+            g.rotate(pod[3])
+            g.setColor(1, 0.24, 0.26, 0.95)
+            g.rectangle("fill", -1.5, -2.2, 3.0, 4.4, 0.7, 0.7)
+            g.setColor(1, 0.84, 0.48, 0.9)
+            g.rectangle("line", -1.5, -2.2, 3.0, 4.4, 0.7, 0.7)
+            g.pop()
+        end
+
+        -- Burning solar-gold reactor core
+        g.setColor(1, 0.76, 0.24, 0.32 * pulse)
+        g.circle("fill", 0, 2, 7.6)
+        g.setColor(1, 0.83, 0.36, 0.96 * pulse)
+        g.polygon("fill", 0, -4.5, -4.2, 2, 0, 8, 4.2, 2)
+        g.setLineWidth(0.8)
+        g.setColor(1, 1, 1, 0.95 * pulse)
+        g.polygon("line", 0, -4.5, -4.2, 2, 0, 8, 4.2, 2)
+        g.circle("fill", 0, 2, 1.8)
+    end
+end
+
 function Enemies:draw(time)
     local g = love.graphics
     g.push("all")
-    g.setLineWidth(1.5)
     for _, enemy in ipairs(self.items) do
-        local vertices = self.types[enemy.kind].vertices
+        local thrust = 0
+        if enemy.accelerating then
+            thrust = 1
+        elseif enemy.speed then
+            local spd = enemy:speed()
+            if spd > 18 then thrust = math.min(0.6, spd / math.max(1, enemy.maxSpeed or 200)) end
+        end
         g.push()
         g.translate(enemy.x, enemy.y)
         g.rotate(enemy.angle)
-        g.setColor(0.72, 0.06, 0.09, 1)
-        g.polygon("fill", vertices)
-        if enemy.kind == 3 then
-            g.setColor(1, 0.68, 0.24, 1)
-        elseif enemy.aimed then
-            g.setColor(1, 0.56, 0.42, 1)
-        else
-            g.setColor(1, 0.24, 0.25, 1)
-        end
-        g.polygon("line", vertices)
-        if enemy.kind == 3 then
-            g.setColor(1, 0.80, 0.34, 0.9)
-            g.polygon("fill", 0, -5, -5, 4, 5, 4)
-        end
+        Enemies.drawHull(enemy.kind, enemy.aimed, time, { thrust = thrust })
         g.pop()
     end
     g.pop()

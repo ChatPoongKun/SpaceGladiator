@@ -378,7 +378,7 @@ local function showResults(reason)
         {label = "격추한 적", value = enemies.kills .. "기", heading = true},
     }
     for i, kind in ipairs(Enemies.types) do
-        rows[#rows + 1] = {label = kind.name, value = (enemies.killsByKind[i] or 0) .. "기", vertices = kind.vertices}
+        rows[#rows + 1] = {label = kind.name, value = (enemies.killsByKind[i] or 0) .. "기", vertices = kind.vertices, enemyKind = i}
     end
     local accuracy = turret.shotsFired > 0 and 100 * turret.shotsHit / turret.shotsFired or 0
     rows[#rows + 1] = {label = "명중률", value = string.format("%.1f%%", accuracy), heading = true}

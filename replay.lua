@@ -1214,7 +1214,6 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
 
     -- Draw enemies (with interpolation when matched)
     g.push("all")
-    g.setLineWidth(1.5)
     for i = 1, #f0.enemies do
         local e0 = f0.enemies[i]
         local ex, ey, ea = e0.x, e0.y, e0.angle
@@ -1224,24 +1223,10 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
             ey = lerp(e0.y, e1.y, alpha)
             ea = lerpAngle(e0.angle, e1.angle, alpha)
         end
-        local def = Enemies.types[e0.kind] or Enemies.types[1]
         g.push()
         g.translate(ex, ey)
         g.rotate(ea)
-        g.setColor(0.72, 0.06, 0.09, 1)
-        g.polygon("fill", def.vertices)
-        if e0.kind == 3 then
-            g.setColor(1, 0.68, 0.24, 1)
-        elseif e0.aimed then
-            g.setColor(1, 0.56, 0.42, 1)
-        else
-            g.setColor(1, 0.24, 0.25, 1)
-        end
-        g.polygon("line", def.vertices)
-        if e0.kind == 3 then
-            g.setColor(1, 0.80, 0.34, 0.9)
-            g.polygon("fill", 0, -5, -5, 4, 5, 4)
-        end
+        Enemies.drawHull(e0.kind, e0.aimed, srcTime, { thrust = 0.55 })
         g.pop()
     end
     g.pop()

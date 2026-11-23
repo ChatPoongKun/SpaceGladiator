@@ -61,7 +61,15 @@ function Menu.draw(menu, fonts, selected, width, height, overlay)
             g.rectangle("fill", left, rowY, contentWidth, step, 3, 3)
             g.setColor(0.55, 0.91, 0.89, 1)
         else
-            if row.vertices then
+            if row.enemyKind then
+                local Enemies = require("enemies")
+                g.push("all")
+                g.translate(textX + 8, rowY + step / 2)
+                g.scale(0.38)
+                Enemies.drawHull(row.enemyKind, false, 0)
+                g.pop()
+                textX = textX + 27
+            elseif row.vertices then
                 g.push()
                 g.translate(textX + 8, rowY + step / 2)
                 g.scale(0.36)
