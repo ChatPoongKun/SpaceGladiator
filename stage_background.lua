@@ -26,9 +26,53 @@ StageBackground.TINT = { 0.88, 0.90, 0.94 }
 StageBackground.ALPHA = 0.80
 StageBackground.TITLE_TINT = { 1, 1, 1 }
 StageBackground.TITLE_ALPHA = 1.0
+StageBackground.TITLE_PLANET_UV = { x = 0.67, y = 0.36, innerRadius = 0.21, outerRadius = 0.32 }
 StageBackground.FALLBACK_COLOR = { 0.018, 0.025, 0.065 }
 StageBackground.DEFAULT_IMG_W = 1024
 StageBackground.DEFAULT_IMG_H = 571
+
+local TITLE_SHADER_CODE = [[
+extern number u_time;
+extern vec2 u_aspect;
+
+vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+    vec2 planetPos = vec2(0.67, 0.36);
+    vec2 galaxyPos = vec2(0.86, 0.17);
+    float dPlanet = length((tc - planetPos) * u_aspect);
+    float dGalaxy = length((tc - galaxyPos) * u_aspect);
+
+    float planetMask = smoothstep(0.18, 0.30, dPlanet);
+    float galaxyMask = smoothstep(0.10, 0.20, dGalaxy);
+    float edgeMask = smoothstep(0.0, 0.05, tc.x) * smoothstep(1.0, 0.95, tc.x)
+                   * smoothstep(0.0, 0.05, tc.y) * smoothstep(1.0, 0.95, tc.y);
+    float nebulaMask = planetMask * galaxyMask * edgeMask;
+
+    float wave1 = sin(tc.y * 11.0 + u_time * 0.42 + cos(tc.x * 7.0 - u_time * 0.25));
+    float wave2 = cos(tc.x * 9.5 - u_time * 0.36 + sin(tc.y * 8.0 + u_time * 0.29));
+    vec2 offset = vec2(wave1, wave2) * (0.0032 * nebulaMask);
+    vec2 uv = clamp(tc + offset, vec2(0.0), vec2(1.0));
+
+    vec4 pixel = Texel(tex, uv);
+
+    float luma = dot(pixel.rgb, vec3(0.299, 0.587, 0.114));
+    float shimmer = 0.5 + 0.5 * sin(u_time * 1.15 + tc.x * 13.0 + tc.y * 8.0);
+    float boost = 1.0 + 0.10 * smoothstep(0.38, 0.88, luma) * shimmer * nebulaMask;
+    pixel.rgb = min(pixel.rgb * boost, vec3(1.0));
+
+    return pixel * color;
+}
+]]
+
+local function createTitleShader()
+    if not (love and love.graphics and love.graphics.newShader) then
+        return nil
+    end
+    local ok, shader = pcall(love.graphics.newShader, TITLE_SHADER_CODE)
+    if ok and shader then
+        return shader
+    end
+    return nil
+end
 
 local function finite(value, fallback)
     if type(value) == "number" and value == value and math.abs(value) < math.huge then
@@ -109,7 +153,9 @@ function StageBackground.new(width, height, opts)
         images = images,
         titlePath = titlePath,
         titleImage = titleImage,
+        titleShader = createTitleShader(),
         titleActive = false,
+        time = 0,
         level = StageBackground.DEFAULT_LEVEL,
         index = 1,
         u = 0,
@@ -226,6 +272,7 @@ function StageBackground:update(dt, vx, vy, width, height)
     end
     dt = math.max(0, finite(dt, 0))
     if dt <= 0 then return end
+    self.time = (self.time or 0) + dt
 
     local targetVx = finite(vx, 0)
     local targetVy = finite(vy, 0)
@@ -268,6 +315,21 @@ function StageBackground:drawImageAt(index, viewW, viewH, u, v, alpha)
     return true
 end
 
+function StageBackground:titlePlanetMask(viewW, viewH)
+    if not (self.titleActive and self.titleImage) then
+        return nil
+    end
+    local imgW, imgH = self:titleDimensions()
+    local layout = self:computeLayout(imgW, imgH, viewW, viewH, 0, 0, self.titleOverscan)
+    local spec = StageBackground.TITLE_PLANET_UV
+    return {
+        x = layout.x + spec.x * layout.drawW,
+        y = layout.y + spec.y * layout.drawH,
+        innerRadius = layout.drawH * spec.innerRadius,
+        outerRadius = layout.drawH * spec.outerRadius,
+    }
+end
+
 function StageBackground:drawTitle(viewW, viewH, alpha)
     local img = self.titleImage
     if not img then return false end
@@ -276,7 +338,18 @@ function StageBackground:drawTitle(viewW, viewH, alpha)
     local g = love.graphics
     local tint = StageBackground.TITLE_TINT
     g.setColor(tint[1], tint[2], tint[3], clamp(finite(alpha, 1), 0, 1))
-    g.draw(img, layout.x, layout.y, 0, layout.scale, layout.scale)
+    local shader = self.titleShader
+    if shader and g.setShader then
+        if shader.send then
+            shader:send("u_time", finite(self.time, 0))
+            shader:send("u_aspect", { imgW / math.max(1, imgH), 1 })
+        end
+        g.setShader(shader)
+        g.draw(img, layout.x, layout.y, 0, layout.scale, layout.scale)
+        g.setShader()
+    else
+        g.draw(img, layout.x, layout.y, 0, layout.scale, layout.scale)
+    end
     return true
 end
 

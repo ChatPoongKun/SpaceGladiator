@@ -73,6 +73,26 @@ function Starfield:update(dt, vx, vy, acceleration, width, height, boost)
     end
 end
 
+local function smoothstep(edge0, edge1, x)
+    if edge1 <= edge0 then
+        return x >= edge1 and 1 or 0
+    end
+    local t = math.max(0, math.min(1, (x - edge0) / (edge1 - edge0)))
+    return t * t * (3 - 2 * t)
+end
+
+local function exclusionFade(x, y, zone)
+    if not zone then return 1 end
+    local dx = x - (zone.x or 0)
+    local dy = y - (zone.y or 0)
+    local dist = math.sqrt(dx * dx + dy * dy)
+    local inner = zone.innerRadius or 0
+    local outer = math.max(inner, zone.outerRadius or inner)
+    if dist <= inner then return 0 end
+    if dist >= outer then return 1 end
+    return smoothstep(inner, outer, dist)
+end
+
 function Starfield:draw(opts)
     local g = love.graphics
     g.push("all")
@@ -82,6 +102,7 @@ function Starfield:draw(opts)
         g.rectangle("fill", 0, 0, self.width, self.height)
     end
     g.setLineWidth(1)
+    local excludeZone = opts and opts.excludeZone or nil
     -- Scale before normalizing so zero and extreme velocities stay finite.
     local scale = math.max(1, math.abs(self.vx), math.abs(self.vy))
     local nx, ny = self.vx / scale, self.vy / scale
@@ -96,14 +117,17 @@ function Starfield:draw(opts)
         local tx, ty = ux * length, uy * length
         for j = 1, #layer.stars do
             local star = layer.stars[j]
-            local alpha = layer.alpha * (.7 + .3 * math.sin(self.time * star.rate + star.phase))
-            if length > 1 then
-                g.setColor(layer.r, layer.g, layer.b, alpha * (.28 + .38 * self.boost))
-                -- The tail points behind the star's opposite-velocity motion.
-                g.line(star.x, star.y, star.x + tx, star.y + ty)
+            local mask = exclusionFade(star.x, star.y, excludeZone)
+            if mask > 0.001 then
+                local alpha = layer.alpha * (.7 + .3 * math.sin(self.time * star.rate + star.phase)) * mask
+                if length > 1 then
+                    g.setColor(layer.r, layer.g, layer.b, alpha * (.28 + .38 * self.boost))
+                    -- The tail points behind the star's opposite-velocity motion.
+                    g.line(star.x, star.y, star.x + tx, star.y + ty)
+                end
+                g.setColor(layer.r, layer.g, layer.b, alpha)
+                g.circle("fill", star.x, star.y, star.size, 8)
             end
-            g.setColor(layer.r, layer.g, layer.b, alpha)
-            g.circle("fill", star.x, star.y, star.size, 8)
         end
     end
     g.pop()
