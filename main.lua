@@ -1,6 +1,7 @@
 local Ship = require("ship")
 local Arena = require("arena")
 local Starfield = require("starfield")
+local StageBackground = require("stage_background")
 local Camera = require("camera")
 local Turret = require("turret")
 local Enemies = require("enemies")
@@ -17,7 +18,7 @@ local StageTransition = require("stage_transition")
 local Replay = require("replay")
 local ReplayExport = require("replay_export")
 
-local ship, stars, fonts, camera, turret, enemies, hud, gladiator
+local ship, stars, stageBackground, fonts, camera, turret, enemies, hud, gladiator
 local inventory, inventoryUI, currentBuild
 local stage, plinko, plinkoUI
 local stageClearState, plinkoShutter, warpGates, warpState
@@ -36,13 +37,13 @@ local gameOverHold = 1.25
 local displayFile = "fullscreen.txt"
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay, testFullscreen = false, false, false, false, false, false, false, false
+local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay, testFullscreen, testBackground = false, false, false, false, false, false, false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen) then return defaultErrorHandler(message) end
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
@@ -69,6 +70,7 @@ local function setScreen(nextScreen)
             activeExporter = nil
         end
         replay = nil
+        if stageBackground then stageBackground:setLevel(StageBackground.DEFAULT_LEVEL, true) end
     end
     if screen == "title" or screen == "results" then
         ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
@@ -123,6 +125,7 @@ local function startRun()
     inventoryStageEndMode = false
     pauseReturnScreen = "playing"
     stage = Stage.new(1)
+    if stageBackground then stageBackground:setLevel(stage.level, true) end
     if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then
         stage:configureEnemies(enemies)
     end
@@ -226,6 +229,10 @@ end
 local function completeWarpAndStartStage(gate)
     local reward = gate and gate.reward or nil
     stage = stage and stage:nextStage({ featuredReward = reward }) or Stage.new(2, { featuredReward = reward })
+    if stageBackground then
+        local changedLevel = (stageBackground.level ~= stage.level)
+        stageBackground:setLevel(stage.level, changedLevel)
+    end
     local bonusCoins = StageTransition.applyRewardOnArrival(reward, inventory, ship, coinWallet)
     coinWallet = coinWallet + bonusCoins
     enemies.items = {}
@@ -407,12 +414,13 @@ function love.load(args)
         if arg == "--test-plinko" then testPlinko = true end
         if arg == "--test-replay" then testReplay = true end
         if arg == "--test-fullscreen" then testFullscreen = true end
+        if arg == "--test-background" then testBackground = true end
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
     love.graphics.setBackgroundColor(0.018, 0.028, 0.055)
     love.graphics.setLineStyle("smooth")
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko) and love.filesystem.getInfo(displayFile)
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground) and love.filesystem.getInfo(displayFile)
         and love.filesystem.read(displayFile) == "1" then
         love.window.setFullscreen(true, "desktop")
     end
@@ -430,7 +438,8 @@ function love.load(args)
     }
     hud = Hud.new()
     stars = Starfield.new(width, height)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then Sfx.load() end
+    stageBackground = StageBackground.new(width, height)
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground) then Sfx.load() end
     setScreen("title")
     if testGladiator then
         require("tests.gladiator")(Ship, Enemies, Turret, Gladiator)
@@ -454,6 +463,11 @@ function love.load(args)
     end
     if testFullscreen then
         require("tests.fullscreen_arena")
+        love.event.quit(0)
+        return
+    end
+    if testBackground then
+        require("tests.stage_background")
         love.event.quit(0)
         return
     end
@@ -507,6 +521,7 @@ function love.update(dt)
         return
     end
     if not ship then
+        if stageBackground then stageBackground:update(dt, 0, 0, width, height) end
         stars:update(dt, 12, -18, 0, width, height, 0)
         return
     end
@@ -515,6 +530,7 @@ function love.update(dt)
             plinkoShutter = nil
         end
         if plinko then plinko:update(dt, inventory, ship) end
+        if stageBackground then stageBackground:update(dt, 0, 0, width, height) end
         stars:update(dt, 18, -24, 0, width, height, 0)
         return
     end
@@ -527,6 +543,7 @@ function love.update(dt)
         end
         camera:update(dt, ship, width, height)
         local vx, vy = ship:worldVelocity()
+        if stageBackground then stageBackground:update(dt, vx, vy, width, height) end
         stars:update(dt, 90 + vx * 1.8, -210 + vy * 1.8, 0, width, height, 0)
         if StageTransition.updateStageClear(stageClearState, dt) then
             enterPlinkoStageEnd()
@@ -534,7 +551,12 @@ function love.update(dt)
         return
     end
     if screen == "warping" then
-        if StageTransition.updateWarp(warpState, dt, ship, stars, camera, width, height) then
+        local finished = StageTransition.updateWarp(warpState, dt, ship, stars, camera, width, height)
+        if stageBackground and warpState then
+            local warpDrift = 140 * (warpState.speedFactor or 0)
+            stageBackground:update(dt, warpState.dirX * warpDrift, warpState.dirY * warpDrift, width, height)
+        end
+        if finished then
             completeWarpAndStartStage(warpState.gate)
         end
         return
@@ -574,6 +596,10 @@ function love.update(dt)
         camera:update(dt, ship, width, height)
         local surge = 1050 * ship.boostLevel
         local vx, vy = ship:worldVelocity()
+        if stageBackground then
+            local bgBoost = 120 * ship.boostLevel
+            stageBackground:update(dt, vx + ship.boostX * bgBoost, vy + ship.boostY * bgBoost, width, height)
+        end
         stars:update(dt, 120 + vx * 2.8 + ship.boostX * surge,
             -290 + vy * 2.8 + ship.boostY * surge,
             ship.accelerating and 1 or 0, width, height, ship.boostLevel)
@@ -588,6 +614,10 @@ function love.update(dt)
     camera:update(dt, ship, width, height)
     local surge = 1050 * ship.boostLevel
     local vx, vy = ship:worldVelocity()
+    if stageBackground then
+        local bgBoost = 120 * ship.boostLevel
+        stageBackground:update(dt, vx + ship.boostX * bgBoost, vy + ship.boostY * bgBoost, width, height)
+    end
     stars:update(dt, 120 + vx * 2.8 + ship.boostX * surge,
         -290 + vy * 2.8 + ship.boostY * surge,
         ship.accelerating and 1 or 0, width, height, ship.boostLevel)
@@ -834,11 +864,26 @@ function love.draw()
         return
     end
     if screen == "warping" and warpState then
-        stars:draw()
+        if stageBackground then
+            local p = math.max(0, math.min(1, warpState.elapsed / math.max(1e-6, warpState.duration)))
+            local bgBlend = math.max(0, math.min(1, (p - 0.30) / 0.40))
+            stageBackground:draw(width, height, {
+                nextLevel = stage and stage.level or StageBackground.DEFAULT_LEVEL,
+                blend = bgBlend,
+            })
+            stars:draw({ transparent = true })
+        else
+            stars:draw()
+        end
         StageTransition.drawWarp(warpState, ship, camera, width, height, time, fonts)
         return
     end
-    stars:draw()
+    if stageBackground then
+        stageBackground:draw(width, height)
+        stars:draw({ transparent = true })
+    else
+        stars:draw()
+    end
     if ship then drawFlight() end
     local menu = menus[screen]
     if screen == "gameOver" and ship.destructionAge >= Ship.destructionDuration then
@@ -1087,6 +1132,8 @@ function love.resize(w, h)
         end
     end
     stars:resize(w, h)
+    if stageBackground then stageBackground:resize(w, h) end
     if replay and replay.stars then replay.stars:resize(w, h) end
+    if replay and replay.stageBackground then replay.stageBackground:resize(w, h) end
     if camera then camera:update(0, ship, w, h) end
 end

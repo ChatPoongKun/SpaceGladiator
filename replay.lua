@@ -4,6 +4,7 @@ local Turret = require("turret")
 local Enemies = require("enemies")
 local Gladiator = require("gladiator")
 local Starfield = require("starfield")
+local StageBackground = require("stage_background")
 local Sfx = require("sfx")
 
 local okFfi, ffi = pcall(require, "ffi")
@@ -182,6 +183,7 @@ function Replay.new()
         playbackTime = 0,
         nextSfxIndex = 1,
         stars = nil,
+        stageBackground = nil,
         exportStatus = nil,
         exportProgress = 0,
         exporting = false,
@@ -896,6 +898,9 @@ function Replay:openPlayback(width, height)
     self.exportError = nil
     if love and love.graphics then
         self.stars = Starfield.new(width or 1280, height or 800)
+        self.stageBackground = StageBackground.new(width or 1280, height or 800, {
+            level = self.bestClip.level or StageBackground.DEFAULT_LEVEL,
+        })
     end
     Sfx.stop()
     return true
@@ -906,6 +911,9 @@ function Replay:restartPlayback()
     self.playbackTime = 0
     self.nextSfxIndex = 1
     self.playing = true
+    if self.stageBackground then
+        self.stageBackground:setLevel(self.bestClip.level or StageBackground.DEFAULT_LEVEL, true)
+    end
     Sfx.stop()
 end
 
@@ -1000,17 +1008,26 @@ function Replay:updatePlayback(dt, width, height)
         Sfx.stop()
     end
 
-    if self.stars then
+    if self.stars or self.stageBackground then
         local srcTime, speed = Replay.mapPlaybackTime(clip, self.playbackTime)
         local f0, f1, alpha = Replay.sampleClipFrame(clip, srcTime)
         local vx = lerp(f0.shipVx + f0.shipWrapVx, f1.shipVx + f1.shipWrapVx, alpha)
         local vy = lerp(f0.shipVy + f0.shipWrapVy, f1.shipVy + f1.shipWrapVy, alpha)
         local boostLevel = lerp(f0.shipBoostLevel, f1.shipBoostLevel, alpha)
-        local surge = 1050 * boostLevel
-        self.stars:update(dt * speed,
-            120 + vx * 2.8 + f0.shipBoostX * surge,
-            -290 + vy * 2.8 + f0.shipBoostY * surge,
-            f0.shipAccelerating and 1 or 0, width, height, boostLevel)
+        if self.stageBackground then
+            local bgBoost = 120 * boostLevel
+            self.stageBackground:update(dt * speed,
+                vx + f0.shipBoostX * bgBoost,
+                vy + f0.shipBoostY * bgBoost,
+                width, height)
+        end
+        if self.stars then
+            local surge = 1050 * boostLevel
+            self.stars:update(dt * speed,
+                120 + vx * 2.8 + f0.shipBoostX * surge,
+                -290 + vy * 2.8 + f0.shipBoostY * surge,
+                f0.shipAccelerating and 1 or 0, width, height, boostLevel)
+        end
     end
 end
 
@@ -1056,13 +1073,18 @@ end
 
 -- Renders a single replay frame at `playbackTime` into the current graphics target.
 -- When `forExport` is true, omits interactive playback controls.
-function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsObj, forExport)
+function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsObj, forExport, bgObj)
     local g = love.graphics
     local srcTime, speed = Replay.mapPlaybackTime(clip, playbackTime)
     local f0, f1, alpha = Replay.sampleClipFrame(clip, srcTime)
 
     -- Background
-    if starsObj then
+    if bgObj then
+        bgObj:draw(width, height)
+        if starsObj then
+            starsObj:draw({ transparent = true })
+        end
+    elseif starsObj then
         starsObj:draw()
     else
         g.setColor(0.018, 0.025, 0.065, 1)
@@ -1352,7 +1374,7 @@ end
 function Replay:drawPlayback(width, height, fonts)
     if not self:hasHighlight() then return end
     local clip = self.bestClip
-    Replay.renderClipFrame(clip, self.playbackTime, width, height, fonts, self.stars, false)
+    Replay.renderClipFrame(clip, self.playbackTime, width, height, fonts, self.stars, false, self.stageBackground)
 
     local g = love.graphics
     g.push("all")

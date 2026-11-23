@@ -1,5 +1,6 @@
 local Replay = require("replay")
 local Starfield = require("starfield")
+local StageBackground = require("stage_background")
 local Sfx = require("sfx")
 
 local okFfi, ffi = pcall(require, "ffi")
@@ -371,6 +372,7 @@ function ReplayExport.start(clip, fonts)
 
     local canvas = love.graphics.newCanvas(w, h, { msaa = 4 })
     local stars = Starfield.new(w, h)
+    local stageBackground = StageBackground.new(w, h, { level = clip.level or StageBackground.DEFAULT_LEVEL })
 
     return setmetatable({
         clip = clip,
@@ -383,6 +385,7 @@ function ReplayExport.start(clip, fonts)
         pipe = pipe,
         canvas = canvas,
         stars = stars,
+        stageBackground = stageBackground,
         mp4Path = mp4Path,
         filename = filename,
         wavPath = wavPath,
@@ -434,6 +437,13 @@ function ReplayExport:step(maxFrames)
         local vy = (f0.shipVy + f0.shipWrapVy) * (1 - alpha) + (f1.shipVy + f1.shipWrapVy) * alpha
         local boostLevel = f0.shipBoostLevel * (1 - alpha) + f1.shipBoostLevel * alpha
         local surge = 1050 * boostLevel
+        if self.stageBackground then
+            local bgBoost = 120 * boostLevel
+            self.stageBackground:update(dt * speed,
+                vx + f0.shipBoostX * bgBoost,
+                vy + f0.shipBoostY * bgBoost,
+                self.width, self.height)
+        end
         self.stars:update(dt * speed,
             120 + vx * 2.8 + f0.shipBoostX * surge,
             -290 + vy * 2.8 + f0.shipBoostY * surge,
@@ -444,7 +454,7 @@ function ReplayExport:step(maxFrames)
         love.graphics.origin()
         love.graphics.clear(0.018, 0.028, 0.055, 1)
         love.graphics.setLineStyle("smooth")
-        Replay.renderClipFrame(self.clip, pbTime, self.width, self.height, self.fonts, self.stars, true)
+        Replay.renderClipFrame(self.clip, pbTime, self.width, self.height, self.fonts, self.stars, true, self.stageBackground)
         love.graphics.setCanvas()
         love.graphics.pop()
 

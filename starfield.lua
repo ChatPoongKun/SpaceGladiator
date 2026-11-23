@@ -73,12 +73,14 @@ function Starfield:update(dt, vx, vy, acceleration, width, height, boost)
     end
 end
 
-function Starfield:draw()
+function Starfield:draw(opts)
     local g = love.graphics
     g.push("all")
     g.origin()
-    g.setColor(.018, .025, .065, 1)
-    g.rectangle("fill", 0, 0, self.width, self.height)
+    if not (opts and opts.transparent) then
+        g.setColor(.018, .025, .065, 1)
+        g.rectangle("fill", 0, 0, self.width, self.height)
+    end
     g.setLineWidth(1)
     -- Scale before normalizing so zero and extreme velocities stay finite.
     local scale = math.max(1, math.abs(self.vx), math.abs(self.vy))

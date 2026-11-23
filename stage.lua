@@ -6,18 +6,21 @@
 local Stage = {}
 Stage.__index = Stage
 
+Stage.DEFAULT_LEVEL = 1
 Stage.DEFAULT_DURATION = 45
 Stage.BASE_SQUADS = 3 -- Stage 1 spawns 3 squads (15 ships); +1 squad per stage
 
 function Stage.new(stageNumber, opts)
     opts = opts or {}
     local num = stageNumber or 1
+    local level = opts.level or Stage.DEFAULT_LEVEL
     local duration = opts.duration or Stage.DEFAULT_DURATION
     local totalSquads = opts.totalSquads or (Stage.BASE_SQUADS + (num - 1))
     local featuredReward = opts.featuredReward or nil
     local scoreMultiplier = opts.scoreMultiplier or (featuredReward and featuredReward.id == "coin_jackpot" and 1.5 or 1)
     return setmetatable({
         number = num,
+        level = level,
         duration = duration,
         elapsed = 0,
         totalSquads = totalSquads,
@@ -79,7 +82,14 @@ function Stage:update(dt, enemies)
 end
 
 function Stage:nextStage(opts)
-    return Stage.new(self.number + 1, opts)
+    local nextOpts = {}
+    if opts then
+        for k, v in pairs(opts) do nextOpts[k] = v end
+    end
+    if nextOpts.level == nil then
+        nextOpts.level = self.level or Stage.DEFAULT_LEVEL
+    end
+    return Stage.new(self.number + 1, nextOpts)
 end
 
 return Stage
