@@ -883,11 +883,15 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         g.setColor(0.75, 0.92, 0.98, 1)
         g.print("장착 스펙 요약 (별도 보관함 없음)", rx + 14, curY + 12)
 
+        local propulsionLine = build.hasThruster
+            and string.format("· 최고속도: %d  · 부스트: %d (%.2f초)  · 회전: %.1f",
+                build.maxSpeed, build.boostSpeed, build.boostDuration, build.turnSpeed)
+            or "· 추진기 미장착 (추진·브레이크·회전·부스트 불가)"
         local lines = {
             string.format("· 배치 모듈: %d개 (활성 무기: %d개)  · 보관 칩: %d개", #inv.placed, #build.weaponModules, #inv.placedChips),
             string.format("· 실드 보너스: +%d   · 장갑 보너스: +%d", build.maxShieldBonus, build.maxArmorBonus),
             string.format("· 배터리 보너스: +%d   · 점수 배율: x%.2f", build.maxBatteryBonus, build.scoreMultiplier),
-            string.format("· 속도 보너스: +%d   · 부스트 보너스: +%d", build.maxSpeedBonus, build.boostSpeedBonus),
+            propulsionLine,
         }
         g.setColor(0.84, 0.92, 0.96, 0.95)
         for i, line in ipairs(lines) do
