@@ -386,12 +386,14 @@ function StageBackground:drawImageAt(index, viewW, viewH, u, v, alpha, overscanO
     return true
 end
 
-function StageBackground:titlePlanetMask(viewW, viewH)
+function StageBackground:titlePlanetMask(viewW, viewH, parallaxX, parallaxY)
     if not (self.titleActive and self.titleImage) then
         return nil
     end
     local imgW, imgH = self:titleDimensions()
-    local layout = self:computeLayout(imgW, imgH, viewW, viewH, 0, 0, self.titleOverscan)
+    local px, py = finite(parallaxX, 0), finite(parallaxY, 0)
+    local overscan = (px ~= 0 or py ~= 0) and math.max(self.titleOverscan, 1.024) or self.titleOverscan
+    local layout = self:computeLayout(imgW, imgH, viewW, viewH, 0, 0, overscan, px, py)
     local spec = StageBackground.TITLE_PLANET_UV
     return {
         x = layout.x + spec.x * layout.drawW,
@@ -401,11 +403,13 @@ function StageBackground:titlePlanetMask(viewW, viewH)
     }
 end
 
-function StageBackground:drawTitle(viewW, viewH, alpha)
+function StageBackground:drawTitle(viewW, viewH, alpha, parallaxX, parallaxY)
     local img = self.titleImage
     if not img then return false end
     local imgW, imgH = self:titleDimensions()
-    local layout = self:computeLayout(imgW, imgH, viewW, viewH, 0, 0, self.titleOverscan)
+    local px, py = finite(parallaxX, 0), finite(parallaxY, 0)
+    local overscan = (px ~= 0 or py ~= 0) and math.max(self.titleOverscan, 1.024) or self.titleOverscan
+    local layout = self:computeLayout(imgW, imgH, viewW, viewH, 0, 0, overscan, px, py)
     local g = love.graphics
     local tint = StageBackground.TITLE_TINT
     g.setColor(tint[1], tint[2], tint[3], clamp(finite(alpha, 1), 0, 1))
@@ -445,6 +449,8 @@ function StageBackground:draw(width, height, opts)
 
     local baseAlpha = clamp(finite(self.alpha, StageBackground.ALPHA), 0, 1)
     local titleAlpha = clamp(finite(self.titleAlpha, StageBackground.TITLE_ALPHA), 0, 1)
+    local titlePx = opts and finite(opts.titleParallaxX, 0) or 0
+    local titlePy = opts and finite(opts.titleParallaxY, 0) or 0
     local useTitle = self.titleActive and self.titleImage ~= nil
     if useTitle then
         if opts and opts.fadeThroughBlack and nextIndex then
@@ -452,7 +458,7 @@ function StageBackground:draw(width, height, opts)
             if blend < 0.35 then
                 local currAlpha = titleAlpha * (1 - clamp(blend / 0.35, 0, 1))
                 if currAlpha > 0.001 then
-                    self:drawTitle(viewW, viewH, currAlpha)
+                    self:drawTitle(viewW, viewH, currAlpha, titlePx, titlePy)
                 end
             elseif blend > 0.55 then
                 local nextAlpha = baseAlpha * clamp((blend - 0.55) / 0.45, 0, 1)
@@ -465,11 +471,11 @@ function StageBackground:draw(width, height, opts)
             if blend < 0.999 then
                 local denom = math.max(1e-6, 1 - nextAlpha)
                 local currAlpha = clamp((titleAlpha * (1 - blend)) / denom, 0, 1)
-                self:drawTitle(viewW, viewH, currAlpha)
+                self:drawTitle(viewW, viewH, currAlpha, titlePx, titlePy)
             end
             self:drawImageAt(nextIndex, viewW, viewH, 0, 0, nextAlpha, overscanOverride, shakeX, shakeY)
         else
-            self:drawTitle(viewW, viewH, titleAlpha)
+            self:drawTitle(viewW, viewH, titleAlpha, titlePx, titlePy)
         end
     elseif nextIndex and nextIndex ~= self.index and blend > 0.001 then
         local nextAlpha = baseAlpha * blend

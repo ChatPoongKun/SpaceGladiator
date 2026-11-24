@@ -9,6 +9,7 @@ local Enemies = require("src.combat.enemies")
 local Gladiator = require("src.combat.gladiator")
 local Hud = require("src.ui.hud")
 local Menu = require("src.ui.menu")
+local TitleScreen = require("src.ui.title_screen")
 local Sfx = require("src.audio.sfx")
 local Bgm = require("src.audio.bgm")
 local Inventory = require("src.progression.inventory")
@@ -20,7 +21,7 @@ local StageTransition = require("src.progression.stage_transition")
 local Replay = require("src.replay.replay")
 local ReplayExport = require("src.replay.replay_export")
 
-local ship, stars, stageBackground, fonts, camera, turret, enemies, hud, gladiator
+local ship, stars, stageBackground, fonts, camera, turret, enemies, hud, gladiator, titleScreen
 local inventory, inventoryUI, currentBuild
 local stage, plinko, plinkoUI
 local stageClearState, plinkoShutter, warpGates, warpState
@@ -39,18 +40,19 @@ local focused = true
 local gameOverHold = 1.25
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay, testFullscreen, testBackground = false, false, false, false, false, false, false, false, false
+local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay, testFullscreen, testBackground, testTitle = false, false, false, false, false, false, false, false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground) then return defaultErrorHandler(message) end
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground or testTitle) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
 
 local function setScreen(nextScreen)
+    local prevScreen = screen
     screen, selectedButton = nextScreen, 1
     input.boost, firing = false, false
     local preserveSfx = (screen == "gameOver" or screen == "stageClear" or screen == "plinko"
@@ -75,6 +77,12 @@ local function setScreen(nextScreen)
         if stageBackground then
             stageBackground:setLevel(StageBackground.DEFAULT_LEVEL, true)
             stageBackground:setTitle(true)
+        end
+        if titleScreen then
+            titleScreen:reset({
+                quick = (prevScreen == "settings"),
+                keepParallax = (prevScreen == "settings"),
+            })
         end
     end
     if screen == "title" or screen == "results" then
@@ -434,6 +442,11 @@ local function buildFonts(dpiScale)
         menuButton = love.graphics.newFont(menuFont, 18, "normal", scale),
         menuBody = love.graphics.newFont(menuFont, 15, "normal", scale),
         menuSmall = love.graphics.newFont(menuFont, 12, "normal", scale),
+        titleHero = love.graphics.newFont(menuFont, 72, "normal", scale),
+        titleSub = love.graphics.newFont(menuFont, 28, "normal", scale),
+        titlePrimary = love.graphics.newFont(menuFont, 23, "normal", scale),
+        titleButton = love.graphics.newFont(menuFont, 19, "normal", scale),
+        titleMicro = love.graphics.newFont(menuFont, 11, "normal", scale),
     }
     if hud and hud.setFontScale then
         hud:setFontScale(scale)
@@ -492,10 +505,13 @@ local function changeResolution(dir)
     applyDisplayChange(Display.mode, nextRes.w, nextRes.h)
 end
 
-menus.title = {title = "DRIFT", buttons = {
-    {label = "게임 시작", action = function() startRun({ entryWarp = true }) end},
-    {label = "설정", action = openSettings},
-    {label = "게임 종료", action = function() love.event.quit() end},
+menus.title = {title = "SPACE GLADIATOR", buttons = {
+    {label = "게임 시작", sublabel = "LAUNCH", primary = true, action = function()
+        if titleScreen then titleScreen:beginLaunch(menus.title, selectedButton) end
+        startRun({ entryWarp = true })
+    end},
+    {label = "설정", sublabel = "SETTINGS", action = openSettings},
+    {label = "게임 종료", sublabel = "EXIT", action = function() love.event.quit() end},
 }}
 menus.pause = {title = "일시정지", buttons = {
     {label = "계속하기", action = function() setScreen(pauseReturnScreen or "playing") end},
@@ -536,12 +552,13 @@ function love.load(args)
         if arg == "--test-replay" then testReplay = true end
         if arg == "--test-fullscreen" then testFullscreen = true end
         if arg == "--test-background" then testBackground = true end
+        if arg == "--test-title" then testTitle = true end
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
     love.graphics.setBackgroundColor(0.018, 0.028, 0.055)
     love.graphics.setLineStyle("smooth")
-    local anyTest = testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground
+    local anyTest = testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground or testTitle
     if not anyTest then
         local saved = Display.loadSettings()
         Display.applyMode(saved.mode, saved.width, saved.height)
@@ -550,10 +567,11 @@ function love.load(args)
     width, height = Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT
     Arena.resize()
     hud = Hud.new(Display.fontDpiScale())
+    titleScreen = TitleScreen.new()
     buildFonts(Display.fontDpiScale())
     stars = Starfield.new(Display.windowWidth, Display.windowHeight)
     stageBackground = StageBackground.new(Display.windowWidth, Display.windowHeight)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground) then
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground or testTitle) then
         Sfx.load()
         Bgm.load()
     end
@@ -586,6 +604,12 @@ function love.load(args)
     if testBackground then
         require("tests.stage_background")
         love.event.quit(0)
+        return
+    end
+    if testTitle then
+        require("tests.title_screen")(function()
+            return screen, titleScreen, menus.title, selectedButton, fonts, width, height
+        end)
         return
     end
     if testFlow then
@@ -654,6 +678,9 @@ function love.update(dt)
     if not ship then
         if stageBackground then stageBackground:update(dt, 0, 0, bgW, bgH) end
         stars:update(dt, 12 * bgScale, -18 * bgScale, 0, bgW, bgH, 0)
+        if screen == "title" and titleScreen then
+            titleScreen:update(dt, menus.title, selectedButton)
+        end
         return
     end
     if screen == "plinko" then
@@ -690,6 +717,9 @@ function love.update(dt)
     end
     if screen == "warping" then
         local finished = StageTransition.updateWarp(warpState, dt, ship, stars, camera, width, height, turret)
+        if titleScreen and titleScreen:isLaunching() then
+            titleScreen:update(dt, menus.title, selectedButton)
+        end
         if stageBackground and warpState then
             local warpDrift = 140 * (warpState.speedFactor or 0)
             stageBackground:update(dt, warpState.dirX * warpDrift * bgScale, warpState.dirY * warpDrift * bgScale, bgW, bgH)
@@ -1020,13 +1050,21 @@ function love.draw()
             local warpSpeed = warpState.speedFactor or 0
             local pullback = math.max(camera and camera.pullback or 0, warpSpeed)
             local titleVisible = stageBackground.titleActive and (not isEntry or p < 0.37)
-            local planetMask = titleVisible and stageBackground:titlePlanetMask(bgW, bgH) or nil
+            local tpx, tpy = 0, 0
+            if titleVisible and titleScreen then
+                tpx, tpy = titleScreen:getBackgroundParallax()
+                local s = Display.scale or 1
+                tpx, tpy = tpx * s, tpy * s
+            end
+            local planetMask = titleVisible and stageBackground:titlePlanetMask(bgW, bgH, tpx, tpy) or nil
             stageBackground:draw(bgW, bgH, {
                 nextLevel = stage and stage.level or StageBackground.DEFAULT_LEVEL,
                 blend = bgBlend,
                 fadeThroughBlack = isEntry,
                 pullback = pullback,
                 shake = warpSpeed * warpSpeed,
+                titleParallaxX = tpx,
+                titleParallaxY = tpy,
             })
             stars:draw({ transparent = true, excludeZone = planetMask })
         else
@@ -1035,12 +1073,25 @@ function love.draw()
         love.graphics.push("all")
         Display.applyTransform()
         StageTransition.drawWarp(warpState, ship, camera, width, height, time, fonts, turret)
+        if warpState.mode == "entry" and titleScreen and titleScreen:isLaunching() then
+            titleScreen:drawLaunchOverlay(fonts, width, height)
+        end
         love.graphics.pop()
         return
     end
     if stageBackground then
-        local planetMask = stageBackground.titleActive and stageBackground:titlePlanetMask(bgW, bgH) or nil
-        stageBackground:draw(bgW, bgH, { pullback = camera and camera.pullback or 0 })
+        local tpx, tpy = 0, 0
+        if stageBackground.titleActive and titleScreen then
+            tpx, tpy = titleScreen:getBackgroundParallax()
+            local s = Display.scale or 1
+            tpx, tpy = tpx * s, tpy * s
+        end
+        local planetMask = stageBackground.titleActive and stageBackground:titlePlanetMask(bgW, bgH, tpx, tpy) or nil
+        stageBackground:draw(bgW, bgH, {
+            pullback = camera and camera.pullback or 0,
+            titleParallaxX = tpx,
+            titleParallaxY = tpy,
+        })
         stars:draw({ transparent = true, excludeZone = planetMask })
     else
         stars:draw()
@@ -1066,6 +1117,8 @@ function love.draw()
             stageEndMode = inventoryStageEndMode,
             returnTarget = inventoryReturnScreen,
         })
+    elseif screen == "title" and titleScreen then
+        titleScreen:draw(menu, fonts, selectedButton, width, height)
     elseif menu then
         Menu.draw(menu, fonts, selectedButton, width, height, ship ~= nil)
     end
@@ -1145,7 +1198,10 @@ function love.keypressed(key, _, isRepeat)
         return
     end
     if key == "escape" or key == "p" then
-        if screen == "playing" or screen == "warpSelect" then
+        if screen == "title" and titleScreen and titleScreen:isIntroActive() then
+            titleScreen:skipIntro()
+            return
+        elseif screen == "playing" or screen == "warpSelect" then
             pauseReturnScreen = screen
             setScreen("pause")
         elseif screen == "pause" then
@@ -1158,10 +1214,13 @@ function love.keypressed(key, _, isRepeat)
 
     local menu = menus[screen]
     if menu then
-        if key == "up" then
+        local isTitle = (screen == "title" and titleScreen ~= nil)
+        if key == "up" or (isTitle and key == "w") then
+            if isTitle then titleScreen:skipIntro() end
             selectedButton = (selectedButton - 2) % #menu.buttons + 1
             Sfx.play("ui_hover")
-        elseif key == "down" then
+        elseif key == "down" or (isTitle and key == "s") then
+            if isTitle then titleScreen:skipIntro() end
             selectedButton = selectedButton % #menu.buttons + 1
             Sfx.play("ui_hover")
         elseif key == "left" and menu.buttons[selectedButton] and menu.buttons[selectedButton].onLeft then
@@ -1171,8 +1230,11 @@ function love.keypressed(key, _, isRepeat)
             Sfx.play("ui_click")
             menu.buttons[selectedButton].onRight()
         elseif key == "return" or key == "kpenter" then
+            if isTitle then titleScreen:skipIntro() end
             Sfx.play("ui_click")
             menu.buttons[selectedButton].action()
+        elseif isTitle and titleScreen:isIntroActive() then
+            titleScreen:skipIntro()
         end
         return
     end
@@ -1194,7 +1256,13 @@ function love.mousemoved(x, y)
     end
     local menu = menus[screen]
     if menu then
-        local hovered = Menu.buttonAt(menu, width, height, x, y)
+        local hovered
+        if screen == "title" and titleScreen then
+            titleScreen:setMouse(x, y, width, height)
+            hovered = titleScreen:buttonAt(menu, width, height, x, y)
+        else
+            hovered = Menu.buttonAt(menu, width, height, x, y)
+        end
         if hovered and hovered ~= selectedButton then
             selectedButton = hovered
             Sfx.play("ui_hover")
@@ -1246,8 +1314,20 @@ function love.mousepressed(x, y, button)
     end
     local menu = menus[screen]
     if not menu then return end
-    local index = Menu.buttonAt(menu, width, height, x, y)
+    local index
+    if screen == "title" and titleScreen then
+        index = titleScreen:buttonAt(menu, width, height, x, y)
+        if not index and titleScreen:isIntroActive() then
+            titleScreen:skipIntro()
+            return
+        end
+    else
+        index = Menu.buttonAt(menu, width, height, x, y)
+    end
     if index then
+        if screen == "title" and titleScreen then
+            titleScreen:skipIntro()
+        end
         selectedButton = index
         Sfx.play("ui_click")
         menu.buttons[index].action()

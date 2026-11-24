@@ -1,4 +1,4 @@
-# Space Gladiator (DRIFT)
+# Space Gladiator
 
 LÖVE2D (`11.5`, Lua/LuaJIT) 기반의 관성 비행 아레나 슈터 & 다이아몬드 그리드 빌드 게임입니다.
 
@@ -24,7 +24,9 @@ LÖVE2D (`11.5`, Lua/LuaJIT) 기반의 관성 비행 아레나 슈터 & 다이�
 | 기체 모듈 목록·그리드 형태·소켓·기본 스탯 데이터 | `src/data/modules_data.lua` |
 | 서포트 칩 목록·대상·수정치(멀티샷/유도/도탄 등) 데이터 | `src/data/chips_data.lua` |
 | 전투 원형 HUD(자원 링, 근접 페이드, 상태 표시) | `src/ui/hud.lua` |
-| 타이틀/일시정지/설정/결과 메뉴 레이아웃 및 버튼 히트 테스트 | `src/ui/menu.lua` |
+| UI 공용 테마 토큰, 이징, 그라데이션 메시 헬퍼 | `src/ui/theme.lua` |
+| 타이틀 화면 전용 렌더러, 인트로·선택 보간·워프 전환 모션 | `src/ui/title_screen.lua` |
+| 일시정지/설정/결과 메뉴 레이아웃 및 버튼 히트 테스트 | `src/ui/menu.lua` |
 | 행거(인벤토리) 드래그/클릭 배치·회전·툴팁 UI | `src/ui/inventory_ui.lua` |
 | 스테이지 종료 플링코 머신 UI 및 코인 투입 컨트롤 | `src/ui/plinko_ui.lua` |
 | 레벨별 성운 셰이더 배경, 패럴랙스, 부스트/워프 줌·진동 | `src/visual/stage_background.lua` |
