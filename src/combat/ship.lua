@@ -18,8 +18,7 @@ Ship.naturalDrag = 0.5
 Ship.boostSpeed = 420
 Ship.boostHold = 0.24
 Ship.boostFalloff = 0.24
-Ship.boostCost = 20
-Ship.thrustBatteryCost = 1
+Ship.boostCost = 25
 Ship.batteryRecharge = 12
 Ship.wrapBonusSpeed = 110
 Ship.combatPower = 100
@@ -40,16 +39,6 @@ function Ship.new(width, height)
         baseBatteryRecharge = Ship.batteryRecharge,
         baseMaxSpeed = Ship.maxSpeed, baseBoostSpeed = Ship.boostSpeed,
         baseBoostCost = Ship.boostCost, baseWrapBonusSpeed = Ship.wrapBonusSpeed,
-        hasThruster = true,
-        thrust = Ship.thrust,
-        brake = Ship.brake,
-        maxSpeed = Ship.maxSpeed,
-        turnSpeed = Ship.turnSpeed,
-        boostSpeed = Ship.boostSpeed,
-        boostHold = Ship.boostHold,
-        boostFalloff = Ship.boostFalloff,
-        boostCost = Ship.boostCost,
-        thrustBatteryCost = Ship.thrustBatteryCost,
         wrapBonusSpeed = Ship.wrapBonusSpeed,
         wrapInvulnDuration = 0, invulnTimer = 0, invulnDuration = 0, wrapEvents = 0,
         combatPower = Ship.combatPower,
@@ -110,42 +99,10 @@ function Ship:applyBuild(build)
     self.maxArmor = self.baseMaxArmor + (build.maxArmorBonus or 0)
     self.maxBattery = self.baseMaxBattery + (build.maxBatteryBonus or 0)
     self.batteryRecharge = (self.baseBatteryRecharge + (build.batteryRechargeBonus or 0)) * (build.batteryRechargeMult or 1)
-    if build.hasThruster ~= nil then
-        if build.hasThruster then
-            self.hasThruster = true
-            self.thrust = build.thrust or 0
-            self.brake = build.brake or 0
-            self.maxSpeed = build.maxSpeed or 0
-            self.turnSpeed = build.turnSpeed or 0
-            self.boostSpeed = build.boostSpeed or 0
-            self.boostHold = build.boostHold or 0
-            self.boostFalloff = build.boostFalloff or 0
-            self.boostCost = math.max(0, (build.boostCost or 0) + (build.boostCostBonus or 0))
-            self.thrustBatteryCost = math.max(0, build.thrustBatteryCost or 0)
-            self.wrapBonusSpeed = (build.wrapBonusSpeed or 0) * (build.wrapSpeedMult or 1)
-        else
-            self.hasThruster = false
-            self.thrust = 0
-            self.brake = 0
-            self.maxSpeed = 0
-            self.turnSpeed = 0
-            self.boostSpeed = 0
-            self.boostHold = 0
-            self.boostFalloff = 0
-            self.boostCost = 0
-            self.thrustBatteryCost = 0
-            self.wrapBonusSpeed = 0
-            self.boostRemaining = 0
-            self.boostLevel = 0
-            self.accelerating = false
-            self.braking = false
-        end
-    else
-        self.maxSpeed = self.baseMaxSpeed + (build.maxSpeedBonus or 0)
-        self.boostSpeed = self.baseBoostSpeed + (build.boostSpeedBonus or 0)
-        self.boostCost = math.max(5, self.baseBoostCost + (build.boostCostBonus or 0))
-        self.wrapBonusSpeed = (self.baseWrapBonusSpeed + (build.wrapBonusSpeedAdd or 0)) * (build.wrapSpeedMult or 1)
-    end
+    self.maxSpeed = self.baseMaxSpeed + (build.maxSpeedBonus or 0)
+    self.boostSpeed = self.baseBoostSpeed + (build.boostSpeedBonus or 0)
+    self.boostCost = math.max(5, self.baseBoostCost + (build.boostCostBonus or 0))
+    self.wrapBonusSpeed = (self.baseWrapBonusSpeed + (build.wrapBonusSpeedAdd or 0)) * (build.wrapSpeedMult or 1)
     self.wrapInvulnDuration = build.wrapInvulnDuration or 0
 
     if self.maxShield > prevMaxShield then
@@ -221,26 +178,24 @@ local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin,
 end
 
 function Ship:turn(dt, direction)
-    if not self.turnSpeed or self.turnSpeed <= 0 then return end
     self.angle = (self.angle + direction * self.turnSpeed * dt) % (2 * math.pi)
 end
 
-function Ship:updateVelocity(dt, thrust, brake, cap, coastDt, thrustDt)
-    self.accelerating = thrust and not brake and (self.thrust or 0) > 0
-    self.braking = brake and (self.brake or 0) > 0
+function Ship:updateVelocity(dt, thrust, brake, cap, coastDt)
+    self.accelerating = thrust and not brake
+    self.braking = brake
     local oldVx, oldVy = self.vx, self.vy
     if self.braking then
         local damping = math.exp(-self.brake * dt)
         self.vx, self.vy = self.vx * damping, self.vy * damping
         if self:speed() < 0.5 then self.vx, self.vy = 0, 0 end
     elseif self.accelerating then
-        local accelDt = thrustDt or dt
-        self.vx = self.vx + math.sin(self.angle) * self.thrust * accelDt
-        self.vy = self.vy - math.cos(self.angle) * self.thrust * accelDt
+        self.vx = self.vx + math.sin(self.angle) * self.thrust * dt
+        self.vy = self.vy - math.cos(self.angle) * self.thrust * dt
     end
 
     local speed = self:speed()
-    if cap > 0 and speed > cap then
+    if speed > cap then
         self.vx, self.vy = self.vx * cap / speed, self.vy * cap / speed
         speed = cap
     end
@@ -289,11 +244,9 @@ function Ship:update(dt, input, options)
     end
     self:turn(dt, input.turn)
 
-    local totalBoost = (self.boostHold or 0) + (self.boostFalloff or 0)
-    if input.boost and not input.brake and self.hasThruster ~= false and totalBoost > 0
-        and (self.boostSpeed or 0) > 0 and self.boostRemaining == 0 and self.battery >= self.boostCost then
+    if input.boost and not input.brake and self.boostRemaining == 0 and self.battery >= self.boostCost then
         self.battery = self.battery - self.boostCost
-        self.boostRemaining = totalBoost
+        self.boostRemaining = self.boostHold + self.boostFalloff
         self.boostX, self.boostY = math.sin(self.angle), -math.cos(self.angle)
         self.vx, self.vy = self.boostX * self.boostSpeed, self.boostY * self.boostSpeed
         self.boostOriginX, self.boostOriginY = self.x, self.y
@@ -301,37 +254,12 @@ function Ship:update(dt, input, options)
     end
 
     local rechargeTime = math.max(0, dt - self.boostRemaining)
-    local rechargeAmount = rechargeTime * self.batteryRecharge
-    local available = self.battery + rechargeAmount
-    local thrustActive = input.thrust and not input.brake and (self.thrust or 0) > 0
-    local thrustDt = 0
-    if thrustActive then
-        local costRate = self.thrustBatteryCost or 0
-        if costRate > 0 then
-            if available <= 1e-9 then
-                thrustActive = false
-                self.battery = math.min(self.maxBattery, math.max(0, available))
-            elseif available >= costRate * dt then
-                thrustDt = dt
-                self.battery = math.min(self.maxBattery, available - costRate * dt)
-            else
-                thrustDt = available / costRate
-                self.battery = 0
-            end
-        else
-            thrustDt = dt
-            self.battery = math.min(self.maxBattery, available)
-        end
-    else
-        self.battery = math.min(self.maxBattery, available)
-    end
-
+    self.battery = math.min(self.maxBattery, self.battery + rechargeTime * self.batteryRecharge)
     self.boostRemaining = math.max(0, self.boostRemaining - dt)
-    local falloff = (self.boostFalloff and self.boostFalloff > 0 and self.boostRemaining > 0)
-        and math.min(1, self.boostRemaining / self.boostFalloff) or 0
+    local falloff = math.min(1, self.boostRemaining / self.boostFalloff)
     self.boostLevel = falloff * falloff * (3 - 2 * falloff)
-    local cap = self.maxSpeed + math.max(0, self.boostSpeed - self.maxSpeed) * self.boostLevel
-    local oldVx, oldVy = self:updateVelocity(dt, thrustActive, input.brake, cap, rechargeTime, thrustDt)
+    local cap = self.maxSpeed + (self.boostSpeed - self.maxSpeed) * self.boostLevel
+    local oldVx, oldVy = self:updateVelocity(dt, input.thrust, input.brake, cap, rechargeTime)
 
     if (self.invulnTimer or 0) > 0 then
         self.invulnTimer = math.max(0, self.invulnTimer - dt)
@@ -342,7 +270,7 @@ function Ship:update(dt, input, options)
     end
     local margin = self:hitRadius() + 1
     local detectWrap = not (options and options.disableWrapDetection)
-    local wrapBonusSpeed = (detectWrap and (self.wrapBonusSpeed or 0) > 0) and self.wrapBonusSpeed or Ship.wrapBonusSpeed
+    local wrapBonusSpeed = detectWrap and self.wrapBonusSpeed or Ship.wrapBonusSpeed
     local wrappedX, wrappedY
     self.x, self.vx, self.wrapVx, wrappedX = crossEdge(self.x, oldVx, self.vx, self.wrapVx, Arena.width, margin, dt, wrapBonusSpeed)
     self.y, self.vy, self.wrapVy, wrappedY = crossEdge(self.y, oldVy, self.vy, self.wrapVy, Arena.height, margin, dt, wrapBonusSpeed)
@@ -355,10 +283,8 @@ function Ship:update(dt, input, options)
 end
 
 function Ship:drawBoostPulse()
-    local totalBoost = (self.boostHold or 0) + (self.boostFalloff or 0)
-    if totalBoost <= 0 or not self.boostOriginX then return end
-    local age = totalBoost - self.boostRemaining
-    if age >= 0 and age < 0.20 then
+    local age = self.boostHold + self.boostFalloff - self.boostRemaining
+    if age < 0.20 then
         local g = love.graphics
         local flash = 1 - age / 0.20
         g.setColor(0.38, 0.83, 1, flash * 0.55)
@@ -402,8 +328,7 @@ function Ship:draw(time)
     if speed > 4 then
         -- The small marker shows momentum, independently of the ship's nose.
         local dx, dy = self.vx / speed, self.vy / speed
-        local speedRatio = (self.maxSpeed and self.maxSpeed > 0) and (speed / self.maxSpeed) or 0
-        local length = 36 + speedRatio * 30
+        local length = 36 + speed / self.maxSpeed * 30
         local x, y = self.x + dx * length, self.y + dy * length
         g.setLineWidth(1)
         g.setColor(0.40, 0.85, 0.92, 0.23 * blinkAlpha)

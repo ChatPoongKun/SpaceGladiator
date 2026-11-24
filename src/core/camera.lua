@@ -16,14 +16,8 @@ function Camera:update(dt, ship, width, height)
     self.pullback = self.pullback + (targetBoost - self.pullback) * easing
     self.zoom = fit * (1 - 0.12 * self.pullback)
 
-    local totalBoost = (ship.boostHold or 0) + (ship.boostFalloff or 0)
-    local shake = 0
-    if totalBoost > 0 and ship.boostOriginX then
-        local age = totalBoost - ship.boostRemaining
-        if age >= 0 and age < 0.16 then
-            shake = math.sin(age * 95) * math.max(0, 1 - age / 0.16) * 5
-        end
-    end
+    local age = ship.boostHold + ship.boostFalloff - ship.boostRemaining
+    local shake = math.sin(age * 95) * math.max(0, 1 - age / 0.16) * 5
     self.x = Arena.width / 2 + ship.boostX * self.pullback * 13 - ship.boostY * shake
     self.y = Arena.height / 2 + ship.boostY * self.pullback * 13 + ship.boostX * shake
 end

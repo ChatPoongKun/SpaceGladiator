@@ -638,10 +638,7 @@ function love.load(args)
         for frame = 1, 900 do
             if frame == 120 then love.keypressed("space") end
             love.update(1 / 60)
-            if frame == 120 then
-                local expectedBattery = ship.maxBattery - ship.boostCost - ship.thrustBatteryCost * (1 / 60)
-                assert(math.abs(ship.battery - expectedBattery) < 1e-6)
-            end
+            if frame == 120 then assert(ship.battery == ship.maxBattery - ship.boostCost) end
         end
         if testDamaged then ship.shield, ship.armor, ship.hull, ship.battery = 27, 68, 2, 42 end
     end

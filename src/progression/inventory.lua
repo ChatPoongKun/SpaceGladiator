@@ -644,19 +644,6 @@ function Inventory:computeBuild(feverActive)
         maxBatteryBonus = 0,
         batteryRechargeBonus = 0,
         batteryRechargeMult = 1.0,
-        hasThruster = false,
-        thrusterCount = 0,
-        thrust = 0,
-        brake = 0,
-        maxSpeed = 0,
-        turnSpeed = 0,
-        boostSpeed = 0,
-        boostHold = 0,
-        boostFalloff = 0,
-        boostDuration = 0,
-        boostCost = 0,
-        thrustBatteryCost = 0,
-        wrapBonusSpeed = 0,
         maxSpeedBonus = 0,
         boostSpeedBonus = 0,
         boostCostBonus = 0,
@@ -689,41 +676,9 @@ function Inventory:computeBuild(feverActive)
                 build.maxArmorBonus = build.maxArmorBonus + (stats.maxArmor or 0)
                 build.maxBatteryBonus = build.maxBatteryBonus + (stats.maxBattery or 0)
                 build.batteryRechargeBonus = build.batteryRechargeBonus + (stats.batteryRecharge or 0)
-
-                if def.category == "thruster" then
-                    build.thrusterCount = build.thrusterCount + 1
-                    build.hasThruster = true
-                    if build.thrusterCount == 1 then
-                        build.thrust = stats.thrust or 0
-                        build.brake = stats.brake or 0
-                        build.maxSpeed = stats.maxSpeed or 0
-                        build.turnSpeed = stats.turnSpeed or 0
-                        build.boostSpeed = stats.boostSpeed or 0
-                        build.boostHold = stats.boostHold or 0
-                        build.boostFalloff = stats.boostFalloff or 0
-                        build.boostCost = stats.boostCost or 0
-                        build.thrustBatteryCost = stats.thrustBatteryCost or 0
-                        build.wrapBonusSpeed = stats.wrapBonusSpeed or 0
-                    else
-                        local extra = def.stackStats or stats
-                        build.thrust = build.thrust + (extra.thrust or 0)
-                        build.brake = build.brake + (extra.brake or 0)
-                        build.maxSpeed = build.maxSpeed + (extra.maxSpeed or 0)
-                        build.turnSpeed = build.turnSpeed + (extra.turnSpeed or 0)
-                        build.boostSpeed = build.boostSpeed + (extra.boostSpeed or 0)
-                        build.boostHold = build.boostHold + (extra.boostHold or 0)
-                        build.boostFalloff = build.boostFalloff + (extra.boostFalloff or 0)
-                        build.wrapBonusSpeed = build.wrapBonusSpeed + (extra.wrapBonusSpeed or 0)
-                        build.maxSpeedBonus = build.maxSpeedBonus + (extra.maxSpeed or 0)
-                        build.boostSpeedBonus = build.boostSpeedBonus + (extra.boostSpeed or 0)
-                        build.wrapBonusSpeedAdd = build.wrapBonusSpeedAdd + (extra.wrapBonusSpeed or 0)
-                    end
-                    build.boostDuration = build.boostHold + build.boostFalloff
-                else
-                    build.maxSpeedBonus = build.maxSpeedBonus + (stats.maxSpeed or 0)
-                    build.boostSpeedBonus = build.boostSpeedBonus + (stats.boostSpeed or 0)
-                    build.wrapBonusSpeedAdd = build.wrapBonusSpeedAdd + (stats.wrapBonusSpeed or 0)
-                end
+                build.maxSpeedBonus = build.maxSpeedBonus + (stats.maxSpeed or 0)
+                build.boostSpeedBonus = build.boostSpeedBonus + (stats.boostSpeed or 0)
+                build.wrapBonusSpeedAdd = build.wrapBonusSpeedAdd + (stats.wrapBonusSpeed or 0)
             end
 
             local activeChips = self:getActiveChips(mod)
@@ -800,13 +755,11 @@ function Inventory:computeBuild(feverActive)
 end
 
 -- Create a default starter inventory on the 4x4 diamond (expandable to 6x6)
--- with the baseline projectile turret and drift thruster installed (NO separate stash).
+-- with the baseline projectile turret installed and NO separate stash.
 function Inventory.newStarter(opts)
     local inv = Inventory.new(opts)
     local proj = inv:createModule("projectile")
     inv:placeModule(proj, 3, 3, 0)
-    local thruster = inv:createModule("thruster")
-    inv:placeModule(thruster, 5, 3, 0)
     return inv
 end
 
