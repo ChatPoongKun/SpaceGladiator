@@ -17,12 +17,18 @@ Turret.turnSpeed = tau
 Turret.missileSpeed = 900
 Turret.missileLifetime = 600 / 900
 Turret.fireInterval = 0.18
+Turret.weaponFireIntervals = {
+    [1] = 0.18,
+    [2] = 0.55,
+    [3] = 0.34,
+}
 Turret.explosionLifetime = 0.45
 
 function Turret.new(initialAngle)
     return setmetatable({
         angle = (initialAngle or 0) % tau,
-        weapon = 1, launchSide = 1, cooldown = 0, missiles = {}, explosions = {},
+        weapon = nil, launchSide = 1, cooldown = 0, weaponCooldowns = {},
+        missiles = {}, explosions = {},
         beams = {}, burstQueue = {},
         shotsFired = 0, shotsHit = 0,
     }, Turret)
@@ -85,9 +91,10 @@ end
 
 function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, width, height, weaponBuild, opts)
     opts = opts or {}
-    local weapon = opts.weapon or self.weapon
-    local baseAngle = opts.angle or self.angle
     local cfg = weaponBuild
+    local weapon = opts.weapon or (cfg and cfg.weaponIndex) or self.weapon
+    if not weapon then return nil end
+    local baseAngle = opts.angle or self.angle
     local batteryCost = (cfg and not opts.free) and (cfg.batteryCost or 0) or 0
     if batteryCost > 0 then
         if (ship.battery or 0) < batteryCost then return nil end
@@ -119,7 +126,7 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
 
     if weapon == 3 then
         local offsets = buildOffsets(1, extraCount, math.rad(7), extraSpreadRad)
-        self.beams = {}
+        self.beams = self.beams or {}
         local primaryBeam = nil
         local anyHit = false
         for _, offset in ipairs(offsets) do
@@ -248,24 +255,74 @@ function Turret:fireTriggered(weaponIndex, ship, targetX, targetY, enemies, came
     })
 end
 
-function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, camera, width, height, weaponBuild)
+local function getWeaponKey(wCfg, fallbackIdx)
+    return wCfg.moduleId or wCfg.id or ("weapon_" .. tostring(wCfg.weaponIndex or fallbackIdx))
+end
+
+local function getWeaponInterval(turret, wCfg)
+    local base = (wCfg and wCfg.fireInterval)
+        or (wCfg and wCfg.weaponIndex and Turret.weaponFireIntervals[wCfg.weaponIndex])
+        or turret.fireInterval
+    local cdMult = wCfg and ((wCfg.cooldownMult or 1) * (wCfg.manualCooldownMult or 1)) or 1
+    return math.max(0.02, base * cdMult)
+end
+
+local function canAffordWeapon(ship, wCfg)
+    local cost = wCfg and wCfg.batteryCost or 0
+    return cost <= 0 or (ship and (ship.battery or 0) >= cost)
+end
+
+local function resolveActiveWeapons(turret, weaponInput)
+    if weaponInput == nil then
+        if turret.weapon then
+            return { { weaponIndex = turret.weapon } }
+        end
+        return {}
+    end
+    if type(weaponInput) ~= "table" then
+        return {}
+    end
+    if weaponInput.weaponModules ~= nil then
+        return weaponInput.weaponModules
+    end
+    if weaponInput.weaponIndex ~= nil then
+        if weaponInput.installed == false or weaponInput.disabled then
+            return {}
+        end
+        return { weaponInput }
+    end
+    return weaponInput
+end
+
+function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, camera, width, height, weaponInput)
     dt = math.max(0, dt)
     local dx, dy = mouseWorldX - ship.x, mouseWorldY - ship.y
     if dx ~= 0 or dy ~= 0 then
         local target = math.atan2(dx, -dy)
-        if self.weapon == 1 then
-            local delta = (target - self.angle + math.pi) % tau - math.pi
-            local limit = self.turnSpeed * dt
-            self.angle = (self.angle + math.max(-limit, math.min(limit, delta))) % tau
-        else
-            self.angle = target % tau
-        end
+        local delta = (target - self.angle + math.pi) % tau - math.pi
+        local limit = self.turnSpeed * dt
+        self.angle = (self.angle + math.max(-limit, math.min(limit, delta))) % tau
     end
 
-    -- Split at shot times so held fire keeps its cadence at any frame rate.
+    local activeWeapons = resolveActiveWeapons(self, weaponInput)
+    self.weaponCooldowns = self.weaponCooldowns or {}
+    local eps = 1e-9
+
+    -- Split at per-weapon shot times so held fire keeps each weapon's independent cadence at any frame rate.
     local remaining = dt
     repeat
-        local step = firing and math.min(remaining, self.cooldown) or remaining
+        local step = remaining
+        if firing and #activeWeapons > 0 then
+            for idx, wCfg in ipairs(activeWeapons) do
+                if wCfg and wCfg.weaponIndex and canAffordWeapon(ship, wCfg) then
+                    local key = getWeaponKey(wCfg, idx)
+                    local cd = self.weaponCooldowns[key] or 0
+                    if cd < step then
+                        step = cd
+                    end
+                end
+            end
+        end
         if self.beam then
             self.beam.age = self.beam.age + step
             if self.beam.age >= beamLifetime then self.beam = nil end
@@ -380,14 +437,37 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
             end
         end
         remaining = remaining - step
-        self.cooldown = math.max(0, self.cooldown - step)
-        if firing and self.cooldown == 0 then
-            local cdMult = weaponBuild and ((weaponBuild.cooldownMult or 1) * (weaponBuild.manualCooldownMult or 1)) or 1
-            self:fire(ship, mouseWorldX, mouseWorldY, enemies, dt > 0 and (dt - remaining) / dt or 0,
-                camera, width, height, weaponBuild)
-            self.cooldown = self.fireInterval * cdMult
+        for key, cd in pairs(self.weaponCooldowns) do
+            local nextCd = cd - step
+            if nextCd <= eps then
+                self.weaponCooldowns[key] = nil
+            else
+                self.weaponCooldowns[key] = nextCd
+            end
         end
-    until remaining <= 0
+        if firing and #activeWeapons > 0 then
+            local frameFraction = dt > 0 and (dt - remaining) / dt or 0
+            for idx, wCfg in ipairs(activeWeapons) do
+                if wCfg and wCfg.weaponIndex then
+                    local key = getWeaponKey(wCfg, idx)
+                    local cd = self.weaponCooldowns[key] or 0
+                    if cd <= eps and canAffordWeapon(ship, wCfg) then
+                        local fired = self:fire(ship, mouseWorldX, mouseWorldY, enemies,
+                            frameFraction, camera, width, height, wCfg, { weapon = wCfg.weaponIndex })
+                        if fired ~= nil then
+                            self.weaponCooldowns[key] = getWeaponInterval(self, wCfg)
+                        end
+                    end
+                end
+            end
+        end
+    until remaining <= eps
+
+    local minCd = math.huge
+    for _, cd in pairs(self.weaponCooldowns) do
+        if cd < minCd then minCd = cd end
+    end
+    self.cooldown = minCd < math.huge and minCd or 0
 end
 
 function Turret:clearEffects()
@@ -396,6 +476,8 @@ function Turret:clearEffects()
     self.beams = {}
     self.beam = nil
     self.burstQueue = {}
+    self.weaponCooldowns = {}
+    self.cooldown = 0
 end
 
 function Turret:beginStageClear()
@@ -414,6 +496,16 @@ function Turret:updateEffects(dt, camera, width, height)
     dt = math.max(0, dt or 0)
     if dt <= 0 then return end
     self.cooldown = math.max(0, self.cooldown - dt)
+    if self.weaponCooldowns then
+        for key, cd in pairs(self.weaponCooldowns) do
+            local nextCd = cd - dt
+            if nextCd <= 1e-9 then
+                self.weaponCooldowns[key] = nil
+            else
+                self.weaponCooldowns[key] = nextCd
+            end
+        end
+    end
 
     local agedPrimary = false
     if self.beams then

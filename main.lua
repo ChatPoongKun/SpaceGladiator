@@ -352,6 +352,14 @@ local function closeInventoryScreen()
     if inventoryUI and inventory then
         inventoryUI:cancelDrag(inventory)
     end
+    if inventory and inventory:activeWeaponCount() < 1 then
+        if inventoryUI then
+            inventoryUI:showWarningPopup("최소 하나의 무기는 사용해야 합니다.")
+            inventoryUI.message = "최소 하나의 무기는 사용해야 합니다."
+        end
+        Sfx.play("ui_error")
+        return
+    end
     syncInventoryBuild()
     savePermanentUnlocks()
     if inventoryReturnScreen == "warpSelect" then
@@ -777,8 +785,8 @@ function love.update(dt)
             (-290 + vy * 2.8 + ship.boostY * surge) * bgScale,
             ship.accelerating and 1 or 0, bgW, bgH, ship.boostLevel)
         local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
-        local activeWeaponBuild = currentBuild and currentBuild.weapons[turret.weapon] or nil
-        turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeaponBuild)
+        local activeWeapons = currentBuild and currentBuild.weaponModules or {}
+        turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeapons)
         updateHudProximity(dt)
         return
     end
@@ -804,8 +812,8 @@ function love.update(dt)
     if currentBuild and gladiator.feverActive ~= lastFeverState then
         syncInventoryBuild()
     end
-    local activeWeaponBuild = currentBuild and currentBuild.weapons[turret.weapon] or nil
-    turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeaponBuild)
+    local activeWeapons = currentBuild and currentBuild.weaponModules or {}
+    turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeapons)
     gladiator:update(dt, ship)
     updateHudProximity(dt)
     if replay then
@@ -834,10 +842,9 @@ function love.update(dt)
             if (currentBuild.onDodgeBattery or 0) > 0 then
                 ship:rechargeBattery(currentBuild.onDodgeBattery)
             end
-            for w = 1, 3 do
-                local wCfg = currentBuild.weapons[w]
-                if wCfg.installed and wCfg.triggerOnDodge then
-                    turret:fireTriggered(w, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
+            for _, wCfg in ipairs(currentBuild.weaponModules or {}) do
+                if wCfg.triggerOnDodge then
+                    turret:fireTriggered(wCfg.weaponIndex, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
                         free = wCfg.autoBatteryZero,
                     })
                 end
@@ -848,10 +855,9 @@ function love.update(dt)
         if (ship.wrapEvents or 0) > lastWrapEvents then
             lastWrapEvents = ship.wrapEvents
             if wrapTriggerCooldown <= 0 then
-                for w = 1, 3 do
-                    local wCfg = currentBuild.weapons[w]
-                    if wCfg.installed and wCfg.triggerOnWrap then
-                        turret:fireTriggered(w, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
+                for _, wCfg in ipairs(currentBuild.weaponModules or {}) do
+                    if wCfg.triggerOnWrap then
+                        turret:fireTriggered(wCfg.weaponIndex, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
                             free = true, areaMult = wCfg.areaMult,
                         })
                         wrapTriggerCooldown = wCfg.wrapTriggerCooldown or 1.5
@@ -874,11 +880,10 @@ function love.update(dt)
                 end
                 shockwaveCooldown = currentBuild.shockwaveCooldown or 4.0
             end
-            for w = 1, 3 do
-                local wCfg = currentBuild.weapons[w]
-                if wCfg.installed and wCfg.triggerOnHit and (ship.battery or 0) >= (wCfg.hitTriggerBattery or 15) then
+            for _, wCfg in ipairs(currentBuild.weaponModules or {}) do
+                if wCfg.triggerOnHit and (ship.battery or 0) >= (wCfg.hitTriggerBattery or 15) then
                     ship.battery = ship.battery - (wCfg.hitTriggerBattery or 15)
-                    turret:fireTriggered(w, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
+                    turret:fireTriggered(wCfg.weaponIndex, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
                         radialCount = wCfg.radialCount or 6,
                     })
                 end
@@ -1166,7 +1171,12 @@ function love.keypressed(key, _, isRepeat)
             end
             return
         elseif screen == "inventory" then
-            closeInventoryScreen()
+            if inventoryUI and inventoryUI:hasWarningPopup() then
+                inventoryUI:dismissWarningPopup()
+                Sfx.play("ui_click")
+            else
+                closeInventoryScreen()
+            end
             return
         end
     end
@@ -1180,6 +1190,10 @@ function love.keypressed(key, _, isRepeat)
         return
     end
     if screen == "inventory" then
+        if inventoryUI and inventoryUI:hasWarningPopup() then
+            inventoryUI:keypressed(inventory, key)
+            return
+        end
         if key == "escape" then
             if inventoryUI and inventory and inventoryUI.dragging then
                 inventoryUI:cancelDrag(inventory)
@@ -1241,7 +1255,6 @@ function love.keypressed(key, _, isRepeat)
 
     if screen ~= "playing" and screen ~= "warpSelect" then return end
     if key == "r" then startRun()
-    elseif key == "1" or key == "2" or key == "3" then turret.weapon = tonumber(key); Sfx.play("ui_hover")
     elseif key == "space" and (focused or testMode) then input.boost = true end
 end
 

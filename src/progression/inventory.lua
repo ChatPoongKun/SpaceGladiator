@@ -218,6 +218,7 @@ function Inventory:createModule(defId)
         rotated = false,
         row = nil,
         col = nil,
+        disabled = false,
         maxSockets = def.maxSockets,
         sockets = {}, -- sockets[i] = chipInstance or nil
     }
@@ -467,6 +468,85 @@ function Inventory:unequipChip(mod, socketIndex)
     return chip
 end
 
+function Inventory.isWeaponModule(item)
+    return item ~= nil and item.kind == "module" and item.def ~= nil and item.def.category == "weapon"
+end
+
+function Inventory:activeWeaponCount(excludeMod)
+    local count = 0
+    for _, mod in ipairs(self.placed) do
+        if mod ~= excludeMod and Inventory.isWeaponModule(mod) and not mod.disabled then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function Inventory:totalWeaponCount(excludeItem)
+    local count = 0
+    for _, mod in ipairs(self.placed) do
+        if mod ~= excludeItem and Inventory.isWeaponModule(mod) then
+            count = count + 1
+        end
+    end
+    for _, item in ipairs(self.pendingRewards) do
+        if item ~= excludeItem and Inventory.isWeaponModule(item) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function Inventory:canDisableWeapon(mod)
+    if not Inventory.isWeaponModule(mod) or not mod.row then
+        return false, "not_placed_weapon"
+    end
+    if mod.disabled then
+        return true
+    end
+    if self:activeWeaponCount(mod) < 1 then
+        return false, "last_active_weapon"
+    end
+    return true
+end
+
+function Inventory:toggleWeaponEnabled(mod)
+    if not Inventory.isWeaponModule(mod) or not mod.row then
+        return false, "not_placed_weapon"
+    end
+    if mod.disabled then
+        mod.disabled = false
+        return true, true
+    end
+    local ok, reason = self:canDisableWeapon(mod)
+    if not ok then
+        return false, reason
+    end
+    mod.disabled = true
+    return true, false
+end
+
+function Inventory:canDiscardItem(item)
+    if not item then return false, "invalid_item" end
+    if Inventory.isWeaponModule(item) and not item.disabled and item.row then
+        if self:activeWeaponCount(item) < 1 then
+            return false, "last_active_weapon"
+        end
+    end
+    return true
+end
+
+function Inventory:discardItem(item)
+    local ok, reason = self:canDiscardItem(item)
+    if not ok then return false, reason end
+    if item.row then
+        self:removeItem(item, false)
+    else
+        self:removePendingItem(item)
+    end
+    return true
+end
+
 function Inventory:getActiveChips(mod)
     local result = {}
     if not mod then return result end
@@ -480,6 +560,79 @@ end
 
 -- Compute full derived ship + weapon build from all currently placed modules
 -- and their equipped support chips.
+local function newWeaponConfig(def, mod)
+    return {
+        moduleId = mod and mod.id or nil,
+        defId = def and def.id or nil,
+        weaponIndex = def and def.weaponIndex or nil,
+        fireInterval = def and def.fireInterval or nil,
+        installed = mod ~= nil,
+        extraCount = 0,
+        extraSpreadDeg = 0,
+        extraBurst = 0,
+        damageMult = 1.0,
+        cooldownMult = 1.0,
+        manualCooldownMult = 1.0,
+        batteryCost = (def and def.baseBatteryCost) or 0,
+        bounces = 0,
+        homing = false,
+        homingTurnRate = 0,
+        areaMult = 1.0,
+        triggerOnDodge = false,
+        autoBatteryZero = false,
+        triggerOnWrap = false,
+        wrapTriggerCooldown = 1.5,
+        triggerOnHit = false,
+        hitTriggerBattery = 0,
+        radialCount = 0,
+    }
+end
+
+local function applyWeaponChipModifiers(targetCfg, m, chipScale)
+    if m.extraCount then
+        targetCfg.extraCount = targetCfg.extraCount + math.floor(m.extraCount * chipScale + 0.5)
+    end
+    if m.extraSpreadDeg then
+        targetCfg.extraSpreadDeg = targetCfg.extraSpreadDeg + m.extraSpreadDeg
+    end
+    if m.extraBurst then
+        targetCfg.extraBurst = targetCfg.extraBurst + math.floor(m.extraBurst * chipScale + 0.5)
+    end
+    if m.damageMult then
+        targetCfg.damageMult = targetCfg.damageMult * m.damageMult
+    end
+    if m.cooldownMult then
+        targetCfg.cooldownMult = targetCfg.cooldownMult * m.cooldownMult
+    end
+    if m.manualCooldownMult then
+        targetCfg.manualCooldownMult = targetCfg.manualCooldownMult * m.manualCooldownMult
+    end
+    if m.bounces then
+        targetCfg.bounces = targetCfg.bounces + math.floor(m.bounces * chipScale + 0.5)
+    end
+    if m.homing then
+        targetCfg.homing = true
+        targetCfg.homingTurnRate = math.max(targetCfg.homingTurnRate, (m.homingTurnRate or 4.0) * chipScale)
+    end
+    if m.areaMult then
+        local bonus = (m.areaMult - 1.0) * chipScale
+        targetCfg.areaMult = targetCfg.areaMult * (1.0 + bonus)
+    end
+    if m.triggerOnDodge then
+        targetCfg.triggerOnDodge = true
+        if m.autoBatteryZero then targetCfg.autoBatteryZero = true end
+    end
+    if m.triggerOnWrap then
+        targetCfg.triggerOnWrap = true
+        targetCfg.wrapTriggerCooldown = math.min(targetCfg.wrapTriggerCooldown, m.wrapTriggerCooldown or 1.5)
+    end
+    if m.triggerOnHit then
+        targetCfg.triggerOnHit = true
+        targetCfg.hitTriggerBattery = math.max(targetCfg.hitTriggerBattery, m.hitTriggerBattery or 15)
+        targetCfg.radialCount = math.max(targetCfg.radialCount, math.floor((m.radialCount or 6) * chipScale + 0.5))
+    end
+end
+
 function Inventory:computeBuild(feverActive)
     local build = {
         -- Ship additive bonuses on top of Ship base stats (100/100/3/100)
@@ -501,145 +654,97 @@ function Inventory:computeBuild(feverActive)
         shockwaveRadius = 0,
         shockwaveCooldown = 4.0,
         weapons = {},
+        weaponModules = {},
     }
 
     for w = 1, 3 do
-        build.weapons[w] = {
-            installed = false,
-            extraCount = 0,
-            extraSpreadDeg = 0,
-            extraBurst = 0,
-            damageMult = 1.0,
-            cooldownMult = 1.0,
-            manualCooldownMult = 1.0,
-            batteryCost = 0,
-            bounces = 0,
-            homing = false,
-            homingTurnRate = 0,
-            areaMult = 1.0,
-            triggerOnDodge = false,
-            autoBatteryZero = false,
-            triggerOnWrap = false,
-            wrapTriggerCooldown = 1.5,
-            triggerOnHit = false,
-            hitTriggerBattery = 0,
-            radialCount = 0,
-        }
+        local cfg = newWeaponConfig(nil, nil)
+        cfg.weaponIndex = w
+        build.weapons[w] = cfg
     end
 
     for _, mod in ipairs(self.placed) do
         local def = mod.def
-        local stats = def.stats
-        if stats then
-            build.maxShieldBonus = build.maxShieldBonus + (stats.maxShield or 0)
-            build.maxArmorBonus = build.maxArmorBonus + (stats.maxArmor or 0)
-            build.maxBatteryBonus = build.maxBatteryBonus + (stats.maxBattery or 0)
-            build.batteryRechargeBonus = build.batteryRechargeBonus + (stats.batteryRecharge or 0)
-            build.maxSpeedBonus = build.maxSpeedBonus + (stats.maxSpeed or 0)
-            build.boostSpeedBonus = build.boostSpeedBonus + (stats.boostSpeed or 0)
-            build.wrapBonusSpeedAdd = build.wrapBonusSpeedAdd + (stats.wrapBonusSpeed or 0)
-        end
-
-        local activeChips = self:getActiveChips(mod)
-        local chipScale = 1.0
-        local nonFeverBatteryMult = 1.0
-        for _, chip in ipairs(activeChips) do
-            local m = chip.def.modifiers
-            if m.feverChipMult and feverActive then
-                chipScale = chipScale * m.feverChipMult
-            end
-            if m.nonFeverBatteryMult and not feverActive then
-                nonFeverBatteryMult = nonFeverBatteryMult * m.nonFeverBatteryMult
-            end
-        end
-
-        local wCfg = def.weaponIndex and build.weapons[def.weaponIndex] or nil
-        if wCfg then
-            wCfg.installed = true
-            wCfg.batteryCost = wCfg.batteryCost + (def.baseBatteryCost or 0)
-        end
-
-        local moduleBatteryAdd = 0
-        for _, chip in ipairs(activeChips) do
-            local m = chip.def.modifiers
-            if m.noShield then build.noShield = true end
-            if m.scoreMult then
-                local bonus = (m.scoreMult - 1.0) * chipScale
-                build.scoreMultiplier = build.scoreMultiplier * (1.0 + bonus)
-            end
-            if m.onDodgeBattery then
-                build.onDodgeBattery = build.onDodgeBattery + math.floor(m.onDodgeBattery * chipScale + 0.5)
-            end
-            if m.rechargeMult then
-                build.batteryRechargeMult = build.batteryRechargeMult * m.rechargeMult
-            end
-            if m.shockwaveOnHit then
-                build.shockwaveOnHit = true
-                build.shockwaveRadius = math.max(build.shockwaveRadius, (m.shockwaveRadius or 180) * chipScale)
-                build.shockwaveCooldown = math.min(build.shockwaveCooldown, m.shockwaveCooldown or 4.0)
-            end
-            if m.wrapSpeedMult then
-                local bonus = (m.wrapSpeedMult - 1.0) * chipScale
-                build.wrapSpeedMult = build.wrapSpeedMult * (1.0 + bonus)
-            end
-            if m.wrapInvuln then
-                build.wrapInvulnDuration = math.max(build.wrapInvulnDuration, m.wrapInvuln * chipScale)
-            end
-            if m.boostCostAdd then
-                build.boostCostBonus = build.boostCostBonus + m.boostCostAdd
+        local isDisabledWeapon = Inventory.isWeaponModule(mod) and mod.disabled == true
+        if not isDisabledWeapon then
+            local stats = def.stats
+            if stats then
+                build.maxShieldBonus = build.maxShieldBonus + (stats.maxShield or 0)
+                build.maxArmorBonus = build.maxArmorBonus + (stats.maxArmor or 0)
+                build.maxBatteryBonus = build.maxBatteryBonus + (stats.maxBattery or 0)
+                build.batteryRechargeBonus = build.batteryRechargeBonus + (stats.batteryRecharge or 0)
+                build.maxSpeedBonus = build.maxSpeedBonus + (stats.maxSpeed or 0)
+                build.boostSpeedBonus = build.boostSpeedBonus + (stats.boostSpeed or 0)
+                build.wrapBonusSpeedAdd = build.wrapBonusSpeedAdd + (stats.wrapBonusSpeed or 0)
             end
 
+            local activeChips = self:getActiveChips(mod)
+            local chipScale = 1.0
+            local nonFeverBatteryMult = 1.0
+            for _, chip in ipairs(activeChips) do
+                local m = chip.def.modifiers
+                if m.feverChipMult and feverActive then
+                    chipScale = chipScale * m.feverChipMult
+                end
+                if m.nonFeverBatteryMult and not feverActive then
+                    nonFeverBatteryMult = nonFeverBatteryMult * m.nonFeverBatteryMult
+                end
+            end
+
+            local wCfg = def.weaponIndex and build.weapons[def.weaponIndex] or nil
+            local mCfg = nil
             if wCfg then
-                if m.extraCount then
-                    wCfg.extraCount = wCfg.extraCount + math.floor(m.extraCount * chipScale + 0.5)
+                wCfg.installed = true
+                wCfg.fireInterval = wCfg.fireInterval or def.fireInterval
+                wCfg.batteryCost = wCfg.batteryCost + (def.baseBatteryCost or 0)
+                mCfg = newWeaponConfig(def, mod)
+                build.weaponModules[#build.weaponModules + 1] = mCfg
+            end
+
+            local moduleBatteryAdd = 0
+            for _, chip in ipairs(activeChips) do
+                local m = chip.def.modifiers
+                if m.noShield then build.noShield = true end
+                if m.scoreMult then
+                    local bonus = (m.scoreMult - 1.0) * chipScale
+                    build.scoreMultiplier = build.scoreMultiplier * (1.0 + bonus)
                 end
-                if m.extraSpreadDeg then
-                    wCfg.extraSpreadDeg = wCfg.extraSpreadDeg + m.extraSpreadDeg
+                if m.onDodgeBattery then
+                    build.onDodgeBattery = build.onDodgeBattery + math.floor(m.onDodgeBattery * chipScale + 0.5)
                 end
-                if m.extraBurst then
-                    wCfg.extraBurst = wCfg.extraBurst + math.floor(m.extraBurst * chipScale + 0.5)
+                if m.rechargeMult then
+                    build.batteryRechargeMult = build.batteryRechargeMult * m.rechargeMult
                 end
-                if m.damageMult then
-                    wCfg.damageMult = wCfg.damageMult * m.damageMult
+                if m.shockwaveOnHit then
+                    build.shockwaveOnHit = true
+                    build.shockwaveRadius = math.max(build.shockwaveRadius, (m.shockwaveRadius or 180) * chipScale)
+                    build.shockwaveCooldown = math.min(build.shockwaveCooldown, m.shockwaveCooldown or 4.0)
                 end
-                if m.cooldownMult then
-                    wCfg.cooldownMult = wCfg.cooldownMult * m.cooldownMult
+                if m.wrapSpeedMult then
+                    local bonus = (m.wrapSpeedMult - 1.0) * chipScale
+                    build.wrapSpeedMult = build.wrapSpeedMult * (1.0 + bonus)
                 end
-                if m.manualCooldownMult then
-                    wCfg.manualCooldownMult = wCfg.manualCooldownMult * m.manualCooldownMult
+                if m.wrapInvuln then
+                    build.wrapInvulnDuration = math.max(build.wrapInvulnDuration, m.wrapInvuln * chipScale)
                 end
-                if m.batteryCost then
-                    moduleBatteryAdd = moduleBatteryAdd + m.batteryCost
+                if m.boostCostAdd then
+                    build.boostCostBonus = build.boostCostBonus + m.boostCostAdd
                 end
-                if m.bounces then
-                    wCfg.bounces = wCfg.bounces + math.floor(m.bounces * chipScale + 0.5)
-                end
-                if m.homing then
-                    wCfg.homing = true
-                    wCfg.homingTurnRate = math.max(wCfg.homingTurnRate, (m.homingTurnRate or 4.0) * chipScale)
-                end
-                if m.areaMult then
-                    local bonus = (m.areaMult - 1.0) * chipScale
-                    wCfg.areaMult = wCfg.areaMult * (1.0 + bonus)
-                end
-                if m.triggerOnDodge then
-                    wCfg.triggerOnDodge = true
-                    if m.autoBatteryZero then wCfg.autoBatteryZero = true end
-                end
-                if m.triggerOnWrap then
-                    wCfg.triggerOnWrap = true
-                    wCfg.wrapTriggerCooldown = math.min(wCfg.wrapTriggerCooldown, m.wrapTriggerCooldown or 1.5)
-                end
-                if m.triggerOnHit then
-                    wCfg.triggerOnHit = true
-                    wCfg.hitTriggerBattery = math.max(wCfg.hitTriggerBattery, m.hitTriggerBattery or 15)
-                    wCfg.radialCount = math.max(wCfg.radialCount, math.floor((m.radialCount or 6) * chipScale + 0.5))
+
+                if wCfg and mCfg then
+                    applyWeaponChipModifiers(wCfg, m, chipScale)
+                    applyWeaponChipModifiers(mCfg, m, chipScale)
+                    if m.batteryCost then
+                        moduleBatteryAdd = moduleBatteryAdd + m.batteryCost
+                    end
                 end
             end
-        end
 
-        if wCfg and moduleBatteryAdd > 0 then
-            wCfg.batteryCost = wCfg.batteryCost + math.floor(moduleBatteryAdd * nonFeverBatteryMult + 0.5)
+            if wCfg and mCfg and moduleBatteryAdd > 0 then
+                local scaledBatteryAdd = math.floor(moduleBatteryAdd * nonFeverBatteryMult + 0.5)
+                wCfg.batteryCost = wCfg.batteryCost + scaledBatteryAdd
+                mCfg.batteryCost = mCfg.batteryCost + scaledBatteryAdd
+            end
         end
     end
 

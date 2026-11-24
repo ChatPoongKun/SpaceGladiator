@@ -57,14 +57,55 @@ function InventoryUI.new()
         dragging = nil,
         mouseX = 0,
         mouseY = 0,
-        message = "아이템을 클릭·드래그해 격자에 배치하세요. (클릭 유지 + R: 회전, 우클릭: 취소)",
+        message = "아이템을 클릭·드래그해 격자에 배치하세요. (R: 회전, 무기 우클릭: 활성/비활성)",
         hitRegions = {},
         hoveredIndex = nil,
         hoveredItem = nil,
         gridRect = nil,
         pendingTrayRect = nil,
         discardRect = nil,
+        warningPopup = nil,
+        warningModalRect = nil,
+        warningConfirmRect = nil,
     }, InventoryUI)
+end
+
+function InventoryUI:showWarningPopup(message, title)
+    self.warningPopup = {
+        title = title or "경고",
+        message = message or "최소 하나의 무기는 사용해야 합니다.",
+    }
+end
+
+function InventoryUI:dismissWarningPopup()
+    self.warningPopup = nil
+    self.warningModalRect = nil
+    self.warningConfirmRect = nil
+end
+
+function InventoryUI:hasWarningPopup()
+    return self.warningPopup ~= nil
+end
+
+function InventoryUI:tryToggleWeapon(inv, mod)
+    if not mod or not Inventory.isWeaponModule(mod) then return nil end
+    local ok, stateOrReason = inv:toggleWeaponEnabled(mod)
+    if ok then
+        self.selectedItem = mod
+        self.selectedModule = mod
+        Sfx.play("ui_click")
+        if stateOrReason then
+            self.message = mod.def.name .. "을(를) 활성화했습니다."
+        else
+            self.message = mod.def.name .. "을(를) 비활성화했습니다."
+        end
+        return "changed"
+    elseif stateOrReason == "last_active_weapon" then
+        Sfx.play("ui_error")
+        self:showWarningPopup("최소 하나의 무기는 사용해야 합니다.")
+        self.message = "최소 하나의 무기는 사용해야 합니다."
+    end
+    return nil
 end
 
 local function pointInRect(px, py, x, y, w, h)
@@ -198,6 +239,7 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
     local alpha = opts.alpha or 1.0
     local isSel = opts.selected == true
     local isHovered = opts.hovered == true
+    local isDisabled = opts.disabled == true
     local showSlots = opts.showSlots == true
     local compact = cellSize < 42
     local img = getItemImage(item)
@@ -209,6 +251,8 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
     end
 
     -- 1. Draw clean dark backing so detailed artwork stands out clearly
+    local backScale = isDisabled and 0.03 or 0.09
+    local backScaleMain = isDisabled and 0.035 or 0.10
     for _, coord in ipairs(shapeCells) do
         local dr, dc = coord[1], coord[2]
         local cx = originX + dc * step + 1
@@ -217,19 +261,19 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
         local ch = cellSize - 2
 
         if occupied[dr .. "," .. (dc + 1)] then
-            g.setColor(0.03 + col[1] * 0.09, 0.05 + col[2] * 0.09, 0.08 + col[3] * 0.09, 0.94 * alpha)
+            g.setColor(0.03 + col[1] * backScale, 0.04 + col[2] * backScale, 0.06 + col[3] * backScale, 0.94 * alpha)
             g.rectangle("fill", cx + cw - 2, cy + 2, gap + 6, ch - 4)
         end
         if occupied[(dr + 1) .. "," .. dc] then
-            g.setColor(0.03 + col[1] * 0.09, 0.05 + col[2] * 0.09, 0.08 + col[3] * 0.09, 0.94 * alpha)
+            g.setColor(0.03 + col[1] * backScale, 0.04 + col[2] * backScale, 0.06 + col[3] * backScale, 0.94 * alpha)
             g.rectangle("fill", cx + 2, cy + ch - 2, cw - 4, gap + 6)
         end
 
-        g.setColor(0.03 + col[1] * 0.10, 0.05 + col[2] * 0.10, 0.08 + col[3] * 0.10, 0.95 * alpha)
+        g.setColor(0.03 + col[1] * backScaleMain, 0.04 + col[2] * backScaleMain, 0.06 + col[3] * backScaleMain, 0.95 * alpha)
         g.rectangle("fill", cx, cy, cw, ch, 6, 6)
     end
 
-    -- 2. Draw full-brightness grid-sized item artwork rotated to match orientation
+    -- 2. Draw grid-sized item artwork rotated to match orientation (darkened when disabled)
     local totalW = bw * cellSize + (bw - 1) * gap
     local totalH = bh * cellSize + (bh - 1) * gap
     if img then
@@ -244,7 +288,11 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
         local centerX = originX + totalW * 0.5
         local centerY = originY + totalH * 0.5
 
-        g.setColor(1, 1, 1, alpha)
+        if isDisabled then
+            g.setColor(0.28, 0.30, 0.34, 0.88 * alpha)
+        else
+            g.setColor(1, 1, 1, alpha)
+        end
         g.draw(img, centerX, centerY, rot * (math.pi * 0.5),
             targetW / imgW, targetH / imgH, imgW * 0.5, imgH * 0.5)
     elseif item.kind == "chip" then
@@ -261,6 +309,15 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
         g.polygon("line", midX, midY - dR, midX + dR, midY, midX, midY + dR, midX - dR, midY)
     end
 
+    if isDisabled then
+        for _, coord in ipairs(shapeCells) do
+            local cx = originX + coord[2] * step + 1
+            local cy = originY + coord[1] * step + 1
+            g.setColor(0.02, 0.03, 0.05, 0.50 * alpha)
+            g.rectangle("fill", cx, cy, cellSize - 2, cellSize - 2, 6, 6)
+        end
+    end
+
     -- 3. Draw per-cell grid dividers only when slot overlay is visible;
     --    keep a clean unobtrusive outer frame at rest.
     if showSlots then
@@ -271,15 +328,34 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
             local cw = cellSize - 4
             local ch = cellSize - 4
 
-            g.setColor(col[1], col[2], col[3], (isSel and 0.58 or 0.34) * alpha)
+            local divDim = isDisabled and 0.45 or 1.0
+            g.setColor(col[1] * divDim, col[2] * divDim, col[3] * divDim, (isSel and 0.58 or 0.34) * alpha)
             g.setLineWidth(1.0)
             g.rectangle("line", cx, cy, cw, ch, 6, 6)
         end
     end
 
-    g.setColor(col[1], col[2], col[3], (isSel and 0.96 or (isHovered and 0.86 or 0.58)) * alpha)
+    if isDisabled then
+        g.setColor(0.36, 0.40, 0.46, (isSel and 0.85 or (isHovered and 0.72 or 0.52)) * alpha)
+    else
+        g.setColor(col[1], col[2], col[3], (isSel and 0.96 or (isHovered and 0.86 or 0.58)) * alpha)
+    end
     g.setLineWidth(isSel and 2.2 or (isHovered and 1.8 or 1.2))
     g.rectangle("line", originX + 1.5, originY + 1.5, totalW - 3, totalH - 3, 6, 6)
+
+    if isDisabled and not compact then
+        local badgeW, badgeH = 38, 16
+        local bx = originX + math.floor((totalW - badgeW) * 0.5)
+        local by = originY + math.floor((totalH - badgeH) * 0.5)
+        g.setColor(0.04, 0.05, 0.08, 0.86 * alpha)
+        g.rectangle("fill", bx, by, badgeW, badgeH, 4, 4)
+        g.setColor(0.62, 0.66, 0.74, 0.85 * alpha)
+        g.setLineWidth(1.0)
+        g.rectangle("line", bx, by, badgeW, badgeH, 4, 4)
+        g.setFont(fonts.small)
+        g.setColor(0.78, 0.82, 0.88, 0.95 * alpha)
+        g.printf("OFF", bx, by + 2, badgeW, "center")
+    end
 
     -- 4. Labels / tags (shown only on hover or when artwork is missing)
     if showSlots or not img then
@@ -478,11 +554,12 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
     for _, mod in ipairs(inv.placed) do
         local ox = gx + (mod.col - 1) * step
         local oy = gy + (mod.row - 1) * step
-        local isHovered = isPointOverShape(mod, ox, oy, cellSize, gap, self.mouseX, self.mouseY)
+        local isHovered = (not self.warningPopup) and isPointOverShape(mod, ox, oy, cellSize, gap, self.mouseX, self.mouseY)
         local showSlots = isHovered and not (self.dragging and self.dragging.kind == "module")
         drawItemGridShape(inv, mod, ox, oy, cellSize, gap, fonts, {
             selected = (self.selectedItem == mod),
             hovered = isHovered,
+            disabled = (mod.disabled == true),
             showSlots = showSlots,
         })
 
@@ -630,8 +707,12 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         end
         g.setColor(0.95, 0.98, 1.0, 1)
         if inspectItem.kind == "module" then
-            g.print(string.format("%s (%dx%d) · 소켓 %d/%d",
-                inspectItem.def.name, iw, ih, inv:equippedSocketCount(inspectItem), inspectItem.maxSockets),
+            local statusSuffix = ""
+            if Inventory.isWeaponModule(inspectItem) and inspectItem.row then
+                statusSuffix = inspectItem.disabled and " · [비활성]" or " · [활성]"
+            end
+            g.print(string.format("%s (%dx%d) · 소켓 %d/%d%s",
+                inspectItem.def.name, iw, ih, inv:equippedSocketCount(inspectItem), inspectItem.maxSockets, statusSuffix),
                 textX, curY + 10)
         else
             local targetTxt = targetKoreanLabel[inspectItem.def.target] or inspectItem.def.target
@@ -646,6 +727,12 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
             local btns = {
                 { label = "회전 (R)", action = { type = "rotateSelected" } },
             }
+            if Inventory.isWeaponModule(self.selectedModule) then
+                btns[#btns + 1] = {
+                    label = self.selectedModule.disabled and "활성화 (우클릭)" or "비활성화 (우클릭)",
+                    action = { type = "toggleSelectedWeapon" },
+                }
+            end
             local bw = math.floor((rw - 24 - (#btns - 1) * 8) / #btns)
             for i, b in ipairs(btns) do
                 local bx = rx + 12 + (i - 1) * (bw + 8)
@@ -759,7 +846,7 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         g.print("장착 스펙 요약 (별도 보관함 없음)", rx + 14, curY + 12)
 
         local lines = {
-            string.format("· 배치 모듈: %d개   · 격자 보관 칩: %d개", #inv.placed, #inv.placedChips),
+            string.format("· 배치 모듈: %d개 (활성 무기: %d개)  · 보관 칩: %d개", #inv.placed, #build.weaponModules, #inv.placedChips),
             string.format("· 실드 보너스: +%d   · 장갑 보너스: +%d", build.maxShieldBonus, build.maxArmorBonus),
             string.format("· 배터리 보너스: +%d   · 점수 배율: x%.2f", build.maxBatteryBonus, build.scoreMultiplier),
             string.format("· 속도 보너스: +%d   · 부스트 보너스: +%d", build.maxSpeedBonus, build.boostSpeedBonus),
@@ -775,7 +862,7 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
             g.print("조작 안내", rx + 14, helpY)
             g.print("· 좌클릭 드래그: 모듈·칩 이동 및 소켓 장착", rx + 14, helpY + 24)
             g.print("· 클릭 유지 + R: 아이템 90도 회전", rx + 14, helpY + 46)
-            g.print("· 우클릭: 이동 취소  /  +OPEN: 격자 확장", rx + 14, helpY + 68)
+            g.print("· 무기 우클릭: 활성/비활성 전환  /  +OPEN: 격자 확장", rx + 14, helpY + 68)
         end
     end
 
@@ -814,6 +901,7 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         drawItemGridShape(inv, d.item, drawX, drawY, cellSize, gap, fonts, {
             rotation = d.rotation,
             selected = true,
+            disabled = (d.item.disabled == true),
             alpha = 0.92,
         })
         g.setFont(fonts.small)
@@ -827,6 +915,64 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         g.rectangle("line", tipX, tipY, tipW, 18, 4, 4)
         g.setColor(0.92, 0.98, 1.0, 1)
         g.printf("R: ROTATE", tipX, tipY + 3, tipW, "center")
+    end
+
+    -- 5. Modal Warning Popup (blocks underlying interaction until dismissed)
+    if self.warningPopup then
+        g.setColor(0.01, 0.015, 0.03, 0.72)
+        g.rectangle("fill", math.min(0, ox), math.min(0, oy), math.max(width, ow), math.max(height, oh))
+
+        local mw, mh = math.min(460, width - 64), 192
+        local mx = math.floor((width - mw) * 0.5)
+        local my = math.floor((height - mh) * 0.5)
+        self.warningModalRect = { x = mx, y = my, w = mw, h = mh }
+
+        g.setColor(0.06, 0.04, 0.065, 0.98)
+        g.rectangle("fill", mx, my, mw, mh, 10, 10)
+        g.setColor(1.0, 0.44, 0.36, 0.95)
+        g.setLineWidth(2.0)
+        g.rectangle("line", mx, my, mw, mh, 10, 10)
+
+        -- Header bar & warning icon
+        local iconX, iconY = mx + 34, my + 32
+        g.setColor(1.0, 0.38, 0.32, 0.22)
+        g.circle("fill", iconX, iconY, 14)
+        g.setColor(1.0, 0.56, 0.38, 0.95)
+        g.setLineWidth(1.6)
+        g.circle("line", iconX, iconY, 14)
+        g.setFont(fonts.menuButton or fonts.menuBody)
+        g.setColor(1.0, 0.86, 0.52, 1)
+        g.printf("!", iconX - 10, iconY - 11, 20, "center")
+
+        g.setFont(fonts.menuButton or fonts.menuBody)
+        g.setColor(1.0, 0.76, 0.46, 1)
+        g.print(self.warningPopup.title or "경고", mx + 58, my + 21)
+
+        g.setColor(1.0, 0.46, 0.38, 0.35)
+        g.setLineWidth(1.0)
+        g.line(mx + 18, my + 56, mx + mw - 18, my + 56)
+
+        g.setFont(fonts.menuBody)
+        g.setColor(0.95, 0.97, 1.0, 1)
+        g.printf(self.warningPopup.message, mx + 24, my + 74, mw - 48, "center")
+
+        local btnW, btnH = 132, 36
+        local btnX = mx + math.floor((mw - btnW) * 0.5)
+        local btnY = my + mh - btnH - 20
+        self.warningConfirmRect = { x = btnX, y = btnY, w = btnW, h = btnH }
+        local hoverBtn = pointInRect(self.mouseX, self.mouseY, btnX, btnY, btnW, btnH)
+
+        g.setColor(hoverBtn and 0.42 or 0.28, hoverBtn and 0.16 or 0.12, hoverBtn and 0.18 or 0.14, 0.98)
+        g.rectangle("fill", btnX, btnY, btnW, btnH, 6, 6)
+        g.setColor(1.0, hoverBtn and 0.68 or 0.52, hoverBtn and 0.54 or 0.42, 0.95)
+        g.setLineWidth(hoverBtn and 1.8 or 1.3)
+        g.rectangle("line", btnX, btnY, btnW, btnH, 6, 6)
+        g.setFont(fonts.menuBody)
+        g.setColor(1.0, 0.96, 0.94, 1)
+        g.printf("확인", btnX, btnY + 9, btnW, "center")
+    else
+        self.warningModalRect = nil
+        self.warningConfirmRect = nil
     end
 
     g.pop()
@@ -843,6 +989,18 @@ function InventoryUI:finishDrop(inv, x, y, opts)
 
     -- 1. Check Discard Drop Zone
     if self.discardRect and pointInRect(x, y, self.discardRect.x, self.discardRect.y, self.discardRect.w, self.discardRect.h) then
+        if Inventory.isWeaponModule(item) then
+            local isLastActive = (d.origin == "grid" and not item.disabled and inv:activeWeaponCount() < 1)
+            local isLastWeapon = (inv:activeWeaponCount() < 1 and inv:totalWeaponCount(item) < 1)
+            if isLastActive or isLastWeapon then
+                self.dragging = d
+                self:cancelDrag(inv)
+                Sfx.play("ui_error")
+                self:showWarningPopup("최소 하나의 무기는 사용해야 합니다.")
+                self.message = "최소 하나의 무기는 사용해야 합니다."
+                return nil
+            end
+        end
         -- If discarding a module during stage-end that has chips socketed, return chips to temporary tray
         if item.kind == "module" and stageEndMode then
             for i = 1, (item.maxSockets or 0) do
@@ -863,6 +1021,15 @@ function InventoryUI:finishDrop(inv, x, y, opts)
     if stageEndMode and self.pendingTrayRect and pointInRect(x, y,
             self.pendingTrayRect.x, self.pendingTrayRect.y,
             self.pendingTrayRect.w, self.pendingTrayRect.h) then
+        if d.origin == "grid" and Inventory.isWeaponModule(item) and not item.disabled
+            and inv:activeWeaponCount() < 1 and inv:totalWeaponCount(item) < 1 then
+            self.dragging = d
+            self:cancelDrag(inv)
+            Sfx.play("ui_error")
+            self:showWarningPopup("최소 하나의 무기는 사용해야 합니다.")
+            self.message = "최소 하나의 무기는 사용해야 합니다."
+            return nil
+        end
         local rot = Inventory.normalizeRotation(d.rotation)
         local _, w, h = Inventory.getShapeCells(item, rot)
         item.rotation = rot
@@ -965,11 +1132,36 @@ end
 function InventoryUI:mousepressed(inv, x, y, button, opts)
     self.mouseX, self.mouseY = x, y
 
-    -- Right-click cancels active drag
+    if self.warningPopup then
+        if button == 2 then
+            self:dismissWarningPopup()
+            Sfx.play("ui_click")
+            return nil
+        end
+        if button == 1 then
+            local r = self.warningConfirmRect
+            local m = self.warningModalRect
+            if (r and pointInRect(x, y, r.x, r.y, r.w, r.h))
+                or (not r)
+                or (m and not pointInRect(x, y, m.x, m.y, m.w, m.h)) then
+                self:dismissWarningPopup()
+                Sfx.play("ui_click")
+            end
+        end
+        return nil
+    end
+
+    -- Right-click cancels active drag, or toggles weapon module active/disabled state
     if button == 2 then
         if self:cancelDrag(inv) then
             Sfx.play("ui_click")
             self.message = "이동을 취소했습니다."
+            return nil
+        end
+        local dr, dc = self:pixelToDirectCell(x, y)
+        local target = (dr and dc and inv.cells[dr]) and inv.cells[dr][dc] or nil
+        if target and Inventory.isWeaponModule(target) then
+            return self:tryToggleWeapon(inv, target)
         end
         return nil
     end
@@ -1021,6 +1213,8 @@ function InventoryUI:mousepressed(inv, x, y, button, opts)
                     self.message = "현재 위치에서는 회전할 공간이 부족합니다. 드래그하며 R을 눌러보세요."
                 end
                 return nil
+            elseif a.type == "toggleSelectedWeapon" and self.selectedModule then
+                return self:tryToggleWeapon(inv, self.selectedModule)
             end
         end
     end
@@ -1029,6 +1223,7 @@ end
 
 function InventoryUI:mousereleased(inv, x, y, button, opts)
     self.mouseX, self.mouseY = x, y
+    if self.warningPopup then return nil end
     if button ~= 1 or not self.dragging then return nil end
     local d = self.dragging
 
@@ -1051,6 +1246,13 @@ function InventoryUI:mousereleased(inv, x, y, button, opts)
 end
 
 function InventoryUI:keypressed(inv, key)
+    if self.warningPopup then
+        if key == "escape" or key == "return" or key == "kpenter" or key == "space" then
+            self:dismissWarningPopup()
+            Sfx.play("ui_click")
+        end
+        return nil
+    end
     if key == "r" then
         if self.dragging then
             self.dragging.rotation = (self.dragging.rotation + 1) % 4
@@ -1074,6 +1276,11 @@ end
 
 function InventoryUI:mousemoved(x, y)
     self.mouseX, self.mouseY = x, y
+    if self.warningPopup then
+        self.hoveredIndex = nil
+        self.hoveredItem = nil
+        return
+    end
     if self.dragging then
         local dx = x - self.dragging.startX
         local dy = y - self.dragging.startY
