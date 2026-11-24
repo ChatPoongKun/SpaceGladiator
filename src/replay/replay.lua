@@ -1071,12 +1071,40 @@ local function drawEnemyFireSnapshot(shots, impacts)
     for i = 1, #impacts do
         local effect = impacts[i]
         local progress = math.min(1, effect.age / 0.24)
-        local profile = enemyShotProfiles[effect.kind] or enemyShotProfiles[1]
-        local r, green, b = unpack(profile.color)
-        if effect.shield then r, green, b = 0.30, 0.70, 1 end
-        g.setLineWidth(1.5)
-        g.setColor(r, green, b, 0.8 * (1 - progress))
-        g.circle("line", effect.x, effect.y, 4 + progress * profile.radius * 4)
+        if effect.kind == 3 then
+            local radius = 4 + progress * 20
+            local alpha = 1 - progress
+            local glowR, glowG, glowB = 1.0, 0.28, 0.24
+            local ringR, ringG, ringB = 1.0, 0.54, 0.32
+            local coreR, coreG, coreB = 1.0, 0.88, 0.72
+            if effect.shield then
+                glowR, glowG, glowB = 0.20, 0.58, 1.0
+                ringR, ringG, ringB = 0.35, 0.78, 1.0
+                coreR, coreG, coreB = 0.82, 0.95, 1.0
+            end
+            g.setColor(glowR, glowG, glowB, alpha * 0.28)
+            g.circle("fill", effect.x, effect.y, radius)
+            g.setLineWidth(1.8 * alpha + 0.5)
+            g.setColor(ringR, ringG, ringB, alpha * 0.9)
+            g.circle("line", effect.x, effect.y, radius)
+            g.setColor(coreR, coreG, coreB, alpha * 0.95)
+            g.circle("fill", effect.x, effect.y, 5.5 * alpha)
+            g.setLineWidth(1.2)
+            g.setColor(ringR, ringG, ringB, alpha * 0.85)
+            for j = 1, 6 do
+                local angle = j * tau / 6
+                local dx, dy = math.cos(angle), math.sin(angle)
+                g.line(effect.x + dx * radius * 0.65, effect.y + dy * radius * 0.65,
+                    effect.x + dx * (radius + 4), effect.y + dy * (radius + 4))
+            end
+        else
+            local profile = enemyShotProfiles[effect.kind] or enemyShotProfiles[1]
+            local r, green, b = unpack(profile.color)
+            if effect.shield then r, green, b = 0.30, 0.70, 1 end
+            g.setLineWidth(1.5)
+            g.setColor(r, green, b, 0.8 * (1 - progress))
+            g.circle("line", effect.x, effect.y, 4 + progress * profile.radius * 4)
+        end
     end
     g.pop()
 end
