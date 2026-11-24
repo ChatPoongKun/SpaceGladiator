@@ -1,4 +1,5 @@
 local Display = require("src.core.display")
+local Theme = require("src.ui.theme")
 local Menu = {}
 local defaultPanelWidth, inset, buttonHeight, buttonStep, rowHeight = 432, 28, 44, 54, 29
 
@@ -30,28 +31,33 @@ end
 
 function Menu.draw(menu, fonts, selected, width, height, overlay)
     local g = love.graphics
+    local c = Theme.colors
     local x, y, panelWidth, panelHeight, rowsY, buttonsY, step = layout(menu, width, height)
     local left, contentWidth = x + inset, panelWidth - 2 * inset
     g.push("all")
     g.setLineWidth(1)
     if overlay then
         local ox, oy, ow, oh = Display.virtualOverscanBounds()
-        g.setColor(0.012, 0.021, 0.045, 0.72)
+        Theme.setColor(c.bgDeep, 0.72)
         g.rectangle("fill", math.min(0, ox), math.min(0, oy), math.max(width, ow), math.max(height, oh))
     end
-    g.setColor(0.035, 0.061, 0.10, 0.98)
+    Theme.setColor(c.panelBg, 0.96)
     g.rectangle("fill", x, y, panelWidth, panelHeight, 8, 8)
-    g.setColor(0.23, 0.40, 0.47, 1)
+    Theme.setColor(c.panelBorder, 0.95)
     g.rectangle("line", x + 0.5, y + 0.5, panelWidth - 1, panelHeight - 1, 8, 8)
-    g.setColor(0.36, 0.86, 0.82, 1)
-    g.rectangle("fill", left, y, 46, 2)
+    Theme.setColor(c.accent, 1)
+    g.rectangle("fill", left, y, 52, 2)
+    -- Subtle corner telemetry accents for visual cohesion with the title screen
+    Theme.setColor(c.accent, 0.45)
+    g.line(x + panelWidth - 16, y + 1, x + panelWidth - 5, y + 1)
+    g.line(x + panelWidth - 1, y + 5, x + panelWidth - 1, y + 16)
     g.setFont(fonts.menuTitle)
-    g.setColor(0.85, 0.94, 0.97, 1)
+    Theme.setColor(c.textHeading, 1)
     g.print(menu.title, left, y + 24)
 
     if menu.subtitle then
         g.setFont(fonts.menuBody)
-        g.setColor(0.66, 0.78, 0.83, 1)
+        Theme.setColor(c.textSecondary, 1)
         g.print(menu.subtitle, left, y + 75)
     end
 
@@ -60,9 +66,9 @@ function Menu.draw(menu, fonts, selected, width, height, overlay)
         local textX = left + 12
         g.setFont(fonts.menuBody)
         if row.heading then
-            g.setColor(0.065, 0.15, 0.19, 1)
+            Theme.setColor(c.headingBg, 1)
             g.rectangle("fill", left, rowY, contentWidth, step, 3, 3)
-            g.setColor(0.55, 0.91, 0.89, 1)
+            Theme.setColor(c.headingText, 1)
         else
             if row.enemyKind then
                 local Enemies = require("src.combat.enemies")
@@ -83,7 +89,7 @@ function Menu.draw(menu, fonts, selected, width, height, overlay)
                 g.setLineWidth(1)
                 textX = textX + 27
             end
-            g.setColor(0.70, 0.80, 0.85, 1)
+            Theme.setColor(c.rowText, 1)
         end
         local textY = rowY + math.floor((step - fonts.menuBody:getHeight()) / 2)
         g.print(row.label, textX, textY)
@@ -92,22 +98,36 @@ function Menu.draw(menu, fonts, selected, width, height, overlay)
 
     for i, button in ipairs(menu.buttons or {}) do
         local buttonY = buttonsY + (i - 1) * buttonStep
-        if i == selected then g.setColor(0.12, 0.32, 0.34, 1)
-        else g.setColor(0.066, 0.13, 0.18, 1) end
+        local isSelected = (i == selected)
+        if isSelected then
+            Theme.setColor(c.buttonSelectedBg, 1)
+        else
+            Theme.setColor(c.buttonBg, 1)
+        end
         g.rectangle("fill", left, buttonY, contentWidth, buttonHeight, 5, 5)
-        if i == selected then g.setColor(0.36, 0.86, 0.82, 1)
-        else g.setColor(0.25, 0.43, 0.49, 1) end
+        if isSelected then
+            Theme.setColor(c.accent, 1)
+            g.rectangle("fill", left, buttonY + 6, 3, buttonHeight - 12, 1.5, 1.5)
+        end
+        if isSelected then
+            Theme.setColor(c.accent, 1)
+        else
+            Theme.setColor(c.buttonBorder, 1)
+        end
         g.rectangle("line", left, buttonY, contentWidth, buttonHeight, 5, 5)
         g.setFont(fonts.menuButton)
         local textY = buttonY + math.floor((buttonHeight - fonts.menuButton:getHeight()) / 2)
         local text = type(button.label) == "function" and button.label() or button.label
-        g.setColor(0.85, 0.94, 0.97, 1)
-        g.print(text, left + 15, textY)
+        Theme.setColor(isSelected and c.textHero or c.textHeading, 1)
+        g.print(text, left + (isSelected and 18 or 15), textY)
         if button.value then
             local val = type(button.value) == "function" and button.value() or button.value
             if val and val ~= "" then
-                if i == selected then g.setColor(0.46, 0.95, 0.90, 1)
-                else g.setColor(0.58, 0.80, 0.86, 0.95) end
+                if isSelected then
+                    Theme.setColor(c.buttonSelectedValue, 1)
+                else
+                    Theme.setColor(c.buttonValue, 0.95)
+                end
                 g.printf(val, left + 15, textY, contentWidth - 30, "right")
             end
         end
