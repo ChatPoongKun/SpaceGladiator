@@ -2,6 +2,8 @@
 -- Chips can be dropped directly onto a compatible module's socket to
 -- modify its behavior, or stored as a 1x1 item on an empty diamond grid cell.
 
+local Rarity = require("src.data.rarity")
+
 local ChipsData = {}
 
 ChipsData.list = {
@@ -9,9 +11,8 @@ ChipsData.list = {
     {
         id = "splitter",
         name = "스플리터 (멀티샷)",
-        shortName = "SPLT",
         target = "weapon",
-        color = { 0.98, 0.72, 0.28 },
+        rarity = "UNCOMMON",
         modifiers = {
             extraCount = 2,
             extraSpreadDeg = 10,
@@ -23,9 +24,8 @@ ChipsData.list = {
     {
         id = "burst",
         name = "버스트 코어 (연발)",
-        shortName = "BRST",
         target = "weapon",
-        color = { 1.00, 0.48, 0.34 },
+        rarity = "UNCOMMON",
         modifiers = {
             extraBurst = 2,
             cooldownMult = 1.35,
@@ -36,9 +36,8 @@ ChipsData.list = {
     {
         id = "ricochet",
         name = "리코셰 프리즘 (굴절)",
-        shortName = "RICO",
         target = "weapon",
-        color = { 0.44, 0.94, 1.00 },
+        rarity = "UNCOMMON",
         modifiers = {
             bounces = 1,
             batteryCost = 4,
@@ -48,9 +47,8 @@ ChipsData.list = {
     {
         id = "homing",
         name = "호밍 시커 (유도)",
-        shortName = "HOMG",
         target = "weapon",
-        color = { 0.56, 0.88, 0.46 },
+        rarity = "UNCOMMON",
         modifiers = {
             homing = true,
             homingTurnRate = 4.2,
@@ -63,9 +61,8 @@ ChipsData.list = {
     {
         id = "dodge_trigger",
         name = "곡예 트리거",
-        shortName = "DODG",
         target = "weapon",
-        color = { 1.00, 0.86, 0.38 },
+        rarity = "RARE",
         modifiers = {
             triggerOnDodge = true,
             autoBatteryZero = true,
@@ -76,9 +73,8 @@ ChipsData.list = {
     {
         id = "wrap_trigger",
         name = "래핑 콘덴서",
-        shortName = "WRAP",
         target = "weapon",
-        color = { 0.46, 0.74, 1.00 },
+        rarity = "UNCOMMON",
         modifiers = {
             triggerOnWrap = true,
             wrapTriggerCooldown = 1.5,
@@ -89,9 +85,8 @@ ChipsData.list = {
     {
         id = "hit_trigger",
         name = "피격 반격기",
-        shortName = "CNTR",
         target = "weapon",
-        color = { 0.96, 0.36, 0.48 },
+        rarity = "RARE",
         modifiers = {
             triggerOnHit = true,
             hitTriggerBattery = 15,
@@ -104,9 +99,8 @@ ChipsData.list = {
     {
         id = "shockwave",
         name = "충격파 방출",
-        shortName = "SHCK",
         target = "defense",
-        color = { 0.38, 0.78, 1.00 },
+        rarity = "NORMAL",
         modifiers = {
             shockwaveOnHit = true,
             shockwaveRadius = 180,
@@ -117,9 +111,8 @@ ChipsData.list = {
     {
         id = "dodge_charge",
         name = "곡예 충전기",
-        shortName = "CHRG",
         target = "battery",
-        color = { 1.00, 0.80, 0.32 },
+        rarity = "NORMAL",
         modifiers = {
             onDodgeBattery = 15,
             rechargeMult = 0.8,
@@ -129,9 +122,8 @@ ChipsData.list = {
     {
         id = "wrap_phase",
         name = "래핑 위상변위",
-        shortName = "PHSE",
         target = "thruster",
-        color = { 0.46, 0.96, 0.82 },
+        rarity = "NORMAL",
         modifiers = {
             wrapSpeedMult = 1.4,
             wrapInvuln = 0.4,
@@ -144,9 +136,8 @@ ChipsData.list = {
     {
         id = "fever_overdrive",
         name = "피버 과부하",
-        shortName = "FEVR",
         target = "any",
-        color = { 1.00, 0.62, 0.24 },
+        rarity = "LEGENDARY",
         modifiers = {
             feverChipMult = 2.0,
             nonFeverBatteryMult = 1.3,
@@ -156,9 +147,8 @@ ChipsData.list = {
     {
         id = "limiter_off",
         name = "리미터 해제",
-        shortName = "LIMT",
         target = "any",
-        color = { 0.92, 0.30, 0.72 },
+        rarity = "LEGENDARY",
         modifiers = {
             noShield = true,
             cooldownMult = 0.6,
@@ -170,6 +160,7 @@ ChipsData.list = {
 
 ChipsData.byId = {}
 for _, def in ipairs(ChipsData.list) do
+    def.rarity = Rarity.normalize(def.rarity)
     def.w = def.w or 1
     def.h = def.h or 1
     def.shape = def.shape or { { 0, 0 } }

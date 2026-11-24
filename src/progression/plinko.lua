@@ -7,6 +7,7 @@
 
 local ModulesData = require("src.data.modules_data")
 local ChipsData = require("src.data.chips_data")
+local Rarity = require("src.data.rarity")
 local Sfx = require("src.audio.sfx")
 
 local Plinko = {}
@@ -34,8 +35,8 @@ local rewardPools = {
     high = {
         { kind = "module", id = "missile", rarity = "RARE" },
         { kind = "module", id = "laser", rarity = "RARE" },
-        { kind = "chip", id = "fever_overdrive", rarity = "RARE" },
-        { kind = "chip", id = "limiter_off", rarity = "RARE" },
+        { kind = "chip", id = "fever_overdrive", rarity = "LEGENDARY" },
+        { kind = "chip", id = "limiter_off", rarity = "LEGENDARY" },
         { kind = "chip", id = "dodge_trigger", rarity = "RARE" },
         { kind = "chip", id = "hit_trigger", rarity = "RARE" },
     },
@@ -50,40 +51,43 @@ local rewardPools = {
         { kind = "chip", id = "wrap_trigger", rarity = "UNCOMMON" },
     },
     low = {
-        { kind = "module", id = "thruster", rarity = "COMMON" },
-        { kind = "module", id = "projectile", rarity = "COMMON" },
-        { kind = "chip", id = "dodge_charge", rarity = "COMMON" },
-        { kind = "chip", id = "shockwave", rarity = "COMMON" },
-        { kind = "chip", id = "wrap_phase", rarity = "COMMON" },
-        { kind = "repair", shield = 50, armor = 50, rarity = "COMMON" },
+        { kind = "module", id = "thruster", rarity = "NORMAL" },
+        { kind = "module", id = "projectile", rarity = "NORMAL" },
+        { kind = "chip", id = "dodge_charge", rarity = "NORMAL" },
+        { kind = "chip", id = "shockwave", rarity = "NORMAL" },
+        { kind = "chip", id = "wrap_phase", rarity = "NORMAL" },
+        { kind = "repair", shield = 50, armor = 50, rarity = "NORMAL" },
     },
 }
 
 local function describeReward(r)
     if r.kind == "module" then
         local def = ModulesData.get(r.id)
+        local rarity = Rarity.normalize(r.rarity or (def and def.rarity))
         return {
             title = def and def.name or r.id,
-            short = def and def.shortName or r.id,
-            color = def and def.color or { 0.45, 0.85, 0.95 },
-            rarity = r.rarity,
+            color = Rarity.getColor(rarity),
+            rarity = rarity,
+            rarityLabel = Rarity.getLabel(rarity),
             spec = r,
         }
     elseif r.kind == "chip" then
         local def = ChipsData.get(r.id)
+        local rarity = Rarity.normalize(r.rarity or (def and def.rarity))
         return {
             title = def and def.name or r.id,
-            short = def and def.shortName or r.id,
-            color = def and def.color or { 1.0, 0.82, 0.34 },
-            rarity = r.rarity,
+            color = Rarity.getColor(rarity),
+            rarity = rarity,
+            rarityLabel = Rarity.getLabel(rarity),
             spec = r,
         }
     else
+        local rarity = Rarity.normalize(r.rarity)
         return {
             title = "긴급 선체 수리",
-            short = "REPR",
-            color = { 0.44, 0.94, 0.64 },
-            rarity = r.rarity,
+            color = Rarity.getColor(rarity),
+            rarity = rarity,
+            rarityLabel = Rarity.getLabel(rarity),
             spec = r,
         }
     end
@@ -192,8 +196,8 @@ function Plinko.new(opts)
         end
     elseif featuredId == "support_chip" then
         local rareChips = {
-            { kind = "chip", id = "fever_overdrive", rarity = "RARE" },
-            { kind = "chip", id = "limiter_off", rarity = "RARE" },
+            { kind = "chip", id = "fever_overdrive", rarity = "LEGENDARY" },
+            { kind = "chip", id = "limiter_off", rarity = "LEGENDARY" },
             { kind = "chip", id = "dodge_trigger", rarity = "RARE" },
             { kind = "chip", id = "hit_trigger", rarity = "RARE" },
         }
@@ -270,9 +274,9 @@ end
 function Plinko:grantReward(slot, inventory, ship)
     local spec = slot.reward.spec
     if spec.kind == "module" and inventory then
-        inventory:addPendingModule(spec.id)
+        inventory:addPendingModule(spec.id, { rarity = slot.reward.rarity })
     elseif spec.kind == "chip" and inventory then
-        inventory:addPendingChip(spec.id)
+        inventory:addPendingChip(spec.id, { rarity = slot.reward.rarity })
     elseif spec.kind == "repair" and ship then
         ship.shield = math.min(ship.maxShield, ship.shield + (spec.shield or 50))
         ship.armor = math.min(ship.maxArmor, ship.armor + (spec.armor or 50))

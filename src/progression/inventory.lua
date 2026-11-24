@@ -7,6 +7,7 @@
 
 local ModulesData = require("src.data.modules_data")
 local ChipsData = require("src.data.chips_data")
+local Rarity = require("src.data.rarity")
 
 local Inventory = {}
 Inventory.__index = Inventory
@@ -203,7 +204,7 @@ function Inventory:unlockCell(r, c)
     return true
 end
 
-function Inventory:createModule(defId)
+function Inventory:createModule(defId, opts)
     local def = ModulesData.get(defId)
     assert(def, "Unknown module id: " .. tostring(defId))
     local _, w, h = Inventory.getShapeCells(def, 0)
@@ -212,6 +213,7 @@ function Inventory:createModule(defId)
         id = self.nextId,
         defId = def.id,
         def = def,
+        rarity = Rarity.normalize((opts and opts.rarity) or def.rarity),
         w = w,
         h = h,
         rotation = 0,
@@ -226,7 +228,7 @@ function Inventory:createModule(defId)
     return mod
 end
 
-function Inventory:createChip(chipId)
+function Inventory:createChip(chipId, opts)
     local def = ChipsData.get(chipId)
     assert(def, "Unknown chip id: " .. tostring(chipId))
     local _, w, h = Inventory.getShapeCells(def, 0)
@@ -235,6 +237,7 @@ function Inventory:createChip(chipId)
         id = self.nextId,
         defId = def.id,
         def = def,
+        rarity = Rarity.normalize((opts and opts.rarity) or def.rarity),
         w = w,
         h = h,
         rotation = 0,
@@ -254,8 +257,8 @@ function Inventory:addPendingModule(defId, opts)
     return mod
 end
 
-function Inventory:addPendingChip(chipId)
-    local chip = type(chipId) == "table" and chipId or self:createChip(chipId)
+function Inventory:addPendingChip(chipId, opts)
+    local chip = type(chipId) == "table" and chipId or self:createChip(chipId, opts)
     self.pendingRewards[#self.pendingRewards + 1] = chip
     return chip
 end

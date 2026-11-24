@@ -1,4 +1,5 @@
 local Display = require("src.core.display")
+local Rarity = require("src.data.rarity")
 local Sfx = require("src.audio.sfx")
 -- Interactive Gladiator Coin Plinko UI overlay shown at the end of each stage.
 -- Supports investing 10 / 25 / 50 / ALL coins (dropped randomly across the full
@@ -17,6 +18,32 @@ end
 
 local function pointInRect(px, py, x, y, w, h)
     return px >= x and px <= x + w and py >= y and py <= y + h
+end
+
+local function compactDisplayName(name)
+    local s = string.gsub(name or "", "%s*%b()", "")
+    return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
+end
+
+local function fitText(font, text, maxW)
+    if not text or text == "" or not font or font:getWidth(text) <= maxW then
+        return text or ""
+    end
+    local dots = ".."
+    local len = #text
+    while len > 0 do
+        len = len - 1
+        while len > 0 do
+            local b = string.byte(text, len + 1)
+            if not b or b < 128 or b >= 192 then break end
+            len = len - 1
+        end
+        local sub = string.sub(text, 1, len) .. dots
+        if font:getWidth(sub) <= maxW then
+            return sub
+        end
+    end
+    return dots
 end
 
 function PlinkoUI:addRegion(x, y, w, h, action)
@@ -92,10 +119,11 @@ function PlinkoUI:draw(plinko, stage, fonts, width, height, pendingCount)
     -- 5 Bottom Reward Slots
     local slotY = by + plinko.slotTopY
     local slotH = bh - plinko.slotTopY - 6
+    local slotFont = fonts.menuSmall or fonts.menuBody or fonts.small
     for i, slot in ipairs(plinko.slots) do
         local sx = bx + slot.x + 3
         local sw = slot.w - 6
-        local rc = slot.reward.color or { 0.45, 0.85, 0.95 }
+        local rc = slot.reward.color or Rarity.getColor(slot.reward.rarity)
         local ratio = math.min(1, slot.filled / math.max(1, slot.required))
 
         g.setColor(0.05, 0.08, 0.13, 0.96)
@@ -108,13 +136,13 @@ function PlinkoUI:draw(plinko, stage, fonts, width, height, pendingCount)
             g.rectangle("fill", sx + 2, slotY + slotH - 2 - fillH, sw - 4, fillH, 4, 4)
         end
 
-        g.setColor(rc[1], rc[2], rc[3], slot.claimed and 1.0 or (slot.tier == "high" and 0.90 or 0.55))
+        g.setColor(rc[1], rc[2], rc[3], slot.claimed and 1.0 or (slot.tier == "high" and 0.90 or 0.65))
         g.setLineWidth(slot.claimed and 2.5 or 1.3)
         g.rectangle("line", sx, slotY, sw, slotH, 5, 5)
 
-        g.setFont(fonts.small)
-        g.setColor(rc[1], rc[2], rc[3], 0.95)
-        g.printf(slot.reward.short, sx + 2, slotY + 7, sw - 4, "center")
+        g.setFont(slotFont)
+        g.setColor(rc[1], rc[2], rc[3], 1.0)
+        g.printf(fitText(slotFont, compactDisplayName(slot.reward.title), sw - 6), sx + 3, slotY + 6, sw - 6, "center")
 
         g.setFont(fonts.body)
         if slot.claimed then
@@ -125,9 +153,9 @@ function PlinkoUI:draw(plinko, stage, fonts, width, height, pendingCount)
             g.printf(string.format("%d/%d", slot.filled, slot.required), sx + 2, slotY + 25, sw - 4, "center")
         end
 
-        g.setFont(fonts.small)
-        g.setColor(0.66, 0.78, 0.86, 0.85)
-        g.printf(slot.reward.rarity, sx + 2, slotY + 45, sw - 4, "center")
+        g.setFont(slotFont)
+        g.setColor(rc[1], rc[2], rc[3], 0.92)
+        g.printf(slot.reward.rarityLabel or Rarity.getLabel(slot.reward.rarity), sx + 2, slotY + 44, sw - 4, "center")
     end
 
     -- Slot detailed legend below board
@@ -138,10 +166,11 @@ function PlinkoUI:draw(plinko, stage, fonts, width, height, pendingCount)
         local row = math.floor((i - 1) / 2)
         local lx = bx + col * 278
         local ly = legY + row * 24
-        local rc = slot.reward.color or { 0.7, 0.85, 0.95 }
-        g.setColor(rc[1], rc[2], rc[3], slot.claimed and 1.0 or 0.85)
+        local rc = slot.reward.color or Rarity.getColor(slot.reward.rarity)
+        g.setColor(rc[1], rc[2], rc[3], slot.claimed and 1.0 or 0.90)
+        local rarityLabel = slot.reward.rarityLabel or Rarity.getLabel(slot.reward.rarity)
         local status = slot.claimed and "[획득]" or string.format("(%d/%d)", slot.filled, slot.required)
-        g.print(string.format("%d. %s %s", i, slot.reward.title, status), lx, ly)
+        g.print(string.format("%d. [%s] %s %s", i, rarityLabel, slot.reward.title, status), lx, ly)
     end
 
     -- Right: Coin Wallet, Investment Buttons, Claimed Log & Next Stage

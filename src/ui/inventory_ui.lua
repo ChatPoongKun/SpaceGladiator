@@ -8,6 +8,7 @@
 local Display = require("src.core.display")
 local Inventory = require("src.progression.inventory")
 local ChipsData = require("src.data.chips_data")
+local Rarity = require("src.data.rarity")
 local Sfx = require("src.audio.sfx")
 
 local InventoryUI = {}
@@ -49,6 +50,40 @@ local targetKoreanLabel = {
     thruster = "추진 모듈",
     any = "모든 모듈",
 }
+
+local function getItemRarity(item)
+    return Rarity.normalize(item and (item.rarity or (item.def and item.def.rarity)))
+end
+
+local function getItemRarityColor(item)
+    return Rarity.getColor(getItemRarity(item))
+end
+
+local function compactDisplayName(name)
+    local s = string.gsub(name or "", "%s*%b()", "")
+    return (string.gsub(s, "^%s*(.-)%s*$", "%1"))
+end
+
+local function fitText(font, text, maxW)
+    if not text or text == "" or not font or font:getWidth(text) <= maxW then
+        return text or ""
+    end
+    local dots = ".."
+    local len = #text
+    while len > 0 do
+        len = len - 1
+        while len > 0 do
+            local b = string.byte(text, len + 1)
+            if not b or b < 128 or b >= 192 then break end
+            len = len - 1
+        end
+        local sub = string.sub(text, 1, len) .. dots
+        if font:getWidth(sub) <= maxW then
+            return sub
+        end
+    end
+    return dots
+end
 
 function InventoryUI.new()
     return setmetatable({
@@ -235,7 +270,7 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
     local step = cellSize + gap
     local rot = Inventory.normalizeRotation(opts.rotation ~= nil and opts.rotation or item.rotation)
     local shapeCells, bw, bh = Inventory.getShapeCells(item, rot)
-    local col = item.def.color or { 0.4, 0.8, 0.9 }
+    local col = getItemRarityColor(item)
     local alpha = opts.alpha or 1.0
     local isSel = opts.selected == true
     local isHovered = opts.hovered == true
@@ -338,7 +373,7 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
     if isDisabled then
         g.setColor(0.36, 0.40, 0.46, (isSel and 0.85 or (isHovered and 0.72 or 0.52)) * alpha)
     else
-        g.setColor(col[1], col[2], col[3], (isSel and 0.96 or (isHovered and 0.86 or 0.58)) * alpha)
+        g.setColor(col[1], col[2], col[3], (isSel and 0.96 or (isHovered and 0.86 or 0.68)) * alpha)
     end
     g.setLineWidth(isSel and 2.2 or (isHovered and 1.8 or 1.2))
     g.rectangle("line", originX + 1.5, originY + 1.5, totalW - 3, totalH - 3, 6, 6)
@@ -375,11 +410,14 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
             if not compact and shapeCells[1] then
                 local cx = originX + shapeCells[1][2] * step + 4
                 local cy = originY + shapeCells[1][1] * step + 4
-                g.setColor(0.02, 0.05, 0.09, 0.68 * alpha)
-                g.rectangle("fill", cx, cy, 40, 15, 3, 3)
-                g.setFont(fonts.small)
-                g.setColor(0.95, 0.98, 1.0, 0.96 * alpha)
-                g.printf(item.def.shortName, cx + 2, cy + 1, 36, "center")
+                local badgeFont = fonts.menuSmall or fonts.menuBody or fonts.small
+                local rarityLabel = Rarity.getLabel(getItemRarity(item))
+                local badgeW = math.min(cellSize - 8, math.max(44, badgeFont:getWidth(rarityLabel) + 12))
+                g.setColor(0.02, 0.05, 0.09, 0.78 * alpha)
+                g.rectangle("fill", cx, cy, badgeW, 17, 3, 3)
+                g.setFont(badgeFont)
+                g.setColor(col[1], col[2], col[3], 0.98 * alpha)
+                g.printf(rarityLabel, cx + 2, cy + 1, badgeW - 4, "center")
             end
         end
     end
@@ -403,7 +441,7 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
                 g.circle("fill", p[1], p[2], rSock + 1.2)
 
                 if chip then
-                    local cc = chip.def.color or { 1, 0.8, 0.3 }
+                    local cc = getItemRarityColor(chip)
                     local chipImg = not compact and getItemImage(chip) or nil
                     if chipImg then
                         local cW, cH = chipImg:getDimensions()
@@ -426,7 +464,7 @@ local function drawItemGridShape(inv, item, originX, originY, cellSize, gap, fon
                 if not compact and chip and not getItemImage(chip) then
                     g.setFont(fonts.small)
                     g.setColor(0.05, 0.08, 0.12, alpha)
-                    g.printf(string.sub(chip.def.shortName, 1, 2), p[1] - 12, p[2] - 6, 24, "center")
+                    g.printf(string.upper(string.sub(chip.def.id or "?", 1, 2)), p[1] - 12, p[2] - 6, 24, "center")
                 end
             end
         end
@@ -689,13 +727,14 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         local textX = rx + 12
         local textW = rw - 24
         local thumbImg = getItemImage(inspectItem)
+        local ic = getItemRarityColor(inspectItem)
+        local rarityLabel = Rarity.getLabel(getItemRarity(inspectItem))
         if thumbImg then
             local boxSize = 72
             local bx, by = rx + 12, curY + 10
-            local ic = inspectItem.def.color or { 0.4, 0.8, 0.9 }
             g.setColor(0.03, 0.06, 0.10, 0.96)
             g.rectangle("fill", bx, by, boxSize, boxSize, 6, 6)
-            g.setColor(ic[1], ic[2], ic[3], 0.65)
+            g.setColor(ic[1], ic[2], ic[3], 0.72)
             g.setLineWidth(1.2)
             g.rectangle("line", bx, by, boxSize, boxSize, 6, 6)
             local imgW, imgH = thumbImg:getDimensions()
@@ -705,19 +744,19 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
             textX = bx + boxSize + 12
             textW = rx + rw - textX - 12
         end
-        g.setColor(0.95, 0.98, 1.0, 1)
+        g.setColor(ic[1], ic[2], ic[3], 1)
         if inspectItem.kind == "module" then
             local statusSuffix = ""
             if Inventory.isWeaponModule(inspectItem) and inspectItem.row then
                 statusSuffix = inspectItem.disabled and " · [비활성]" or " · [활성]"
             end
-            g.print(string.format("%s (%dx%d) · 소켓 %d/%d%s",
-                inspectItem.def.name, iw, ih, inv:equippedSocketCount(inspectItem), inspectItem.maxSockets, statusSuffix),
+            g.print(string.format("[%s] %s (%dx%d) · 소켓 %d/%d%s",
+                rarityLabel, inspectItem.def.name, iw, ih, inv:equippedSocketCount(inspectItem), inspectItem.maxSockets, statusSuffix),
                 textX, curY + 10)
         else
             local targetTxt = targetKoreanLabel[inspectItem.def.target] or inspectItem.def.target
-            g.print(string.format("%s (1x1 칩) · 대상: %s",
-                inspectItem.def.name, targetTxt), textX, curY + 10)
+            g.print(string.format("[%s] %s (1x1 칩) · 대상: %s",
+                rarityLabel, inspectItem.def.name, targetTxt), textX, curY + 10)
         end
         g.setColor(0.70, 0.84, 0.90, 0.95)
         g.printf(inspectItem.def.description, textX, curY + 36, textW, "left")
@@ -792,7 +831,7 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
                 local _, iw, ih = Inventory.getShapeCells(item, item.rotation)
                 local shapeW = iw * miniCell + (iw - 1) * miniGap
                 local shapeH = ih * miniCell + (ih - 1) * miniGap
-                local cardW = math.max(96, shapeW + 24)
+                local cardW = math.max(108, shapeW + 24)
                 local cardH = math.max(76, shapeH + 34)
 
                 if cursorX + cardW > rx + rw - padX then
@@ -802,12 +841,12 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
                 end
 
                 if cursorY + cardH <= curY + middleH - 6 then
-                    local ic = item.def.color or { 0.45, 0.85, 0.95 }
+                    local ic = getItemRarityColor(item)
                     local isSel = (self.selectedItem == item)
                     g.setColor(0.035, 0.060, 0.098, 0.96)
                     g.rectangle("fill", cursorX, cursorY, cardW, cardH, 6, 6)
-                    g.setColor(ic[1], ic[2], ic[3], isSel and 0.95 or 0.45)
-                    g.setLineWidth(isSel and 2.0 or 1.1)
+                    g.setColor(ic[1], ic[2], ic[3], isSel and 0.95 or 0.65)
+                    g.setLineWidth(isSel and 2.0 or 1.2)
                     g.rectangle("line", cursorX, cursorY, cardW, cardH, 6, 6)
 
                     local drawX = cursorX + math.floor((cardW - shapeW) * 0.5)
@@ -819,12 +858,11 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
                         showSlots = cardHovered,
                     })
 
-                    g.setFont(fonts.small)
-                    g.setColor(0.92, 0.96, 1.0, 0.95)
-                    local tag = item.kind == "chip"
-                        and (item.def.shortName .. " [" .. (targetShortTag[item.def.target] or "ANY") .. "]")
-                        or string.format("%s (%dx%d)", item.def.shortName, iw, ih)
-                    g.printf(tag, cursorX + 4, cursorY + cardH - 18, cardW - 8, "center")
+                    local labelFont = fonts.menuSmall or fonts.menuBody or fonts.small
+                    g.setFont(labelFont)
+                    g.setColor(ic[1], ic[2], ic[3], 0.98)
+                    local label = fitText(labelFont, compactDisplayName(item.def.name), cardW - 10)
+                    g.printf(label, cursorX + 5, cursorY + cardH - 19, cardW - 10, "center")
 
                     self:addRegion(cursorX, cursorY, cardW, cardH, { type = "pendingItem", item = item })
                     cursorX = cursorX + cardW + 8

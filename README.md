@@ -101,8 +101,9 @@ Space Gladiator/
 ### `src/data/` — 정적 아이템 데이터
 | 파일 | Require 경로 | 역할 |
 | --- | --- | --- |
-| `src/data/modules_data.lua` | `src.data.modules_data` | 무기·추진기·실드·아머·배터리 모듈의 형태(`shape`), 소켓 수, 기본 스탯, 아이콘 경로 |
-| `src/data/chips_data.lua` | `src.data.chips_data` | 1×1 서포트 칩(멀티샷, 유도, 도탄, 회피 트리거 등) 정의 및 수정치 |
+| `src/data/modules_data.lua` | `src.data.modules_data` | 무기·추진기·실드·아머·배터리 모듈의 형태(`shape`), 소켓 수, 기본 스탯, 등급, 아이콘 경로 |
+| `src/data/chips_data.lua` | `src.data.chips_data` | 1×1 서포트 칩(멀티샷, 유도, 도탄, 회피 트리거 등) 정의, 등급 및 수정치 |
+| `src/data/rarity.lua` | `src.data.rarity` | 4단계 등급(`NORMAL`/`UNCOMMON`/`RARE`/`LEGENDARY`) 정의 및 통합 색상 팔레트 |
 
 ### `src/ui/` — 인터페이스 & 오버레이
 | 파일 | Require 경로 | 역할 |
