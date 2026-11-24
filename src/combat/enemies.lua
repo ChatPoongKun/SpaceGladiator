@@ -1,7 +1,7 @@
-local Ship = require("ship")
-local Arena = require("arena")
-local Collision = require("collision")
-local EnemyFire = require("enemy_fire")
+local Ship = require("src.combat.ship")
+local Arena = require("src.core.arena")
+local Collision = require("src.core.collision")
+local EnemyFire = require("src.combat.enemy_fire")
 local Enemies = {}
 Enemies.__index = Enemies
 local tau = 2 * math.pi

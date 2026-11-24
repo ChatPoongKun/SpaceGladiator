@@ -1,7 +1,7 @@
-local Replay = require("replay")
-local Starfield = require("starfield")
-local StageBackground = require("stage_background")
-local Sfx = require("sfx")
+local Replay = require("src.replay.replay")
+local Starfield = require("src.visual.starfield")
+local StageBackground = require("src.visual.stage_background")
+local Sfx = require("src.audio.sfx")
 
 local okFfi, ffi = pcall(require, "ffi")
 

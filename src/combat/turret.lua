@@ -1,4 +1,4 @@
-local Sfx = require("sfx")
+local Sfx = require("src.audio.sfx")
 local Turret = {}
 Turret.__index = Turret
 local tau = 2 * math.pi

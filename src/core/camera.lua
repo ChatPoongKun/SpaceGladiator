@@ -1,5 +1,5 @@
-local Arena = require("arena")
-local Collision = require("collision")
+local Arena = require("src.core.arena")
+local Collision = require("src.core.collision")
 local Camera = {}
 Camera.__index = Camera
 

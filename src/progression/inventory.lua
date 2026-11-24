@@ -5,8 +5,8 @@
 -- socket for support chips). Post-stage rewards sit in a temporary pending tray
 -- and are discarded if not placed into the main inventory before the next stage.
 
-local ModulesData = require("modules_data")
-local ChipsData = require("chips_data")
+local ModulesData = require("src.data.modules_data")
+local ChipsData = require("src.data.chips_data")
 
 local Inventory = {}
 Inventory.__index = Inventory

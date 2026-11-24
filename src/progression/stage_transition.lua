@@ -6,9 +6,9 @@
 -- 3. Hyperspace starlight warp animation accelerating out of the arena through
 --    streaming starlight and decelerating smoothly into the next stage.
 
-local Arena = require("arena")
-local Display = require("display")
-local Sfx = require("sfx")
+local Arena = require("src.core.arena")
+local Display = require("src.core.display")
+local Sfx = require("src.audio.sfx")
 
 local StageTransition = {}
 

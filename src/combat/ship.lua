@@ -1,5 +1,5 @@
-local Arena = require("arena")
-local Sfx = require("sfx")
+local Arena = require("src.core.arena")
+local Sfx = require("src.audio.sfx")
 local Ship = {}
 Ship.__index = Ship
 

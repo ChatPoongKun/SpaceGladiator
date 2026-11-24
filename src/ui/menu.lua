@@ -1,4 +1,4 @@
-local Display = require("display")
+local Display = require("src.core.display")
 local Menu = {}
 local defaultPanelWidth, inset, buttonHeight, buttonStep, rowHeight = 432, 28, 44, 54, 29
 
@@ -65,7 +65,7 @@ function Menu.draw(menu, fonts, selected, width, height, overlay)
             g.setColor(0.55, 0.91, 0.89, 1)
         else
             if row.enemyKind then
-                local Enemies = require("enemies")
+                local Enemies = require("src.combat.enemies")
                 g.push("all")
                 g.translate(textX + 8, rowY + step / 2)
                 g.scale(0.38)

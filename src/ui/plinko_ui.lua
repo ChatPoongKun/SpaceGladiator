@@ -1,5 +1,5 @@
-local Display = require("display")
-local Sfx = require("sfx")
+local Display = require("src.core.display")
+local Sfx = require("src.audio.sfx")
 -- Interactive Gladiator Coin Plinko UI overlay shown at the end of each stage.
 -- Supports investing 10 / 25 / 50 / ALL coins (dropped randomly across the full
 -- top width), opening the diamond grid inventory to equip newly won items,

@@ -1,4 +1,4 @@
-local Sfx = require("sfx")
+local Sfx = require("src.audio.sfx")
 local Gladiator = {}
 Gladiator.__index = Gladiator
 

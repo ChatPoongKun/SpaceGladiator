@@ -5,10 +5,10 @@
 -- rewards appear in a temporary tray and are discarded if not placed into the
 -- main diamond inventory before advancing to the next stage.
 
-local Display = require("display")
-local Inventory = require("inventory")
-local ChipsData = require("chips_data")
-local Sfx = require("sfx")
+local Display = require("src.core.display")
+local Inventory = require("src.progression.inventory")
+local ChipsData = require("src.data.chips_data")
+local Sfx = require("src.audio.sfx")
 
 local InventoryUI = {}
 InventoryUI.__index = InventoryUI

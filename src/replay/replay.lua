@@ -1,12 +1,12 @@
-local Arena = require("arena")
-local Display = require("display")
-local Ship = require("ship")
-local Turret = require("turret")
-local Enemies = require("enemies")
-local Gladiator = require("gladiator")
-local Starfield = require("starfield")
-local StageBackground = require("stage_background")
-local Sfx = require("sfx")
+local Arena = require("src.core.arena")
+local Display = require("src.core.display")
+local Ship = require("src.combat.ship")
+local Turret = require("src.combat.turret")
+local Enemies = require("src.combat.enemies")
+local Gladiator = require("src.combat.gladiator")
+local Starfield = require("src.visual.starfield")
+local StageBackground = require("src.visual.stage_background")
+local Sfx = require("src.audio.sfx")
 
 local okFfi, ffi = pcall(require, "ffi")
 
@@ -1120,7 +1120,7 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
         zoom = fit * (1 - 0.12 * pullback),
         screenOffsetY = 0,
         pullback = pullback,
-    }, require("camera"))
+    }, require("src.core.camera"))
 
     -- Reconstruct player ship proxy
     local shipProxy = setmetatable({

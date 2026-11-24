@@ -5,9 +5,9 @@
 -- Unclaimed slot progress is discarded by default, with a carryover hook ready
 -- for a future permanent upgrade.
 
-local ModulesData = require("modules_data")
-local ChipsData = require("chips_data")
-local Sfx = require("sfx")
+local ModulesData = require("src.data.modules_data")
+local ChipsData = require("src.data.chips_data")
+local Sfx = require("src.audio.sfx")
 
 local Plinko = {}
 Plinko.__index = Plinko

@@ -1,6 +1,6 @@
-local Arena = require("arena")
-local Collision = require("collision")
-local Sfx = require("sfx")
+local Arena = require("src.core.arena")
+local Collision = require("src.core.collision")
+local Sfx = require("src.audio.sfx")
 local EnemyFire = {}
 EnemyFire.__index = EnemyFire
 
