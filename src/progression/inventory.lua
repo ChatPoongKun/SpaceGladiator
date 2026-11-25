@@ -737,6 +737,7 @@ function Inventory:computeBuild(feverActive)
     local baseRecharge = base.batteryRecharge or 0
     local baseMaxSpeed = base.maxSpeed or 0
     local baseThrust = base.thrust or 0
+    local baseBoostThrust = base.boostThrust or 0
     local baseBoostSpeed = base.boostSpeed or 0
     local baseBoostCost = base.boostCost or 0
     local baseThrustBatteryCost = base.thrustBatteryCost or 0
@@ -759,6 +760,7 @@ function Inventory:computeBuild(feverActive)
         batteryRecharge = baseRecharge,
         maxSpeed = baseMaxSpeed,
         thrust = baseThrust,
+        boostThrust = baseBoostThrust,
         boostSpeed = baseBoostSpeed,
         boostCost = baseBoostCost,
         thrustBatteryCost = baseThrustBatteryCost,
@@ -776,6 +778,7 @@ function Inventory:computeBuild(feverActive)
         batteryRechargeMult = 1.0,
         maxSpeedBonus = 0,
         thrustBonus = 0,
+        boostThrustBonus = 0,
         boostSpeedBonus = 0,
         boostCostBase = 0,
         boostCostBonus = 0,
@@ -850,6 +853,7 @@ function Inventory:computeBuild(feverActive)
                 build.batteryRechargeBonus = build.batteryRechargeBonus + (stats.batteryRecharge or 0)
                 build.maxSpeedBonus = build.maxSpeedBonus + (stats.maxSpeed or 0)
                 build.thrustBonus = build.thrustBonus + (stats.thrust or 0)
+                build.boostThrustBonus = build.boostThrustBonus + (stats.boostThrust or 0)
                 build.boostSpeedBonus = build.boostSpeedBonus + (stats.boostSpeed or 0)
                 build.boostCostBase = build.boostCostBase + (stats.boostCost or 0) * catMult
                 build.thrustBatteryCostBonus = build.thrustBatteryCostBonus + (stats.thrustBatteryCost or 0) * catMult
@@ -976,6 +980,7 @@ function Inventory:computeBuild(feverActive)
     build.batteryRecharge = (baseRecharge + build.batteryRechargeBonus) * build.batteryRechargeMult
     build.maxSpeed = baseMaxSpeed + build.maxSpeedBonus
     build.thrust = baseThrust + build.thrustBonus
+    build.boostThrust = baseBoostThrust + build.boostThrustBonus
     build.boostSpeed = baseBoostSpeed + build.boostSpeedBonus
     build.boostCost = math.floor((baseBoostCost + build.boostCostBase) + 0.5)
     if build.boostCost > 0 then

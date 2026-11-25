@@ -16,6 +16,7 @@ Ship.driftThreshold = 50
 Ship.driftDeceleration = 50
 Ship.naturalDrag = 0.5
 Ship.boostSpeed = 450
+Ship.boostThrust = 1800
 Ship.boostHold = 0.24
 Ship.boostFalloff = 0.24
 Ship.boostCost = 25
@@ -53,6 +54,7 @@ function Ship.new(width, height)
         baseShieldRegen = 0, baseShieldRegenBatteryCost = 0,
         baseBatteryRecharge = Ship.batteryRecharge,
         baseMaxSpeed = Ship.maxSpeed, baseBoostSpeed = Ship.boostSpeed,
+        baseBoostThrust = Ship.boostThrust,
         baseBoostCost = Ship.boostCost, baseThrustBatteryCost = 0,
         thrustBatteryCost = 0,
         baseWrapBonusSpeed = Ship.wrapBonusSpeed,
@@ -129,6 +131,7 @@ function Ship:applyBuild(build, opts)
         self.maxSpeed = build.maxSpeed or 0
         self.thrust = build.thrust or Ship.thrust
         self.boostSpeed = build.boostSpeed or 0
+        self.boostThrust = build.boostThrust or (self.boostSpeed > 0 and Ship.boostThrust or 0)
         self.boostCost = (build.boostCost and build.boostCost > 0) and build.boostCost or Ship.boostCost
         self.thrustBatteryCost = build.thrustBatteryCost or 0
         self.wrapBonusSpeed = build.wrapBonusSpeed or Ship.wrapBonusSpeed
@@ -145,6 +148,7 @@ function Ship:applyBuild(build, opts)
         self.batteryRecharge = (self.baseBatteryRecharge + (build.batteryRechargeBonus or 0)) * (build.batteryRechargeMult or 1)
         self.maxSpeed = self.baseMaxSpeed + (build.maxSpeedBonus or 0)
         self.boostSpeed = self.baseBoostSpeed + (build.boostSpeedBonus or 0)
+        self.boostThrust = (self.baseBoostThrust or Ship.boostThrust) + (build.boostThrustBonus or 0)
         self.boostCost = math.max(5, self.baseBoostCost + (build.boostCostBonus or 0))
         self.thrustBatteryCost = (self.baseThrustBatteryCost or 0) + (build.thrustBatteryCostBonus or 0)
         self.wrapBonusSpeed = (self.baseWrapBonusSpeed + (build.wrapBonusSpeedAdd or 0)) * (build.wrapSpeedMult or 1)
@@ -265,7 +269,17 @@ function Ship:turn(dt, direction)
     self.angle = (self.angle + direction * self.turnSpeed * dt) % (2 * math.pi)
 end
 
-function Ship:updateVelocity(dt, thrust, brake, cap, coastDt)
+local function boostImpulseIntegral(rem, falloffDuration)
+    if rem <= 0 then return 0 end
+    if falloffDuration <= 0 then return rem end
+    if rem >= falloffDuration then
+        return 0.5 * falloffDuration + (rem - falloffDuration)
+    end
+    local u = rem / falloffDuration
+    return falloffDuration * (u * u * u - 0.5 * u * u * u * u)
+end
+
+function Ship:updateVelocity(dt, thrust, brake, cap, coastDt, boostImpulseTime)
     self.accelerating = thrust and not brake
     self.braking = brake
     local oldVx, oldVy = self.vx, self.vy
@@ -273,9 +287,18 @@ function Ship:updateVelocity(dt, thrust, brake, cap, coastDt)
         local damping = math.exp(-self.brake * dt)
         self.vx, self.vy = self.vx * damping, self.vy * damping
         if self:speed() < 0.5 then self.vx, self.vy = 0, 0 end
-    elseif self.accelerating then
-        self.vx = self.vx + math.sin(self.angle) * self.thrust * dt
-        self.vy = self.vy - math.cos(self.angle) * self.thrust * dt
+    else
+        local totalAccel = 0
+        if self.accelerating then
+            totalAccel = totalAccel + self.thrust * dt
+        end
+        if boostImpulseTime and boostImpulseTime > 0 then
+            totalAccel = totalAccel + (self.boostThrust or Ship.boostThrust) * boostImpulseTime
+        end
+        if totalAccel > 0 then
+            self.vx = self.vx + math.sin(self.angle) * totalAccel
+            self.vy = self.vy - math.cos(self.angle) * totalAccel
+        end
     end
 
     local speed = self:speed()
@@ -332,7 +355,6 @@ function Ship:update(dt, input, options)
         self.battery = self.battery - self.boostCost
         self.boostRemaining = self.boostHold + self.boostFalloff
         self.boostX, self.boostY = math.sin(self.angle), -math.cos(self.angle)
-        self.vx, self.vy = self.boostX * self.boostSpeed, self.boostY * self.boostSpeed
         self.boostOriginX, self.boostOriginY = self.x, self.y
         Sfx.play("boost")
     end
@@ -389,11 +411,18 @@ function Ship:update(dt, input, options)
     end
 
     self.battery = math.min(self.maxBattery, math.max(0, batteryPool))
-    self.boostRemaining = math.max(0, self.boostRemaining - dt)
+    local prevBoostRemaining = self.boostRemaining
+    self.boostRemaining = math.max(0, prevBoostRemaining - dt)
+    local boostImpulseTime = 0
+    if prevBoostRemaining > 0 then
+        self.boostX, self.boostY = math.sin(self.angle), -math.cos(self.angle)
+        boostImpulseTime = boostImpulseIntegral(prevBoostRemaining, self.boostFalloff)
+            - boostImpulseIntegral(self.boostRemaining, self.boostFalloff)
+    end
     local falloff = math.min(1, self.boostRemaining / self.boostFalloff)
     self.boostLevel = falloff * falloff * (3 - 2 * falloff)
     local cap = self.maxSpeed + (self.boostSpeed - self.maxSpeed) * self.boostLevel
-    local oldVx, oldVy = self:updateVelocity(dt, canThrust, input.brake, cap, rechargeTime)
+    local oldVx, oldVy = self:updateVelocity(dt, canThrust, input.brake, cap, rechargeTime, boostImpulseTime)
 
     if (self.invulnTimer or 0) > 0 then
         self.invulnTimer = math.max(0, self.invulnTimer - dt)

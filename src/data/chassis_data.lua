@@ -22,6 +22,7 @@ ChassisData.list = {
             batteryRecharge = 0,
             maxSpeed = 0,
             thrust = 0,
+            boostThrust = 0,
             boostSpeed = 0,
             boostCost = 0,
             thrustBatteryCost = 0,

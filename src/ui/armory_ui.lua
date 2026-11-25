@@ -127,8 +127,8 @@ local function formatModuleStatLines(def)
         local s = def.stats or {}
         lines[#lines + 1] = string.format("가속 소모 %d/s  ·  부스트 소모 %d  ·  최고속도 +%d",
             s.thrustBatteryCost or 0, s.boostCost or 0, s.maxSpeed or 0)
-        lines[#lines + 1] = string.format("추진력 +%d  ·  부스트속도 +%d  ·  중복 장착 시 합산",
-            s.thrust or 0, s.boostSpeed or 0)
+        lines[#lines + 1] = string.format("추진력 +%d  ·  부스트추진력 +%d  ·  부스트속도 +%d",
+            s.thrust or 0, s.boostThrust or 0, s.boostSpeed or 0)
     elseif cat == "generator" or cat == "battery" then
         local s = def.stats or {}
         lines[#lines + 1] = string.format("배터리 총량 +%d  ·  초당 충전 +%d/s  ·  중복 합산",
@@ -769,7 +769,7 @@ function ArmoryUI:_drawInspectorPanel(inv, fonts, validationSummary)
     Theme.setColor(c.textPrimary, 0.96)
     g.print(string.format("최고속도: %d", build.maxSpeed or 0), col3X, rowY)
     g.print(string.format("부스트속도: %d", build.boostSpeed or 0), col3X, rowY + rowStep)
-    g.print(string.format("추진력: %d", build.thrust or 0), col3X, rowY + rowStep * 2)
+    g.print(string.format("추진력: %d (부스트 +%d)", build.thrust or 0, build.boostThrust or 0), col3X, rowY + rowStep * 2)
     g.print("특수 효과: " .. (ch and ch.specialEffect or "없음"), col3X, rowY + rowStep * 3)
 
     if #cautions > 0 then

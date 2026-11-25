@@ -101,7 +101,7 @@ ModulesData.list = {
         h = 1,
         shape = { { 0, 0 } },
         maxSockets = 1,
-        stats = { maxSpeed = 250, thrust = 350, boostSpeed = 450, wrapBonusSpeed = 110, boostCost = 25, thrustBatteryCost = 2 },
+        stats = { maxSpeed = 250, thrust = 350, boostThrust = 1800, boostSpeed = 450, wrapBonusSpeed = 110, boostCost = 25, thrustBatteryCost = 2 },
         description = "1x1 메인 추진 모듈. 일반 가속 시 소량(초당 2), 부스트 시 크게(25) 배터리를 소모하며 중복 장착 시 수치가 모두 가산됩니다.",
     },
     {
