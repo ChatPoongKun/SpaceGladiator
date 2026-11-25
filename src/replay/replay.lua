@@ -1298,8 +1298,8 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
             if destroyed then
                 shipProxy:drawDestruction()
             else
+                turretProxy:drawMount(shipProxy, srcTime, width)
                 shipProxy:draw(srcTime)
-                turretProxy:drawMount(shipProxy, srcTime)
             end
             g.pop()
         end

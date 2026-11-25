@@ -1,3 +1,4 @@
+local Arena = require("src.core.arena")
 local Sfx = require("src.audio.sfx")
 local Turret = {}
 Turret.__index = Turret
@@ -12,11 +13,13 @@ local projectileSpread = math.rad(5)
 local projectileOffsets = {0, -projectileSpread, projectileSpread}
 local explosionColors = { glow = {1, 0.38, 0.10}, ring = {1, 0.76, 0.32}, core = {1, 0.94, 0.66} }
 local beamImpactColors = { glow = {0.12, 0.68, 1}, ring = {0.30, 0.92, 1}, core = {0.83, 0.98, 1} }
+local aimGlowMesh, aimCoreMesh, aimMeshesTried = nil, nil, false
 
 Turret.turnSpeed = tau
 Turret.missileSpeed = 900
 Turret.missileLifetime = 600 / 900
 Turret.fireInterval = 0.18
+Turret.aimLineWidthRatio = 0.30
 Turret.weaponFireIntervals = {
     [1] = 0.18,
     [2] = 0.55,
@@ -635,44 +638,120 @@ local function blendWhite(r, g, b, amount)
     return r + (1 - r) * amount, g + (1 - g) * amount, b + (1 - b) * amount
 end
 
-function Turret:drawMount(ship, time)
+local function addQuad(verts, v1, v2, v3, v4)
+    verts[#verts + 1] = v1
+    verts[#verts + 1] = v2
+    verts[#verts + 1] = v3
+    verts[#verts + 1] = v1
+    verts[#verts + 1] = v3
+    verts[#verts + 1] = v4
+end
+
+local function buildFeatheredAimMesh(coreHalfFrac, taper, fadePower, segments)
+    if not (love and love.graphics and love.graphics.newMesh) then return nil end
+    local verts = {}
+    for i = 0, segments - 1 do
+        local t0 = i / segments
+        local t1 = (i + 1) / segments
+        local y0, y1 = -t0, -t1
+        local w0 = 1 - taper * t0
+        local w1 = 1 - taper * t1
+        local a0 = (1 - t0) ^ fadePower
+        local a1 = (1 - t1) ^ fadePower
+
+        if coreHalfFrac <= 0 then
+            local l0 = { -w0, y0, 0, t0, 1, 1, 1, 0 }
+            local c0 = { 0, y0, 0.5, t0, 1, 1, 1, a0 }
+            local r0 = { w0, y0, 1, t0, 1, 1, 1, 0 }
+            local l1 = { -w1, y1, 0, t1, 1, 1, 1, 0 }
+            local c1 = { 0, y1, 0.5, t1, 1, 1, 1, a1 }
+            local r1 = { w1, y1, 1, t1, 1, 1, 1, 0 }
+            addQuad(verts, l0, c0, c1, l1)
+            addQuad(verts, c0, r0, r1, c1)
+        else
+            local cw0, cw1 = w0 * coreHalfFrac, w1 * coreHalfFrac
+            local ol0 = { -w0, y0, 0, t0, 1, 1, 1, 0 }
+            local il0 = { -cw0, y0, 0.35, t0, 1, 1, 1, a0 }
+            local ir0 = { cw0, y0, 0.65, t0, 1, 1, 1, a0 }
+            local or0 = { w0, y0, 1, t0, 1, 1, 1, 0 }
+            local ol1 = { -w1, y1, 0, t1, 1, 1, 1, 0 }
+            local il1 = { -cw1, y1, 0.35, t1, 1, 1, 1, a1 }
+            local ir1 = { cw1, y1, 0.65, t1, 1, 1, 1, a1 }
+            local or1 = { w1, y1, 1, t1, 1, 1, 1, 0 }
+            addQuad(verts, ol0, il0, il1, ol1)
+            addQuad(verts, il0, ir0, ir1, il1)
+            addQuad(verts, ir0, or0, or1, ir1)
+        end
+    end
+    local ok, mesh = pcall(love.graphics.newMesh, verts, "triangles", "static")
+    if ok then return mesh end
+    return nil
+end
+
+local function getAimMeshes()
+    if not aimMeshesTried then
+        aimMeshesTried = true
+        aimGlowMesh = buildFeatheredAimMesh(0, 0.35, 1.45, 16)
+        aimCoreMesh = buildFeatheredAimMesh(0.45, 0.45, 1.35, 16)
+    end
+    return aimGlowMesh, aimCoreMesh
+end
+
+function Turret:aimLineLength(screenWidth)
+    local refWidth = screenWidth or Arena.width or 1280
+    return refWidth * (self.aimLineWidthRatio or Turret.aimLineWidthRatio)
+end
+
+function Turret:drawMount(ship, time, screenWidth)
     local g = love.graphics
     local alpha, flash = 1, 0
     if ship and ship.invulnBlinkAlpha then
         alpha, flash = ship:invulnBlinkAlpha()
     end
-    local pulse = 0.84 + math.sin((time or 0) * 7) * 0.16
+    local pulse = 0.90 + math.sin((time or 0) * 6.5) * 0.10
+    local aimLength = self:aimLineLength(screenWidth)
+    local glowMesh, coreMesh = getAimMeshes()
+
     g.push("all")
     g.translate(ship.x, ship.y)
     g.rotate(self.angle)
 
-    -- Refined Nova Assault barrel
-    local r, gg, b = blendWhite(0.09, 0.14, 0.20, flash * 0.72)
-    g.setColor(r, gg, b, alpha)
-    g.rectangle("fill", -2.2, -muzzleLength + 1, 4.4, muzzleLength - 2, 0.9, 0.9)
-    r, gg, b = blendWhite(1, 0.84, 0.47, flash)
-    g.setColor(r, gg, b, alpha)
-    g.setLineWidth(1.05)
-    g.rectangle("line", -2.2, -muzzleLength + 1, 4.4, muzzleLength - 2, 0.9, 0.9)
-    r, gg, b = blendWhite(1, 0.96, 0.81, flash)
-    g.setColor(r, gg, b, 0.75 * alpha)
-    g.setLineWidth(0.8)
-    g.line(0, -muzzleLength + 2.5, 0, -9)
+    local outerR, outerG, outerB = blendWhite(0.18, 0.78, 1.0, flash * 0.6)
+    local innerR, innerG, innerB = blendWhite(0.45, 0.92, 1.0, flash * 0.7)
+    local coreR, coreG, coreB = blendWhite(0.78, 0.97, 1.0, flash * 0.85)
 
-    -- Turret housing & glowing golden core
-    r, gg, b = blendWhite(0.07, 0.11, 0.16, flash * 0.72)
-    g.setColor(r, gg, b, alpha)
-    g.circle("fill", 0, 0, 7.1)
-    r, gg, b = blendWhite(0.94, 0.70, 0.29, flash)
-    g.setColor(r, gg, b, alpha)
-    g.setLineWidth(1.2)
-    g.circle("line", 0, 0, 6.8)
-    r, gg, b = blendWhite(1, 0.84, 0.42, flash)
-    g.setColor(r, gg, b, 0.30 * pulse * alpha)
-    g.circle("fill", 0, 0, 4.8)
-    r, gg, b = blendWhite(1, 0.92, 0.64, flash)
-    g.setColor(r, gg, b, pulse * alpha)
-    g.circle("fill", 0, 0, 2.7)
+    if glowMesh and coreMesh then
+        -- Soft layered additive glow ribbons fading smoothly to transparent toward the end.
+        g.setBlendMode("add")
+        g.setColor(outerR, outerG, outerB, 0.20 * pulse * alpha)
+        g.draw(glowMesh, 0, 0, 0, 7.5, aimLength)
+
+        g.setColor(innerR, innerG, innerB, 0.30 * pulse * alpha)
+        g.draw(glowMesh, 0, 0, 0, 3.0, aimLength)
+
+        -- Semi-transparent core aiming line extending from the ship center.
+        g.setBlendMode("alpha")
+        g.setColor(coreR, coreG, coreB, 0.50 * alpha)
+        g.draw(coreMesh, 0, 0, 0, 1.35, aimLength)
+    else
+        local segments = 16
+        for i = 0, segments - 1 do
+            local t0 = i / segments
+            local t1 = (i + 1) / segments
+            local fade = (1 - (t0 + t1) * 0.5) ^ 1.4
+            local y0, y1 = -aimLength * t0, -aimLength * t1
+            g.setLineWidth(6.5)
+            g.setColor(outerR, outerG, outerB, 0.14 * fade * pulse * alpha)
+            g.line(0, y0, 0, y1)
+            g.setLineWidth(3.0)
+            g.setColor(innerR, innerG, innerB, 0.24 * fade * pulse * alpha)
+            g.line(0, y0, 0, y1)
+            g.setLineWidth(1.4)
+            g.setColor(coreR, coreG, coreB, 0.50 * fade * alpha)
+            g.line(0, y0, 0, y1)
+        end
+    end
+
     g.pop()
 end
 
