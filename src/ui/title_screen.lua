@@ -37,11 +37,11 @@ local function buildMeshes()
     local acc = Theme.colors.accent
     local bright = Theme.colors.accentBright
     return {
-        -- Left-to-right readability scrim (keeps right planet & central nebula bright)
+        -- Left-to-right readability scrim (keeps live ship combat and planet bright)
         leftScrim = Theme.createGradientMesh({
-            { pos = 0.00, deep[1], deep[2], deep[3], 0.86 },
-            { pos = 0.24, deep[1], deep[2], deep[3], 0.62 },
-            { pos = 0.44, deep[1], deep[2], deep[3], 0.22 },
+            { pos = 0.00, deep[1], deep[2], deep[3], 0.78 },
+            { pos = 0.24, deep[1], deep[2], deep[3], 0.52 },
+            { pos = 0.44, deep[1], deep[2], deep[3], 0.16 },
             { pos = 0.62, deep[1], deep[2], deep[3], 0.00 },
             { pos = 1.00, deep[1], deep[2], deep[3], 0.00 },
         }, true),

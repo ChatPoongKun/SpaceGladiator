@@ -10,6 +10,7 @@ local Gladiator = require("src.combat.gladiator")
 local Hud = require("src.ui.hud")
 local Menu = require("src.ui.menu")
 local TitleScreen = require("src.ui.title_screen")
+local TitleDemo = require("src.ui.title_demo")
 local Sfx = require("src.audio.sfx")
 local Bgm = require("src.audio.bgm")
 local Inventory = require("src.progression.inventory")
@@ -20,7 +21,7 @@ local StageTransition = require("src.progression.stage_transition")
 local Replay = require("src.replay.replay")
 local ReplayExport = require("src.replay.replay_export")
 
-local ship, stars, stageBackground, fonts, camera, turret, enemies, hud, gladiator, titleScreen
+local ship, stars, stageBackground, fonts, camera, turret, enemies, hud, gladiator, titleScreen, titleDemo
 local inventory, inventoryUI, currentBuild
 local armoryInventory, armoryUI
 local stage
@@ -57,13 +58,13 @@ local focused = true
 local gameOverHold = 1.25
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow, testGladiator, testInventory, testReplay, testFullscreen, testBackground, testTitle, testCombat = false, false, false, false, false, false, false, false, false, false
+local testFlags = {}
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow or testGladiator or testInventory or testReplay or testFullscreen or testBackground or testTitle or testCombat) then return defaultErrorHandler(message) end
+    if not (testMode or next(testFlags) ~= nil) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
@@ -102,6 +103,9 @@ local function setScreen(nextScreen)
                 keepParallax = (prevScreen == "settings" or prevScreen == "armory"),
             })
         end
+        if titleDemo then
+            titleDemo:syncBuild(armoryInventory)
+        end
     end
     if screen == "title" or screen == "results" then
         ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
@@ -129,13 +133,12 @@ local function syncInventoryBuild(opts)
 end
 
 local function savePermanentUnlocks()
-    if not inventory or testMode or testFlow or testGladiator or testInventory then return end
+    if not inventory or testMode or testFlags.flow or testFlags.gladiator or testFlags.inventory then return end
     pcall(love.filesystem.write, permanentUnlocksFile, inventory:serializeUnlockedCells())
 end
 
 local function isAnyTestActive()
-    return testMode or testFlow or testGladiator or testInventory or testReplay
-        or testFullscreen or testBackground or testTitle or testCombat
+    return testMode or next(testFlags) ~= nil
 end
 
 local function saveArmoryLoadout()
@@ -172,7 +175,7 @@ local function startRun(opts)
     end
     enemies = Enemies.new(nil, gladiator)
     inventory = armoryInventory and armoryInventory:clone() or Inventory.newStarter()
-    if not (testMode or testFlow or testGladiator or testInventory or testCombat)
+    if not (testMode or testFlags.flow or testFlags.gladiator or testFlags.inventory or testFlags.combat)
         and love.filesystem.getInfo(permanentUnlocksFile) then
         inventory:loadUnlockedCells(love.filesystem.read(permanentUnlocksFile))
     end
@@ -192,7 +195,7 @@ local function startRun(opts)
             stageBackground:setLevel(stage.level, true)
         end
     end
-    if not (testMode or testFlow or testGladiator or testInventory or testCombat) then
+    if not (testMode or testFlags.flow or testFlags.gladiator or testFlags.inventory or testFlags.combat) then
         stage:configureEnemies(enemies)
     end
     lastEvasionCount, lastWrapEvents, lastDamageCount = 0, 0, 0
@@ -206,7 +209,7 @@ local function startRun(opts)
     input.turn, input.thrust, input.brake, input.boost = 0, false, false, false
     time = 0
     if opts and opts.entryWarp then
-        warpState = StageTransition.newEntryWarp(stage.number, ship, width, height)
+        warpState = StageTransition.newEntryWarp(stage.number, ship, width, height, nil, opts.entryPose)
         warpState.jumpSfxPlayed = true
         setScreen("warping")
         Sfx.play("warp_jump")
@@ -522,6 +525,7 @@ local function resetSaveData()
     end
     inventory = nil
     armoryInventory = Inventory.newStarter()
+    if titleDemo then titleDemo:syncBuild(armoryInventory) end
     if removedOk then
         menus.settings.subtitle = "저장 데이터가 초기화되었습니다."
         selectedButton = 3
@@ -656,8 +660,9 @@ end
 
 menus.title = {title = "SPACE GLADIATOR", buttons = {
     {label = "게임 시작", sublabel = "LAUNCH", primary = true, action = function()
+        local entryPose = titleDemo and titleDemo:getShipPose() or nil
         if titleScreen then titleScreen:beginLaunch(menus.title, selectedButton) end
-        startRun({ entryWarp = true })
+        startRun({ entryWarp = true, entryPose = entryPose })
     end},
     {label = "아머리", sublabel = "ARMORY", action = openArmory},
     {label = "설정", sublabel = "SETTINGS", action = openSettings},
@@ -676,23 +681,79 @@ menus.results = {title = "전투 정산", buttons = {
 local gameOverMenu = {title = "GAME OVER", subtitle = "기체 파괴"}
 local unfocusedMenu = {title = "일시정지", subtitle = "게임 창으로 돌아오면 전투를 계속합니다."}
 
+local function dispatchRequestedTests()
+    if testFlags.gladiator then
+        require("tests.gladiator")(Ship, Enemies, Turret, Gladiator)
+        love.event.quit(0)
+        return true
+    end
+    if testFlags.inventory then
+        require("tests.inventory")(Inventory, Ship, Turret, Gladiator)
+        love.event.quit(0)
+        return true
+    end
+    if testFlags.armory then
+        local ChassisData = require("src.data.chassis_data")
+        local ModulesData = require("src.data.modules_data")
+        require("tests.armory")(ArmoryUI, Inventory, ChassisData, ModulesData, Ship, fonts, width, height)
+        return true
+    end
+    if testFlags.replay then
+        require("tests.replay")(Replay, ReplayExport)
+        love.event.quit(0)
+        return true
+    end
+    if testFlags.fullscreen then
+        require("tests.fullscreen_arena")
+        love.event.quit(0)
+        return true
+    end
+    if testFlags.background then
+        require("tests.stage_background")
+        love.event.quit(0)
+        return true
+    end
+    if testFlags.title then
+        require("tests.title_screen")(function()
+            return screen, titleScreen, menus.title, selectedButton, fonts, width, height, titleDemo, warpState
+        end)
+        return true
+    end
+    if testFlags.combat then
+        require("tests.combat_feel")(Ship, Enemies, Turret, Gladiator, Camera, function()
+            return screen, ship, enemies, turret, gladiator, camera, hitstopTimer, hullFlashTimer, startRun, lowArmorAura
+        end)
+        love.event.quit(0)
+        return true
+    end
+    if testFlags.flow then
+        require("tests.flow")(function()
+            return screen, ship, enemies, turret, gladiator, beginStageClear, inventory, warpGates, syncInventoryBuild
+        end)
+        love.event.quit(0)
+        return true
+    end
+    return false
+end
+
 function love.load(args)
     for _, arg in ipairs(args or {}) do
         if arg == "--test" then testMode = true end
-        if arg == "--test-flow" then testFlow = true end
-        if arg == "--test-gladiator" then testGladiator = true end
-        if arg == "--test-inventory" then testInventory = true end
-        if arg == "--test-replay" then testReplay = true end
-        if arg == "--test-fullscreen" then testFullscreen = true end
-        if arg == "--test-background" then testBackground = true end
-        if arg == "--test-title" then testTitle = true end
-        if arg == "--test-combat" then testCombat = true end
-        if arg == "--test-compact" then testMode, testCompact = true, true end
-        if arg == "--test-damaged" then testMode, testDamaged = true, true end
+        if arg == "--test-flow" then testFlags.flow = true end
+        if arg == "--test-gladiator" then testFlags.gladiator = true end
+        if arg == "--test-inventory" then testFlags.inventory = true end
+        if arg == "--test-armory" then testFlags.armory = true end
+        if arg == "--test-replay" then testFlags.replay = true end
+        if arg == "--test-fullscreen" then testFlags.fullscreen = true end
+        if arg == "--test-background" then testFlags.background = true end
+        if arg == "--test-title" then testFlags.title = true end
+        if arg == "--test-combat" then testFlags.combat = true end
+        if arg == "--test-compact" then testMode, testFlags.compact = true, true end
+        if arg == "--test-damaged" then testMode, testFlags.damaged = true, true end
     end
     love.graphics.setBackgroundColor(0, 0, 0)
     love.graphics.setLineStyle("smooth")
-    local anyTest = testMode or testFlow or testGladiator or testInventory or testReplay or testFullscreen or testBackground or testTitle or testCombat
+    local anyTest = isAnyTestActive()
     if not anyTest then
         local saved = Display.loadSettings()
         Display.applyMode(saved.mode, saved.width, saved.height)
@@ -704,61 +765,20 @@ function love.load(args)
     titleScreen = TitleScreen.new()
     armoryUI = ArmoryUI.new()
     armoryInventory = loadArmoryLoadout()
+    titleDemo = TitleDemo.new(armoryInventory)
     buildFonts(Display.fontDpiScale())
     local _, _, vpW, vpH = Display.viewportRect()
     stars = Starfield.new(vpW, vpH)
     stageBackground = StageBackground.new(vpW, vpH)
-    if not (testMode or testFlow or testGladiator or testInventory or testBackground or testTitle or testCombat) then
+    if not anyTest or testFlags.replay or testFlags.fullscreen then
         Sfx.load()
         Bgm.load()
     end
     setScreen("title")
-    if testGladiator then
-        require("tests.gladiator")(Ship, Enemies, Turret, Gladiator)
-        love.event.quit(0)
+    if dispatchRequestedTests() then
         return
     end
-    if testInventory then
-        require("tests.inventory")(Inventory, Ship, Turret, Gladiator)
-        love.event.quit(0)
-        return
-    end
-    if testReplay then
-        require("tests.replay")(Replay, ReplayExport)
-        love.event.quit(0)
-        return
-    end
-    if testFullscreen then
-        require("tests.fullscreen_arena")
-        love.event.quit(0)
-        return
-    end
-    if testBackground then
-        require("tests.stage_background")
-        love.event.quit(0)
-        return
-    end
-    if testTitle then
-        require("tests.title_screen")(function()
-            return screen, titleScreen, menus.title, selectedButton, fonts, width, height
-        end)
-        return
-    end
-    if testCombat then
-        require("tests.combat_feel")(Ship, Enemies, Turret, Gladiator, Camera, function()
-            return screen, ship, enemies, turret, gladiator, camera, hitstopTimer, hullFlashTimer, startRun, lowArmorAura
-        end)
-        love.event.quit(0)
-        return
-    end
-    if testFlow then
-        require("tests.flow")(function()
-            return screen, ship, enemies, turret, gladiator, beginStageClear, inventory, warpGates, syncInventoryBuild
-        end)
-        love.event.quit(0)
-        return
-    end
-    if testCompact then
+    if testFlags.compact then
         love.window.updateMode(800, 600)
         love.resize(800, 600)
     end
@@ -771,7 +791,7 @@ function love.load(args)
             love.update(1 / 60)
             if frame == 120 then assert(ship.battery == ship.maxBattery - ship.boostCost) end
         end
-        if testDamaged then ship.shield, ship.armor, ship.hull, ship.battery = 27, 68, 2, 42 end
+        if testFlags.damaged then ship.shield, ship.armor, ship.hull, ship.battery = 27, 68, 2, 42 end
     end
 end
 
@@ -878,8 +898,9 @@ function love.update(dt)
     if not ship then
         if stageBackground then stageBackground:update(dt, 0, 0, bgW, bgH) end
         stars:update(dt, 12 * bgScale, -18 * bgScale, 0, bgW, bgH, 0)
-        if screen == "title" and titleScreen then
-            titleScreen:update(dt, menus.title, selectedButton)
+        if screen == "title" then
+            if titleDemo then titleDemo:update(dt, width, height) end
+            if titleScreen then titleScreen:update(dt, menus.title, selectedButton) end
         elseif screen == "armory" and armoryUI then
             armoryUI:update(dt)
         end
@@ -1043,7 +1064,7 @@ function love.update(dt)
         coinWallet = coinWallet + (gladiator.total - lastGladiatorTotal)
         lastGladiatorTotal = gladiator.total
     end
-    if stage and not (testMode or testFlow or testGladiator or testInventory or testCombat) then
+    if stage and not (testMode or testFlags.flow or testFlags.gladiator or testFlags.inventory or testFlags.combat) then
         if stage:update(dt, enemies) then
             beginStageClear()
             return
@@ -1404,6 +1425,9 @@ function love.draw()
     elseif screen == "armory" and armoryUI then
         armoryInventory = armoryUI:draw(armoryInventory, fonts, width, height)
     elseif screen == "title" and titleScreen then
+        if titleDemo then
+            titleDemo:draw(titleDemo.time, width, height)
+        end
         titleScreen:draw(menu, fonts, selectedButton, width, height)
     elseif menu then
         Menu.draw(menu, fonts, selectedButton, width, height, ship ~= nil)
@@ -1416,8 +1440,8 @@ function love.draw()
     if testMode and not captureRequested then
         captureRequested = true
         love.graphics.captureScreenshot(function(data)
-            local name = testCompact and "hud-compact-preview.png"
-                or testDamaged and "hud-damaged-preview.png" or "flight-preview.png"
+            local name = testFlags.compact and "hud-compact-preview.png"
+                or testFlags.damaged and "hud-damaged-preview.png" or "flight-preview.png"
             local file = assert(io.open(love.filesystem.getSource() .. "/" .. name, "wb"))
             file:write(data:encode("png"):getString())
             file:close()

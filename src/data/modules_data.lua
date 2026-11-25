@@ -117,8 +117,8 @@ ModulesData.list = {
         shape = { { 0, 0 }, { 1, 0 } },
         maxSockets = 2,
         batteryLoad = 0,
-        stats = { maxBattery = 100, batteryOutput = 50, batteryRecharge = 12 },
-        description = "출력 +50, 배터리 총량 +100, 초당 충전 +12. 기체 전체 부품에 전력을 공급합니다.",
+        stats = { maxBattery = 100, batteryOutput = 40, batteryRecharge = 12 },
+        description = "출력 +40, 배터리 총량 +100, 초당 충전 +12. 기체 전체 부품에 전력을 공급합니다.",
     },
 }
 

@@ -466,7 +466,7 @@ function ArmoryUI:_drawCatalogPanel(fonts)
     local rows = self:_buildCatalogRows()
     local totalH = 0
     for _, row in ipairs(rows) do
-        totalH = totalH + (row.kind == "header" and 28 or 72)
+        totalH = totalH + (row.kind == "header" and 24 or 61)
     end
     self.catalogMaxScroll = math.max(0, totalH - listH)
     self.catalogScroll = Theme.clamp(self.catalogScroll, 0, self.catalogMaxScroll)
@@ -478,20 +478,20 @@ function ArmoryUI:_drawCatalogPanel(fonts)
     local drawY = listY - self.catalogScroll
     for _, row in ipairs(rows) do
         if row.kind == "header" then
-            local hdrH = 24
+            local hdrH = 21
             if drawY + hdrH >= listY and drawY <= listY + listH then
                 g.setColor(0.055, 0.115, 0.175, 0.86)
-                g.rectangle("fill", listX, drawY + 2, listW, hdrH - 2, 4, 4)
+                g.rectangle("fill", listX, drawY + 1, listW, hdrH - 1, 4, 4)
                 Theme.setColor(c.accent, 0.72)
-                g.rectangle("fill", listX, drawY + 4, 3, hdrH - 6, 1.5, 1.5)
+                g.rectangle("fill", listX, drawY + 3, 3, hdrH - 5, 1.5, 1.5)
                 g.setFont(fonts.menuSmall or fonts.menuBody)
                 Theme.setColor(c.accentBright, 0.94)
-                g.print(row.category.name .. "  [" .. row.category.tag .. "]", listX + 10, drawY + 5)
+                g.print(row.category.name .. "  [" .. row.category.tag .. "]", listX + 10, drawY + 3)
             end
-            drawY = drawY + 28
+            drawY = drawY + 24
         else
             local def = row.def
-            local rowH = 66
+            local rowH = 56
             if drawY + rowH >= listY and drawY <= listY + listH then
                 local rc = Rarity.getColor(def.rarity)
                 local inList = pointInRect(self.mouseX, self.mouseY, listX, listY, listW, listH)
@@ -505,7 +505,7 @@ function ArmoryUI:_drawCatalogPanel(fonts)
                 g.rectangle("line", listX, drawY, listW, rowH, 6, 6)
 
                 -- Image thumbnail box
-                local thumbSize = 54
+                local thumbSize = 44
                 local tx, ty = listX + 7, drawY + 6
                 g.setColor(0.02, 0.04, 0.07, 0.95)
                 g.rectangle("fill", tx, ty, thumbSize, thumbSize, 5, 5)
@@ -515,7 +515,7 @@ function ArmoryUI:_drawCatalogPanel(fonts)
                 local img = getDefImage(def)
                 if img then
                     local iw, ih = img:getDimensions()
-                    local sc = math.min((thumbSize - 8) / iw, (thumbSize - 8) / ih)
+                    local sc = math.min((thumbSize - 6) / iw, (thumbSize - 6) / ih)
                     g.setColor(1, 1, 1, 0.98)
                     g.draw(img, tx + thumbSize * 0.5, ty + thumbSize * 0.5, 0, sc, sc, iw * 0.5, ih * 0.5)
                 end
@@ -525,23 +525,24 @@ function ArmoryUI:_drawCatalogPanel(fonts)
                 local textW = listW - (textX - listX) - 10
                 g.setFont(fonts.menuBody)
                 g.setColor(rc[1], rc[2], rc[3], 1)
-                g.print(def.name, textX, drawY + 9)
+                g.print(def.name, textX, drawY + 6)
 
                 g.setFont(fonts.menuSmall or fonts.menuBody)
                 Theme.setColor(c.textSecondary, 0.92)
                 local sizeTag = string.format("%dx%d", def.w or 1, def.h or 1)
-                g.printf(sizeTag, textX, drawY + 11, textW, "right")
+                g.printf(sizeTag, textX, drawY + 8, textW, "right")
 
                 Theme.setColor(c.textMuted, 0.95)
-                g.print(formatBriefCatalogStats(def), textX, drawY + 35)
+                g.print(formatBriefCatalogStats(def), textX, drawY + 30)
 
-                if inList then
-                    self:addRegion(listX, math.max(listY, drawY), listW,
-                        math.min(drawY + rowH, listY + listH) - math.max(listY, drawY),
+                local visTop = math.max(listY, drawY)
+                local visBot = math.min(drawY + rowH, listY + listH)
+                if visBot > visTop then
+                    self:addRegion(listX, visTop, listW, visBot - visTop,
                         { type = "catalogItem", def = def })
                 end
             end
-            drawY = drawY + 72
+            drawY = drawY + 61
         end
     end
     g.pop()

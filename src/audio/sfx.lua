@@ -2,6 +2,7 @@ local Sfx = {}
 local pools = {}
 local lastPlayed = {}
 local listener = nil
+local muted = false
 
 -- Cue format: { asset, volume, basePitch, voices, minInterval, jitter }
 local cues = {
@@ -79,7 +80,16 @@ function Sfx.setListener(fn)
     listener = fn
 end
 
+function Sfx.setMuted(value)
+    muted = value == true
+end
+
+function Sfx.isMuted()
+    return muted
+end
+
 local function playCue(name, pitchScale, notify)
+    if muted then return end
     if notify and listener then listener(name) end
     local pool = pools[name]
     if not pool then return end

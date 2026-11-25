@@ -696,15 +696,17 @@ function StageTransition.newWarp(gate, nextStageNumber, ship, width, height, rng
     }
 end
 
-function StageTransition.newEntryWarp(stageNumber, ship, width, height, rng)
+function StageTransition.newEntryWarp(stageNumber, ship, width, height, rng, entryPose)
     rng = rng or (love and love.math and love.math.random or math.random)
     local rc = { 0.45, 0.92, 1.0 }
     local streaks = buildWarpStreaks(rc, rng)
-    local warpAngle = 0 -- Flying upward from below the bottom edge into Stage 1
-    local dirX, dirY = 0, -1
+    local tau = math.pi * 2
+    local directional = (entryPose ~= nil)
+    local warpAngle = directional and ((entryPose.angle or 0) % tau) or 0
+    local dirX, dirY = math.sin(warpAngle), -math.cos(warpAngle)
     local warpDuration = StageTransition.ENTRY_WARP_DURATION
-    local startX = Arena.width * 0.5
-    local startY = Arena.height + 140
+    local startX = directional and (entryPose.x or Arena.width * 0.5) or (Arena.width * 0.5)
+    local startY = directional and (entryPose.y or Arena.height * 0.5) or (Arena.height + 140)
     local initialSpeed = StageTransition.entryWarpSpeedFactor(0)
 
     if ship then
@@ -712,8 +714,8 @@ function StageTransition.newEntryWarp(stageNumber, ship, width, height, rng)
         ship.y = startY
         ship.angle = warpAngle
         local visualSpeed = 42 + (math.max(42, ship.maxSpeed or 180) - 42) * initialSpeed
-        ship.vx = dirX * visualSpeed
-        ship.vy = dirY * visualSpeed
+        ship.vx = directional and (entryPose.vx or dirX * visualSpeed) or (dirX * visualSpeed)
+        ship.vy = directional and (entryPose.vy or dirY * visualSpeed) or (dirY * visualSpeed)
         ship.wrapVx, ship.wrapVy = 0, 0
         ship.boostX, ship.boostY = dirX, dirY
         ship.boostLevel = initialSpeed
@@ -724,6 +726,7 @@ function StageTransition.newEntryWarp(stageNumber, ship, width, height, rng)
 
     return {
         mode = "entry",
+        directional = directional,
         gate = { reward = { color = rc, title = "" } },
         nextStageNumber = stageNumber or 1,
         elapsed = 0,
@@ -863,9 +866,15 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
     -- Keep ship heading & engine plume aligned with its travel direction throughout warp
     if ship then
         if isEntry then
-            local travelT = easeOutCubic(clamp(p / 0.88, 0, 1))
-            ship.x = Arena.width * 0.5
-            ship.y = warp.startY + (Arena.height * 0.5 - warp.startY) * travelT
+            if warp.directional then
+                local travelT = easeInOutCubic(clamp(p / 0.34, 0, 1))
+                ship.x = warp.startX + (Arena.width * 0.5 - warp.startX) * travelT
+                ship.y = warp.startY + (Arena.height * 0.5 - warp.startY) * travelT
+            else
+                local travelT = easeOutCubic(clamp(p / 0.88, 0, 1))
+                ship.x = Arena.width * 0.5
+                ship.y = warp.startY + (Arena.height * 0.5 - warp.startY) * travelT
+            end
         end
         ship.angle = warp.angle
         local visualSpeed = 42 + (math.max(42, ship.maxSpeed or 180) - 42) * speedFactor
@@ -963,10 +972,16 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
         local shipSx, shipSy
 
         if isEntry then
-            local entryStartSy = math.max(height + 110, startSy)
-            local travelT = easeOutCubic(clamp(p / 0.88, 0, 1))
-            shipSx = centerX + vibX
-            shipSy = entryStartSy + (targetSy - entryStartSy) * travelT
+            if warp.directional then
+                local travelT = easeInOutCubic(clamp(p / 0.34, 0, 1))
+                shipSx = startSx + (targetSx - startSx) * travelT
+                shipSy = startSy + (targetSy - startSy) * travelT
+            else
+                local entryStartSy = math.max(height + 110, startSy)
+                local travelT = easeOutCubic(clamp(p / 0.88, 0, 1))
+                shipSx = centerX + vibX
+                shipSy = entryStartSy + (targetSy - entryStartSy) * travelT
+            end
         elseif aligning then
             shipSx, shipSy = startSx, startSy
         elseif p < 0.30 then
