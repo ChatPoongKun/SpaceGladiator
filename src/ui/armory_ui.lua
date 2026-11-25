@@ -91,6 +91,14 @@ local function isPointOverShape(item, originX, originY, cellSize, gap, mx, my, r
     return false
 end
 
+local function formatNum(val)
+    local n = tonumber(val) or 0
+    if math.abs(n - math.floor(n + 0.5)) < 1e-6 then
+        return tostring(math.floor(n + 0.5))
+    end
+    return string.format("%.1f", n)
+end
+
 local function formatModuleStatLines(def)
     if not def then return {} end
     local lines = {}
@@ -102,13 +110,19 @@ local function formatModuleStatLines(def)
             def.w or 1, def.h or 1, def.maxSockets or 0)
     elseif cat == "defense" then
         local s = def.stats or {}
-        local parts = {}
-        if (s.maxShield or 0) > 0 then parts[#parts + 1] = string.format("실드 +%d", s.maxShield) end
-        if (s.maxArmor or 0) > 0 then parts[#parts + 1] = string.format("아머 +%d", s.maxArmor) end
-        if #parts == 0 then parts[1] = "방호 모듈" end
-        lines[#lines + 1] = table.concat(parts, "  ·  ") .. "  ·  중복 장착 시 합산"
-        lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개",
-            def.w or 1, def.h or 1, def.maxSockets or 0)
+        if (s.maxShield or 0) > 0 then
+            lines[#lines + 1] = string.format("실드 +%d  ·  회복 +%s/s (지연 %s초)  ·  배터리 %s/s",
+                s.maxShield, formatNum(s.shieldRegen or 0), formatNum(s.shieldRegenDelay or 2), formatNum(s.shieldRegenBatteryCost or 0))
+            lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개  ·  중복 합산",
+                def.w or 1, def.h or 1, def.maxSockets or 0)
+        else
+            local parts = {}
+            if (s.maxArmor or 0) > 0 then parts[#parts + 1] = string.format("아머 +%d", s.maxArmor) end
+            if #parts == 0 then parts[1] = "방호 모듈" end
+            lines[#lines + 1] = table.concat(parts, "  ·  ") .. "  ·  중복 장착 시 합산"
+            lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개",
+                def.w or 1, def.h or 1, def.maxSockets or 0)
+        end
     elseif cat == "thruster" then
         local s = def.stats or {}
         lines[#lines + 1] = string.format("가속 소모 %d/s  ·  부스트 소모 %d  ·  최고속도 +%d",
@@ -133,7 +147,8 @@ local function formatBriefCatalogStats(def)
             def.baseBatteryCost or 0, def.fireInterval or 0, def.maxSockets or 0)
     elseif def.category == "defense" then
         if (s.maxShield or 0) > 0 then
-            return string.format("실드 +%d · 소켓 %d", s.maxShield, def.maxSockets or 0)
+            return string.format("실드 +%d · 회복 %s/s · 배터리 %s/s",
+                s.maxShield, formatNum(s.shieldRegen or 0), formatNum(s.shieldRegenBatteryCost or 0))
         end
         return string.format("아머 +%d · 소켓 %d", s.maxArmor or 0, def.maxSockets or 0)
     elseif def.category == "thruster" then
@@ -727,9 +742,20 @@ function ArmoryUI:_drawInspectorPanel(inv, fonts, validationSummary)
     local col1X, col2X, col3X = px + 20, px + 278, px + 532
     local rowY = #cautions > 0 and (py + 46) or (py + 52)
     local rowStep = #cautions > 0 and 26 or 28
+    local hasDefPenalty = penalties.defense and penalties.defense.addPct > 0
     g.setFont(fonts.menuBody)
+    if hasDefPenalty and (build.shieldRegen or 0) > 0 then
+        g.setColor(1.0, 0.80, 0.34, 0.98)
+    else
+        Theme.setColor(c.textPrimary, 0.96)
+    end
+    if (build.shieldRegen or 0) > 0 then
+        g.print(string.format("실드: %d (+%s/s, -%s/s)",
+            build.maxShield or 0, formatNum(build.shieldRegen), formatNum(build.shieldRegenBatteryCost or 0)), col1X, rowY)
+    else
+        g.print(string.format("실드: %d", build.maxShield or 0), col1X, rowY)
+    end
     Theme.setColor(c.textPrimary, 0.96)
-    g.print(string.format("실드: %d", build.maxShield or 0), col1X, rowY)
     g.print(string.format("아머: %d", build.maxArmor or 0), col1X, rowY + rowStep)
     g.print(string.format("헐: %d", build.maxHull or 0), col1X, rowY + rowStep * 2)
     g.print(string.format("장착 무기: %d개", validationSummary.weaponCount or 0), col1X, rowY + rowStep * 3)

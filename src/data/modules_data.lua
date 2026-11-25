@@ -72,8 +72,13 @@ ModulesData.list = {
         h = 1,
         shape = { { 0, 0 }, { 0, 1 } },
         maxSockets = 2,
-        stats = { maxShield = 50 },
-        description = "최대 실드 +50. 선체와 장갑을 보호하는 에너지 실드를 생성합니다.",
+        stats = {
+            maxShield = 50,
+            shieldRegen = 5,
+            shieldRegenBatteryCost = 5,
+            shieldRegenDelay = 2.0,
+        },
+        description = "최대 실드 +50, 피격 2초 후 초당 5 실드 회복(배터리 5/s 소모). 선체와 장갑을 보호합니다.",
     },
     {
         id = "armor",

@@ -20,6 +20,9 @@ Ship.boostHold = 0.24
 Ship.boostFalloff = 0.24
 Ship.boostCost = 25
 Ship.batteryRecharge = 12
+Ship.shieldRegen = 0
+Ship.shieldRegenBatteryCost = 0
+Ship.shieldRegenDelay = 2.0
 Ship.wrapBonusSpeed = 110
 Ship.combatPower = 100
 Ship.hitKnockbackSpeed = 190
@@ -41,10 +44,13 @@ function Ship.new(width, height)
         boostRemaining = 0, boostLevel = 0,
         boostX = 0, boostY = -1,
         shield = 100, maxShield = 100,
+        shieldRegen = 0, shieldRegenBatteryCost = 0,
+        shieldRegenDelay = Ship.shieldRegenDelay, shieldRegenTimer = 0,
         armor = 100, maxArmor = 100,
         hull = 3, maxHull = 3,
         battery = 100, maxBattery = 100,
         baseMaxShield = 100, baseMaxArmor = 100, baseMaxBattery = 100,
+        baseShieldRegen = 0, baseShieldRegenBatteryCost = 0,
         baseBatteryRecharge = Ship.batteryRecharge,
         baseMaxSpeed = Ship.maxSpeed, baseBoostSpeed = Ship.boostSpeed,
         baseBoostCost = Ship.boostCost, baseThrustBatteryCost = 0,
@@ -67,8 +73,7 @@ end
 
 -- The wrap bonus is part of world motion and is kept separate from flight speed.
 function Ship:worldVelocity()
-    return self.vx + self.wrapVx + (self.knockVx or 0) + (self.pushVx or 0),
-        self.vy + self.wrapVy + (self.knockVy or 0) + (self.pushVy or 0)
+    return self.vx + self.wrapVx + (self.knockVx or 0), self.vy + self.wrapVy + (self.knockVy or 0)
 end
 
 function Ship:hasShield()
@@ -114,6 +119,9 @@ function Ship:applyBuild(build, opts)
     if build.fromChassis then
         self.chassisId = build.chassisId or self.chassisId or "striker"
         self.maxShield = build.noShield and 0 or (build.maxShield or 0)
+        self.shieldRegen = build.noShield and 0 or (build.shieldRegen or 0)
+        self.shieldRegenBatteryCost = build.noShield and 0 or (build.shieldRegenBatteryCost or 0)
+        self.shieldRegenDelay = build.shieldRegenDelay or Ship.shieldRegenDelay
         self.maxArmor = build.maxArmor or 0
         self.maxHull = build.maxHull or self.maxHull or 3
         self.maxBattery = build.maxBattery or 0
@@ -129,6 +137,9 @@ function Ship:applyBuild(build, opts)
         self.wrapInvulnDuration = build.wrapInvulnDuration or 0
     else
         self.maxShield = build.noShield and 0 or (self.baseMaxShield + (build.maxShieldBonus or 0))
+        self.shieldRegen = build.noShield and 0 or ((self.baseShieldRegen or 0) + (build.shieldRegenBonus or 0))
+        self.shieldRegenBatteryCost = build.noShield and 0 or ((self.baseShieldRegenBatteryCost or 0) + (build.shieldRegenBatteryCostBonus or 0))
+        self.shieldRegenDelay = build.shieldRegenDelay or self.shieldRegenDelay or Ship.shieldRegenDelay
         self.maxArmor = self.baseMaxArmor + (build.maxArmorBonus or 0)
         self.maxBattery = self.baseMaxBattery + (build.maxBatteryBonus or 0)
         self.batteryRecharge = (self.baseBatteryRecharge + (build.batteryRechargeBonus or 0)) * (build.batteryRechargeMult or 1)
@@ -142,6 +153,7 @@ function Ship:applyBuild(build, opts)
 
     if resetVitals then
         self.shield = self.maxShield
+        self.shieldRegenTimer = 0
         self.armor = self.maxArmor
         self.hull = self.maxHull
         self.battery = self.maxBattery
@@ -176,23 +188,9 @@ function Ship:applyKnockback(dx, dy, speed)
     end
 end
 
-function Ship:addPush(dvx, dvy, maxSpeed)
-    if not dvx or not dvy then return end
-    local vx = (self.pushVx or 0) + dvx
-    local vy = (self.pushVy or 0) + dvy
-    local cap = maxSpeed or self.maxPushSpeed or Ship.maxPushSpeed
-    if cap and cap > 0 then
-        local lenSq = vx * vx + vy * vy
-        if lenSq > cap * cap then
-            local scale = cap / math.sqrt(lenSq)
-            vx, vy = vx * scale, vy * scale
-        end
-    end
-    self.pushVx, self.pushVy = vx, vy
-end
-
 function Ship:takeDamage(amount, knockX, knockY)
     if amount <= 0 or self:isDestroyed() or self:isInvulnerable() then return nil end
+    self.shieldRegenTimer = self.shieldRegenDelay or Ship.shieldRegenDelay
     self.damageCount = (self.damageCount or 0) + 1
     local hitLayer = nil
     if self:hasShield() then
@@ -225,7 +223,6 @@ function Ship:takeDamage(amount, knockX, knockY)
             self.invulnDuration = 0
             self.vx, self.vy, self.wrapVx, self.wrapVy = 0, 0, 0, 0
             self.knockVx, self.knockVy = 0, 0
-            self.pushVx, self.pushVy = 0, 0
             self.accelerating, self.braking = false, false
             self.boostRemaining, self.boostLevel = 0, 0
             self.lastHitLayer = hitLayer
@@ -343,17 +340,55 @@ function Ship:update(dt, input, options)
     local rechargeTime = math.max(0, dt - self.boostRemaining)
     local thrustDrain = self.thrustBatteryCost or 0
     local canThrust = input.thrust and not input.brake
+
+    local regenDt = 0
+    if self.maxShield > 0 and self.shield < self.maxShield and (self.shieldRegen or 0) > 0 then
+        local timer = self.shieldRegenTimer or 0
+        if timer > 0 then
+            regenDt = math.max(0, dt - timer)
+            timer = math.max(0, timer - dt)
+            if timer <= 1e-9 then timer = 0 end
+            self.shieldRegenTimer = timer
+        else
+            regenDt = dt
+        end
+    elseif (self.shieldRegenTimer or 0) > 0 then
+        local timer = math.max(0, self.shieldRegenTimer - dt)
+        self.shieldRegenTimer = timer <= 1e-9 and 0 or timer
+    end
+
+    local batteryPool = self.battery + rechargeTime * self.batteryRecharge
     if canThrust and thrustDrain > 0 and rechargeTime > 0 then
-        local netBattery = self.battery + (self.batteryRecharge - thrustDrain) * rechargeTime
-        if netBattery >= 0 then
-            self.battery = math.min(self.maxBattery, netBattery)
+        local thrustCost = thrustDrain * rechargeTime
+        if batteryPool >= thrustCost then
+            batteryPool = batteryPool - thrustCost
         else
             canThrust = false
-            self.battery = math.min(self.maxBattery, self.battery + rechargeTime * self.batteryRecharge)
         end
-    else
-        self.battery = math.min(self.maxBattery, self.battery + rechargeTime * self.batteryRecharge)
     end
+
+    if regenDt > 0 then
+        local gain = math.min(self.maxShield - self.shield, self.shieldRegen * regenDt)
+        if gain > 0 then
+            local shieldCostRate = self.shieldRegenBatteryCost or 0
+            if shieldCostRate > 0 then
+                local activeTime = gain / self.shieldRegen
+                local shieldCost = shieldCostRate * activeTime
+                if batteryPool >= shieldCost then
+                    batteryPool = batteryPool - shieldCost
+                    self.shield = math.min(self.maxShield, self.shield + gain)
+                elseif batteryPool > 0 then
+                    local ratio = batteryPool / shieldCost
+                    batteryPool = 0
+                    self.shield = math.min(self.maxShield, self.shield + gain * ratio)
+                end
+            else
+                self.shield = math.min(self.maxShield, self.shield + gain)
+            end
+        end
+    end
+
+    self.battery = math.min(self.maxBattery, math.max(0, batteryPool))
     self.boostRemaining = math.max(0, self.boostRemaining - dt)
     local falloff = math.min(1, self.boostRemaining / self.boostFalloff)
     self.boostLevel = falloff * falloff * (3 - 2 * falloff)
@@ -377,24 +412,14 @@ function Ship:update(dt, input, options)
         end
     end
     local kNewX, kNewY = self.knockVx or 0, self.knockVy or 0
-    local pOldX, pOldY = self.pushVx or 0, self.pushVy or 0
-    if pOldX ~= 0 or pOldY ~= 0 then
-        local pDecay = math.exp(-(self.pushDecay or Ship.pushDecay) * dt)
-        self.pushVx = pOldX * pDecay
-        self.pushVy = pOldY * pDecay
-        if self.pushVx * self.pushVx + self.pushVy * self.pushVy < 4 then
-            self.pushVx, self.pushVy = 0, 0
-        end
-    end
-    local pNewX, pNewY = self.pushVx or 0, self.pushVy or 0
 
     local margin = self:hitRadius() + 1
     local detectWrap = not (options and options.disableWrapDetection)
     local wrapBonusSpeed = detectWrap and self.wrapBonusSpeed or Ship.wrapBonusSpeed
     local wrappedX, wrappedY
-    self.x, _, self.wrapVx, wrappedX = crossEdge(self.x, oldVx + kOldX + pOldX, self.vx + kNewX + pNewX, self.wrapVx, Arena.width, margin, dt, wrapBonusSpeed)
+    self.x, _, self.wrapVx, wrappedX = crossEdge(self.x, oldVx + kOldX, self.vx + kNewX, self.wrapVx, Arena.width, margin, dt, wrapBonusSpeed)
     if self.vx * self.wrapVx < 0 then self.vx = 0 end
-    self.y, _, self.wrapVy, wrappedY = crossEdge(self.y, oldVy + kOldY + pOldY, self.vy + kNewY + pNewY, self.wrapVy, Arena.height, margin, dt, wrapBonusSpeed)
+    self.y, _, self.wrapVy, wrappedY = crossEdge(self.y, oldVy + kOldY, self.vy + kNewY, self.wrapVy, Arena.height, margin, dt, wrapBonusSpeed)
     if self.vy * self.wrapVy < 0 then self.vy = 0 end
     if detectWrap and (wrappedX or wrappedY) then
         self.wrapEvents = (self.wrapEvents or 0) + 1

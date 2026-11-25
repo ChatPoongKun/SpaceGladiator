@@ -728,6 +728,9 @@ function Inventory:computeBuild(feverActive)
     local base = (chassis and chassis.baseStats) or {}
 
     local baseShield = base.maxShield or 0
+    local baseShieldRegen = base.shieldRegen or 0
+    local baseShieldRegenBatteryCost = base.shieldRegenBatteryCost or 0
+    local baseShieldRegenDelay = base.shieldRegenDelay or 2.0
     local baseArmor = base.maxArmor or 0
     local baseHull = base.maxHull or 0
     local baseBattery = base.maxBattery or 0
@@ -747,6 +750,9 @@ function Inventory:computeBuild(feverActive)
 
         -- Absolute derived chassis + module stats
         maxShield = baseShield,
+        shieldRegen = baseShieldRegen,
+        shieldRegenBatteryCost = baseShieldRegenBatteryCost,
+        shieldRegenDelay = baseShieldRegenDelay,
         maxArmor = baseArmor,
         maxHull = baseHull,
         maxBattery = baseBattery,
@@ -762,6 +768,8 @@ function Inventory:computeBuild(feverActive)
 
         -- Additive bonus view (module contribution over chassis base)
         maxShieldBonus = 0,
+        shieldRegenBonus = 0,
+        shieldRegenBatteryCostBonus = 0,
         maxArmorBonus = 0,
         maxBatteryBonus = 0,
         batteryRechargeBonus = 0,
@@ -811,7 +819,7 @@ function Inventory:computeBuild(feverActive)
             categoryCounts[cat] = (categoryCounts[cat] or 0) + 1
             local s = def.stats
             if (def.baseBatteryCost or 0) > 0
-                or (s and ((s.boostCost or 0) > 0 or (s.thrustBatteryCost or 0) > 0)) then
+                or (s and ((s.boostCost or 0) > 0 or (s.thrustBatteryCost or 0) > 0 or (s.shieldRegenBatteryCost or 0) > 0)) then
                 categoryHasBatteryUsage[cat] = true
             end
         end
@@ -832,6 +840,11 @@ function Inventory:computeBuild(feverActive)
             local stats = def.stats
             if stats then
                 build.maxShieldBonus = build.maxShieldBonus + (stats.maxShield or 0)
+                build.shieldRegenBonus = build.shieldRegenBonus + (stats.shieldRegen or 0)
+                build.shieldRegenBatteryCostBonus = build.shieldRegenBatteryCostBonus + (stats.shieldRegenBatteryCost or 0) * catMult
+                if stats.shieldRegenDelay then
+                    build.shieldRegenDelay = stats.shieldRegenDelay
+                end
                 build.maxArmorBonus = build.maxArmorBonus + (stats.maxArmor or 0)
                 build.maxBatteryBonus = build.maxBatteryBonus + (stats.maxBattery or 0)
                 build.batteryRechargeBonus = build.batteryRechargeBonus + (stats.batteryRecharge or 0)
@@ -956,6 +969,8 @@ function Inventory:computeBuild(feverActive)
     end
 
     build.maxShield = build.noShield and 0 or (baseShield + build.maxShieldBonus)
+    build.shieldRegen = build.noShield and 0 or (baseShieldRegen + build.shieldRegenBonus)
+    build.shieldRegenBatteryCost = build.noShield and 0 or (baseShieldRegenBatteryCost + build.shieldRegenBatteryCostBonus)
     build.maxArmor = baseArmor + build.maxArmorBonus
     build.maxBattery = baseBattery + build.maxBatteryBonus
     build.batteryRecharge = (baseRecharge + build.batteryRechargeBonus) * build.batteryRechargeMult
@@ -1038,6 +1053,9 @@ function Inventory:validateLoadout(feverActive)
         generatorCount = generatorCount,
         maxBattery = build.maxBattery,
         batteryRecharge = build.batteryRecharge,
+        shieldRegen = build.shieldRegen,
+        shieldRegenBatteryCost = build.shieldRegenBatteryCost,
+        shieldRegenDelay = build.shieldRegenDelay,
         boostCost = build.boostCost,
         thrustBatteryCost = build.thrustBatteryCost,
         maxWeaponBatteryCost = build.maxWeaponBatteryCost,
