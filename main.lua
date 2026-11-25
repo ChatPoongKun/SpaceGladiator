@@ -386,7 +386,8 @@ local function closeReplay()
 end
 
 local function openReplay()
-    if replay and replay:openPlayback(Display.windowWidth, Display.windowHeight) then
+    local _, _, vpW, vpH = Display.viewportRect()
+    if replay and replay:openPlayback(vpW, vpH) then
         setScreen("replay")
     end
 end
@@ -629,7 +630,7 @@ function love.load(args)
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
-    love.graphics.setBackgroundColor(0.018, 0.028, 0.055)
+    love.graphics.setBackgroundColor(0, 0, 0)
     love.graphics.setLineStyle("smooth")
     local anyTest = testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground or testTitle
     if not anyTest then
@@ -642,8 +643,9 @@ function love.load(args)
     hud = Hud.new(Display.fontDpiScale())
     titleScreen = TitleScreen.new()
     buildFonts(Display.fontDpiScale())
-    stars = Starfield.new(Display.windowWidth, Display.windowHeight)
-    stageBackground = StageBackground.new(Display.windowWidth, Display.windowHeight)
+    local _, _, vpW, vpH = Display.viewportRect()
+    stars = Starfield.new(vpW, vpH)
+    stageBackground = StageBackground.new(vpW, vpH)
     if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground or testTitle) then
         Sfx.load()
         Bgm.load()
@@ -743,11 +745,13 @@ function love.update(dt)
                 activeExporter = nil
             end
         else
-            replay:updatePlayback(dt, Display.windowWidth, Display.windowHeight)
+            local _, _, vpW, vpH = Display.viewportRect()
+            replay:updatePlayback(dt, vpW, vpH)
         end
         return
     end
-    local bgW, bgH, bgScale = Display.windowWidth, Display.windowHeight, Display.scale or 1
+    local _, _, bgW, bgH = Display.viewportRect()
+    local bgScale = Display.scale or 1
     if not ship then
         if stageBackground then stageBackground:update(dt, 0, 0, bgW, bgH) end
         stars:update(dt, 12 * bgScale, -18 * bgScale, 0, bgW, bgH, 0)
@@ -1109,9 +1113,11 @@ function love.draw()
     if gw > 0 and gh > 0 and (gw ~= Display.windowWidth or gh ~= Display.windowHeight) then
         love.resize(gw, gh)
     end
-    local bgW, bgH = Display.windowWidth, Display.windowHeight
+    local vpX, vpY, bgW, bgH = Display.viewportRect()
+    Display.applyViewportScissor()
     if screen == "replay" and replay then
         replay:drawPlayback(width, height, fonts)
+        Display.drawLetterboxFrame()
         return
     end
     if screen == "warping" and warpState then
@@ -1132,6 +1138,8 @@ function love.draw()
             end
             local planetMask = titleVisible and stageBackground:titlePlanetMask(bgW, bgH, tpx, tpy) or nil
             stageBackground:draw(bgW, bgH, {
+                originX = vpX,
+                originY = vpY,
                 nextLevel = stage and stage.level or StageBackground.DEFAULT_LEVEL,
                 blend = bgBlend,
                 fadeThroughBlack = isEntry,
@@ -1140,9 +1148,9 @@ function love.draw()
                 titleParallaxX = tpx,
                 titleParallaxY = tpy,
             })
-            stars:draw({ transparent = true, excludeZone = planetMask })
+            stars:draw({ transparent = true, originX = vpX, originY = vpY, excludeZone = planetMask })
         else
-            stars:draw()
+            stars:draw({ originX = vpX, originY = vpY })
         end
         love.graphics.push("all")
         Display.applyTransform()
@@ -1151,6 +1159,7 @@ function love.draw()
             titleScreen:drawLaunchOverlay(fonts, width, height)
         end
         love.graphics.pop()
+        Display.drawLetterboxFrame()
         return
     end
     if stageBackground then
@@ -1162,13 +1171,15 @@ function love.draw()
         end
         local planetMask = stageBackground.titleActive and stageBackground:titlePlanetMask(bgW, bgH, tpx, tpy) or nil
         stageBackground:draw(bgW, bgH, {
+            originX = vpX,
+            originY = vpY,
             pullback = camera and camera.pullback or 0,
             titleParallaxX = tpx,
             titleParallaxY = tpy,
         })
-        stars:draw({ transparent = true, excludeZone = planetMask })
+        stars:draw({ transparent = true, originX = vpX, originY = vpY, excludeZone = planetMask })
     else
-        stars:draw()
+        stars:draw({ originX = vpX, originY = vpY })
     end
     love.graphics.push("all")
     Display.applyTransform()
@@ -1200,6 +1211,7 @@ function love.draw()
         end
     end
     love.graphics.pop()
+    Display.drawLetterboxFrame()
     if testMode and not captureRequested then
         captureRequested = true
         love.graphics.captureScreenshot(function(data)
@@ -1490,9 +1502,10 @@ function love.resize(w, h)
     Display.resize(w, h)
     Arena.resize()
     rebuildFontsIfNeeded()
-    if stars then stars:resize(Display.windowWidth, Display.windowHeight) end
-    if stageBackground then stageBackground:resize(Display.windowWidth, Display.windowHeight) end
-    if replay and replay.stars then replay.stars:resize(Display.windowWidth, Display.windowHeight) end
-    if replay and replay.stageBackground then replay.stageBackground:resize(Display.windowWidth, Display.windowHeight) end
+    local _, _, vpW, vpH = Display.viewportRect()
+    if stars then stars:resize(vpW, vpH) end
+    if stageBackground then stageBackground:resize(vpW, vpH) end
+    if replay and replay.stars then replay.stars:resize(vpW, vpH) end
+    if replay and replay.stageBackground then replay.stageBackground:resize(vpW, vpH) end
     if camera and ship then camera:update(0, ship, width, height) end
 end

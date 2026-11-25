@@ -97,6 +97,11 @@ function Starfield:draw(opts)
     local g = love.graphics
     g.push("all")
     g.origin()
+    local ox = opts and finite(opts.originX, 0) or 0
+    local oy = opts and finite(opts.originY, 0) or 0
+    if ox ~= 0 or oy ~= 0 then
+        g.translate(ox, oy)
+    end
     if not (opts and opts.transparent) then
         g.setColor(.018, .025, .065, 1)
         g.rectangle("fill", 0, 0, self.width, self.height)

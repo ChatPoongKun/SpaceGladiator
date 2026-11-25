@@ -902,8 +902,9 @@ function Replay:openPlayback(width, height)
     self.exportStatus = nil
     self.exportError = nil
     if love and love.graphics then
-        local bgW = width or Display.windowWidth or Display.VIRTUAL_WIDTH
-        local bgH = height or Display.windowHeight or Display.VIRTUAL_HEIGHT
+        local _, _, vpW, vpH = Display.viewportRect()
+        local bgW = width or vpW or Display.VIRTUAL_WIDTH
+        local bgH = height or vpH or Display.VIRTUAL_HEIGHT
         self.stars = Starfield.new(bgW, bgH)
         self.stageBackground = StageBackground.new(bgW, bgH, {
             level = self.bestClip.level or StageBackground.DEFAULT_LEVEL,
@@ -1022,8 +1023,9 @@ function Replay:updatePlayback(dt, width, height)
         local vy = lerp(f0.shipVy + f0.shipWrapVy, f1.shipVy + f1.shipWrapVy, alpha)
         local boostLevel = lerp(f0.shipBoostLevel, f1.shipBoostLevel, alpha)
         local bgScale = Display.scale or 1
-        local bgW = width or Display.windowWidth or Display.VIRTUAL_WIDTH
-        local bgH = height or Display.windowHeight or Display.VIRTUAL_HEIGHT
+        local _, _, vpW, vpH = Display.viewportRect()
+        local bgW = width or vpW or Display.VIRTUAL_WIDTH
+        local bgH = height or vpH or Display.VIRTUAL_HEIGHT
         if self.stageBackground then
             local bgBoost = 120 * boostLevel
             self.stageBackground:update(dt * speed,
@@ -1116,21 +1118,23 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
     local srcTime, speed = Replay.mapPlaybackTime(clip, playbackTime)
     local f0, f1, alpha = Replay.sampleClipFrame(clip, srcTime)
 
-    -- Background (fills full physical window in live playback, or export canvas when exporting)
-    local bgW = forExport and width or (Display.windowWidth or width)
-    local bgH = forExport and height or (Display.windowHeight or height)
+    -- Background (fills 16:9 viewport in live playback, or export canvas when exporting)
+    local vpX, vpY, vpW, vpH = 0, 0, width, height
+    if not forExport then
+        vpX, vpY, vpW, vpH = Display.viewportRect()
+    end
     if bgObj then
-        bgObj:draw(bgW, bgH)
+        bgObj:draw(vpW, vpH, { originX = vpX, originY = vpY })
         if starsObj then
-            starsObj:draw({ transparent = true })
+            starsObj:draw({ transparent = true, originX = vpX, originY = vpY })
         end
     elseif starsObj then
-        starsObj:draw()
+        starsObj:draw({ originX = vpX, originY = vpY })
     else
         g.push("all")
         g.origin()
         g.setColor(0.018, 0.025, 0.065, 1)
-        g.rectangle("fill", 0, 0, bgW, bgH)
+        g.rectangle("fill", vpX, vpY, vpW, vpH)
         g.pop()
     end
 

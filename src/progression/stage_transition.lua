@@ -799,8 +799,7 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
         local currentAngle = (warp.startAngle + (warp.angleDiff or 0) * alignT) % (math.pi * 2)
 
         if stars then
-            local bgW = Display.windowWidth or viewW
-            local bgH = Display.windowHeight or viewH
+            local _, _, bgW, bgH = Display.viewportRect()
             local bgScale = Display.scale or 1
             stars:update(dt, dirX * 180 * bgScale, dirY * 180 * bgScale, 0, bgW, bgH, 0)
         end
@@ -845,8 +844,7 @@ function StageTransition.updateWarp(warp, dt, ship, stars, camera, width, height
 
     -- Drive Starfield along travel direction so stars stretch & then calm down cleanly
     if stars then
-        local bgW = Display.windowWidth or viewW
-        local bgH = Display.windowHeight or viewH
+        local _, _, bgW, bgH = Display.viewportRect()
         local bgScale = Display.scale or 1
         local starSpeed = (240 + 4600 * speedFactor) * bgScale
         stars:update(dt, dirX * starSpeed, dirY * starSpeed, speedFactor, bgW, bgH, speedFactor)

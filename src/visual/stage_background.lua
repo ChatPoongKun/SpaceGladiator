@@ -427,6 +427,11 @@ function StageBackground:draw(width, height, opts)
     local g = love.graphics
     g.push("all")
     g.origin()
+    local ox = opts and finite(opts.originX, 0) or 0
+    local oy = opts and finite(opts.originY, 0) or 0
+    if ox ~= 0 or oy ~= 0 then
+        g.translate(ox, oy)
+    end
 
     -- Solid deep-space floor underneath in case images are absent or alpha-blended.
     local fb = StageBackground.FALLBACK_COLOR

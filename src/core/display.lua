@@ -1,6 +1,6 @@
--- Resolution-independent virtual viewport, display mode, and resolution manager.
--- Keeps the logical arena and UI fixed at 1280x720 (16:9) across every window size,
--- resolution, and aspect ratio while allowing deep-space backdrops to fill the full window.
+-- Resolution-independent 16:9 virtual viewport, display mode, and resolution manager.
+-- Keeps the logical arena, backdrops, and UI locked to a centered 16:9 (1280x720) viewport
+-- with pure black letterbox/pillarbox bars and a subtle 1px frame border across all aspect ratios.
 
 local Display = {}
 
@@ -37,6 +37,8 @@ Display.PRESET_RESOLUTIONS = {
 
 Display.windowWidth = Display.VIRTUAL_WIDTH
 Display.windowHeight = Display.VIRTUAL_HEIGHT
+Display.viewportWidth = Display.VIRTUAL_WIDTH
+Display.viewportHeight = Display.VIRTUAL_HEIGHT
 Display.scale = 1
 Display.offsetX = 0
 Display.offsetY = 0
@@ -86,12 +88,35 @@ function Display.resize(windowW, windowH)
     Display.scale, Display.offsetX, Display.offsetY = Display.computeViewport(
         windowW, windowH, Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT
     )
+    Display.viewportWidth = Display.VIRTUAL_WIDTH * Display.scale
+    Display.viewportHeight = Display.VIRTUAL_HEIGHT * Display.scale
+end
+
+function Display.viewportRect()
+    local s = Display.scale or 1
+    local x = math.floor((Display.offsetX or 0) + 0.5)
+    local y = math.floor((Display.offsetY or 0) + 0.5)
+    local w = math.max(1, math.floor((Display.VIRTUAL_WIDTH * s) + 0.5))
+    local h = math.max(1, math.floor((Display.VIRTUAL_HEIGHT * s) + 0.5))
+    return x, y, w, h
+end
+
+function Display.isLetterboxed()
+    local x, y, w, h = Display.viewportRect()
+    local winW = Display.windowWidth or w
+    local winH = Display.windowHeight or h
+    return x > 0 or y > 0 or w < winW or h < winH
 end
 
 function Display.windowToVirtual(wx, wy)
     local s = Display.scale
     if not s or s <= 0 then return wx or 0, wy or 0 end
     return ((wx or 0) - Display.offsetX) / s, ((wy or 0) - Display.offsetY) / s
+end
+
+function Display.clampVirtual(vx, vy)
+    return math.max(0, math.min(Display.VIRTUAL_WIDTH, vx or 0)),
+        math.max(0, math.min(Display.VIRTUAL_HEIGHT, vy or 0))
 end
 
 function Display.virtualToWindow(vx, vy)
@@ -104,15 +129,9 @@ function Display.virtualRectToWindow(vx, vy, vw, vh)
     return Display.offsetX + (vx or 0) * s, Display.offsetY + (vy or 0) * s, (vw or 0) * s, (vh or 0) * s
 end
 
--- Returns the full physical window rectangle expressed in virtual coordinates,
--- so full-screen dimmers/shutters seamlessly span 4:3, 16:10, and 21:9 margins.
+-- Returns the full 16:9 viewport bounds in virtual coordinates.
 function Display.virtualOverscanBounds()
-    local s = Display.scale
-    if not s or s <= 0 then
-        return 0, 0, Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT
-    end
-    return -Display.offsetX / s, -Display.offsetY / s,
-        Display.windowWidth / s, Display.windowHeight / s
+    return 0, 0, Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT
 end
 
 function Display.getMousePosition()
@@ -120,7 +139,7 @@ function Display.getMousePosition()
         return Display.VIRTUAL_WIDTH * 0.5, Display.VIRTUAL_HEIGHT * 0.5
     end
     local mx, my = love.mouse.getPosition()
-    return Display.windowToVirtual(mx, my)
+    return Display.clampVirtual(Display.windowToVirtual(mx, my))
 end
 
 function Display.applyTransform()
@@ -129,6 +148,51 @@ function Display.applyTransform()
     g.origin()
     g.translate(Display.offsetX, Display.offsetY)
     g.scale(Display.scale, Display.scale)
+end
+
+function Display.applyViewportScissor()
+    if not (love and love.graphics and love.graphics.setScissor) then return end
+    local x, y, w, h = Display.viewportRect()
+    love.graphics.setScissor(x, y, w, h)
+end
+
+function Display.drawLetterboxFrame()
+    if not (love and love.graphics) then return end
+    local g = love.graphics
+    local x, y, w, h = Display.viewportRect()
+    local winW = math.max(1, Display.windowWidth or w)
+    local winH = math.max(1, Display.windowHeight or h)
+    local hasBars = x > 0 or y > 0 or w < winW or h < winH
+
+    g.push("all")
+    g.origin()
+    g.setShader()
+    g.setScissor()
+    g.setBlendMode("alpha")
+
+    if hasBars then
+        g.setColor(0, 0, 0, 1)
+        if y > 0 then
+            g.rectangle("fill", 0, 0, winW, y)
+        end
+        local bottomY = y + h
+        if bottomY < winH then
+            g.rectangle("fill", 0, bottomY, winW, winH - bottomY)
+        end
+        if x > 0 then
+            g.rectangle("fill", 0, y, x, h)
+        end
+        local rightX = x + w
+        if rightX < winW then
+            g.rectangle("fill", rightX, y, winW - rightX, h)
+        end
+    end
+
+    g.setLineStyle("rough")
+    g.setLineWidth(1)
+    g.setColor(0.32, 0.56, 0.72, hasBars and 0.34 or 0.20)
+    g.rectangle("line", x + 0.5, y + 0.5, math.max(1, w - 1), math.max(1, h - 1))
+    g.pop()
 end
 
 -- Quantized DPI scale for font rasterization so text remains razor-sharp at 1080p/1440p/4K
