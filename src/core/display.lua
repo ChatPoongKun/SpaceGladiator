@@ -12,11 +12,12 @@ Display.MIN_WINDOW_HEIGHT = 450
 Display.SETTINGS_FILE = "display_settings.txt"
 Display.LEGACY_FULLSCREEN_FILE = "fullscreen.txt"
 
+Display.DEFAULT_MODE = "borderless"
 Display.MODES = { "windowed", "borderless", "fullscreen" }
 Display.MODE_LABELS = {
-    windowed = "창 모드",
-    borderless = "테두리 없는 전체 화면",
-    fullscreen = "전체 화면",
+    windowed = "창모드",
+    borderless = "전체창모드",
+    fullscreen = "전체화면",
 }
 
 Display.PRESET_RESOLUTIONS = {
@@ -39,7 +40,7 @@ Display.windowHeight = Display.VIRTUAL_HEIGHT
 Display.scale = 1
 Display.offsetX = 0
 Display.offsetY = 0
-Display.mode = "windowed"
+Display.mode = Display.DEFAULT_MODE
 Display.selectedWidth = Display.VIRTUAL_WIDTH
 Display.selectedHeight = Display.VIRTUAL_HEIGHT
 
@@ -188,7 +189,7 @@ function Display.isValidMode(mode)
 end
 
 function Display.serializeSettings(mode, w, h)
-    mode = Display.isValidMode(mode) and mode or "windowed"
+    mode = Display.isValidMode(mode) and mode or Display.DEFAULT_MODE
     w = math.max(Display.MIN_WINDOW_WIDTH, math.floor((w or Display.VIRTUAL_WIDTH) + 0.5))
     h = math.max(Display.MIN_WINDOW_HEIGHT, math.floor((h or Display.VIRTUAL_HEIGHT) + 0.5))
     return string.format("mode=%s\nwidth=%d\nheight=%d\n", mode, w, h)
@@ -209,7 +210,7 @@ function Display.parseSettings(content)
     end
     if not mode and not w and not h then return nil end
     return {
-        mode = mode or "windowed",
+        mode = mode or Display.DEFAULT_MODE,
         width = (w and w >= Display.MIN_WINDOW_WIDTH) and math.floor(w) or Display.VIRTUAL_WIDTH,
         height = (h and h >= Display.MIN_WINDOW_HEIGHT) and math.floor(h) or Display.VIRTUAL_HEIGHT,
     }
@@ -217,7 +218,7 @@ end
 
 function Display.loadSettings()
     if not (love and love.filesystem) then
-        return { mode = "windowed", width = Display.VIRTUAL_WIDTH, height = Display.VIRTUAL_HEIGHT }
+        return { mode = Display.DEFAULT_MODE, width = Display.VIRTUAL_WIDTH, height = Display.VIRTUAL_HEIGHT }
     end
     if love.filesystem.getInfo(Display.SETTINGS_FILE) then
         local content = love.filesystem.read(Display.SETTINGS_FILE)
@@ -229,9 +230,11 @@ function Display.loadSettings()
         local legacy = love.filesystem.read(Display.LEGACY_FULLSCREEN_FILE)
         if legacy == "1" then
             return { mode = "borderless", width = Display.VIRTUAL_WIDTH, height = Display.VIRTUAL_HEIGHT }
+        elseif legacy == "0" then
+            return { mode = "windowed", width = Display.VIRTUAL_WIDTH, height = Display.VIRTUAL_HEIGHT }
         end
     end
-    return { mode = "windowed", width = Display.VIRTUAL_WIDTH, height = Display.VIRTUAL_HEIGHT }
+    return { mode = Display.DEFAULT_MODE, width = Display.VIRTUAL_WIDTH, height = Display.VIRTUAL_HEIGHT }
 end
 
 function Display.saveSettings()
@@ -255,7 +258,7 @@ function Display.syncFromWindow()
 end
 
 function Display.applyMode(mode, resW, resH)
-    mode = Display.isValidMode(mode) and mode or Display.mode or "windowed"
+    mode = Display.isValidMode(mode) and mode or Display.mode or Display.DEFAULT_MODE
     resW = math.max(Display.MIN_WINDOW_WIDTH, math.floor((resW or Display.selectedWidth or Display.VIRTUAL_WIDTH) + 0.5))
     resH = math.max(Display.MIN_WINDOW_HEIGHT, math.floor((resH or Display.selectedHeight or Display.VIRTUAL_HEIGHT) + 0.5))
 

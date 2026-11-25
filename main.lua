@@ -550,7 +550,7 @@ end
 
 local function changeResolution(dir)
     if Display.mode == "borderless" then
-        menus.settings.subtitle = "테두리 없는 전체 화면은 모니터 기본 해상도를 사용합니다."
+        menus.settings.subtitle = "전체창모드는 모니터 기본 해상도를 사용합니다."
         return
     end
     local nextRes = Display.nextResolution(dir)

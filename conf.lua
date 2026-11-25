@@ -1,4 +1,12 @@
 function love.conf(t)
+    local isTest = false
+    for _, v in ipairs(arg or {}) do
+        if type(v) == "string" and v:sub(1, 6) == "--test" then
+            isTest = true
+            break
+        end
+    end
+
     t.identity = "drift-flight"
     t.version = "11.5"
     t.window.title = "SPACE GLADIATOR"
@@ -7,6 +15,10 @@ function love.conf(t)
     t.window.minwidth = 800
     t.window.minheight = 450
     t.window.resizable = true
+    if not isTest then
+        t.window.fullscreen = true
+        t.window.fullscreentype = "desktop"
+    end
     t.window.vsync = 1
     t.window.msaa = 4
     t.modules.joystick = false
