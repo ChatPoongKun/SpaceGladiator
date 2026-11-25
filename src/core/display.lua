@@ -269,12 +269,22 @@ function Display.applyMode(mode, resW, resH)
         return true
     end
 
-    local _, _, curFlags = love.window.getMode()
+    local curW, curH, curFlags = love.window.getMode()
     local displayIdx = (curFlags and curFlags.display) or 1
     local vsync = (curFlags and curFlags.vsync ~= nil) and curFlags.vsync or 1
     local msaa = (curFlags and curFlags.msaa ~= nil) and curFlags.msaa or 4
     local deskW, deskH = love.window.getDesktopDimensions(displayIdx)
     if not deskW or deskW <= 0 then deskW, deskH = 1920, 1080 end
+
+    if mode == "borderless"
+        and curFlags and curFlags.fullscreen and curFlags.fullscreentype == "desktop"
+        and curW == deskW and curH == deskH then
+        Display.mode = mode
+        Display.selectedWidth = resW
+        Display.selectedHeight = resH
+        Display.resize(love.graphics.getDimensions())
+        return true
+    end
 
     local targetW, targetH, flags
     if mode == "borderless" then

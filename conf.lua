@@ -1,3 +1,13 @@
+pcall(function()
+    local ffi = require("ffi")
+    if ffi.os == "Windows" then
+        ffi.cdef[[
+            int SetProcessDpiAwareness(int value);
+        ]]
+        ffi.load("shcore").SetProcessDpiAwareness(2)
+    end
+end)
+
 function love.conf(t)
     local isTest = false
     for _, v in ipairs(arg or {}) do

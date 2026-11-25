@@ -1105,6 +1105,10 @@ local function drawFlight()
 end
 
 function love.draw()
+    local gw, gh = love.graphics.getDimensions()
+    if gw > 0 and gh > 0 and (gw ~= Display.windowWidth or gh ~= Display.windowHeight) then
+        love.resize(gw, gh)
+    end
     local bgW, bgH = Display.windowWidth, Display.windowHeight
     if screen == "replay" and replay then
         replay:drawPlayback(width, height, fonts)
@@ -1477,6 +1481,12 @@ function love.focus(hasFocus)
 end
 
 function love.resize(w, h)
+    if love and love.graphics and love.graphics.getDimensions then
+        local gw, gh = love.graphics.getDimensions()
+        if gw and gh and gw > 0 and gh > 0 then
+            w, h = gw, gh
+        end
+    end
     Display.resize(w, h)
     Arena.resize()
     rebuildFontsIfNeeded()
