@@ -33,6 +33,14 @@ local pauseReturnScreen = "playing"
 local permanentUnlocksFile = "grid_unlocks.txt"
 local saveDataFiles = { permanentUnlocksFile }
 local lastFeverState, lastEvasionCount, lastWrapEvents, lastDamageCount = false, 0, 0, 0
+local lastFeedbackDamageCount, lastHullDamageCount = 0, 0
+local hitstopTimer = 0
+local hullFlashTimer, hullFlashDuration = 0, 0.34
+local HULL_HITSTOP_DURATION = 0.085
+local HIT_SHAKE_AMP = 5.0
+local HIT_SHAKE_DURATION = 0.16
+local HULL_SHAKE_AMP = 16.0
+local HULL_SHAKE_DURATION = 0.40
 local wrapTriggerCooldown, shockwaveCooldown = 0, 0
 local width, height, time = Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT, 0
 local currentFontScale = nil
@@ -42,13 +50,13 @@ local focused = true
 local gameOverHold = 1.25
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay, testFullscreen, testBackground, testTitle = false, false, false, false, false, false, false, false, false, false
+local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay, testFullscreen, testBackground, testTitle, testCombat = false, false, false, false, false, false, false, false, false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground or testTitle) then return defaultErrorHandler(message) end
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground or testTitle or testCombat) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
@@ -93,6 +101,8 @@ local function setScreen(nextScreen)
         currentBuild, stage, plinko = nil, nil, nil
         stageClearState, plinkoShutter, warpGates, warpState = nil, nil, nil, nil
         coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
+        lastFeedbackDamageCount, lastHullDamageCount = 0, 0
+        hitstopTimer, hullFlashTimer = 0, 0
         pauseReturnScreen = "playing"
     end
     Bgm.syncScreen(screen, stage and stage.level or nil, {
@@ -130,7 +140,7 @@ local function startRun(opts)
     end
     enemies = Enemies.new(nil, gladiator)
     inventory = Inventory.newStarter()
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko)
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testCombat)
         and love.filesystem.getInfo(permanentUnlocksFile) then
         inventory:loadUnlockedCells(love.filesystem.read(permanentUnlocksFile))
     end
@@ -152,10 +162,12 @@ local function startRun(opts)
             stageBackground:setLevel(stage.level, true)
         end
     end
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko) then
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testCombat) then
         stage:configureEnemies(enemies)
     end
     lastEvasionCount, lastWrapEvents, lastDamageCount = 0, 0, 0
+    lastFeedbackDamageCount, lastHullDamageCount = 0, 0
+    hitstopTimer, hullFlashTimer = 0, 0
     wrapTriggerCooldown, shockwaveCooldown = 0, 0
     syncInventoryBuild()
     if hud then hud:reset() end
@@ -179,7 +191,10 @@ local function beginStageClear()
     if ship then
         lastWrapEvents = ship.wrapEvents or 0
         lastDamageCount = ship.damageCount or 0
+        lastFeedbackDamageCount = ship.damageCount or 0
+        lastHullDamageCount = ship.hullDamageCount or 0
     end
+    hitstopTimer, hullFlashTimer = 0, 0
     if gladiator then
         lastEvasionCount = gladiator.evasionCount or 0
     end
@@ -205,7 +220,11 @@ local function enterPlinkoStageEnd()
         gladiator.lastEvent = nil
     end
     syncInventoryBuild()
-    if enemies and enemies.fire then enemies.fire:clear() end
+    if enemies then
+        if enemies.fire then enemies.fire:clear() end
+        if enemies.clearEffects then enemies:clearEffects() end
+    end
+    hitstopTimer, hullFlashTimer = 0, 0
     if turret then turret:clearEffects() end
     plinko = Plinko.new({
         stageNumber = stage and stage.number or 1,
@@ -241,6 +260,7 @@ local function enterWarpSelect(keepExistingGates)
     if enemies then
         enemies.items = {}
         if enemies.fire then enemies.fire:clear() end
+        if enemies.clearEffects then enemies:clearEffects() end
     end
     if not keepExistingGates and turret then
         turret:clearEffects()
@@ -249,6 +269,7 @@ local function enterWarpSelect(keepExistingGates)
         if ship then
             ship.x, ship.y = Arena.width * 0.5, Arena.height * 0.5
             ship.vx, ship.vy, ship.wrapVx, ship.wrapVy = 0, 0, 0, 0
+            ship.knockVx, ship.knockVy = 0, 0
             ship.invulnTimer, ship.invulnDuration = 0, 0
             ship.boostRemaining, ship.boostLevel = 0, 0
             ship.accelerating, ship.braking = false, false
@@ -280,7 +301,10 @@ local function completeEntryWarpAndStartStage()
         ship.invulnTimer, ship.invulnDuration = 0, 0
         lastWrapEvents = ship.wrapEvents or 0
         lastDamageCount = ship.damageCount or 0
+        lastFeedbackDamageCount = ship.damageCount or 0
+        lastHullDamageCount = ship.hullDamageCount or 0
     end
+    hitstopTimer, hullFlashTimer = 0, 0
     if turret and ship then
         turret.angle = ship.angle
     end
@@ -316,7 +340,10 @@ local function completeWarpAndStartStage(gate)
         ship.invulnTimer, ship.invulnDuration = 0, 0
         lastWrapEvents = ship.wrapEvents or 0
         lastDamageCount = ship.damageCount or 0
+        lastFeedbackDamageCount = ship.damageCount or 0
+        lastHullDamageCount = ship.hullDamageCount or 0
     end
+    hitstopTimer, hullFlashTimer = 0, 0
     if turret and ship then
         turret.angle = ship.angle
     end
@@ -627,12 +654,13 @@ function love.load(args)
         if arg == "--test-fullscreen" then testFullscreen = true end
         if arg == "--test-background" then testBackground = true end
         if arg == "--test-title" then testTitle = true end
+        if arg == "--test-combat" then testCombat = true end
         if arg == "--test-compact" then testMode, testCompact = true, true end
         if arg == "--test-damaged" then testMode, testDamaged = true, true end
     end
     love.graphics.setBackgroundColor(0, 0, 0)
     love.graphics.setLineStyle("smooth")
-    local anyTest = testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground or testTitle
+    local anyTest = testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground or testTitle or testCombat
     if not anyTest then
         local saved = Display.loadSettings()
         Display.applyMode(saved.mode, saved.width, saved.height)
@@ -646,7 +674,7 @@ function love.load(args)
     local _, _, vpW, vpH = Display.viewportRect()
     stars = Starfield.new(vpW, vpH)
     stageBackground = StageBackground.new(vpW, vpH)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground or testTitle) then
+    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground or testTitle or testCombat) then
         Sfx.load()
         Bgm.load()
     end
@@ -687,6 +715,13 @@ function love.load(args)
         end)
         return
     end
+    if testCombat then
+        require("tests.combat_feel")(Ship, Enemies, Turret, Gladiator, Camera, function()
+            return screen, ship, enemies, turret, gladiator, camera, hitstopTimer, hullFlashTimer, startRun
+        end)
+        love.event.quit(0)
+        return
+    end
     if testFlow then
         require("tests.flow")(function()
             return screen, ship, enemies, turret, gladiator, beginStageClear, inventory, warpGates, syncInventoryBuild
@@ -708,6 +743,21 @@ function love.load(args)
             if frame == 120 then assert(ship.battery == ship.maxBattery - ship.boostCost) end
         end
         if testDamaged then ship.shield, ship.armor, ship.hull, ship.battery = 27, 68, 2, 42 end
+    end
+end
+
+local function processPlayerDamageFeedback()
+    if not ship or not camera then return end
+    if (ship.hullDamageCount or 0) > lastHullDamageCount then
+        lastHullDamageCount = ship.hullDamageCount
+        lastFeedbackDamageCount = ship.damageCount or lastFeedbackDamageCount
+        camera:addShake(HULL_SHAKE_AMP, HULL_SHAKE_DURATION)
+        hullFlashTimer = hullFlashDuration
+        hitstopTimer = HULL_HITSTOP_DURATION
+        camera:update(0, ship, width, height, { freezeDecay = true })
+    elseif (ship.damageCount or 0) > lastFeedbackDamageCount then
+        lastFeedbackDamageCount = ship.damageCount
+        camera:addShake(HIT_SHAKE_AMP, HIT_SHAKE_DURATION)
     end
 end
 
@@ -773,8 +823,9 @@ function love.update(dt)
     time = time + dt
     if screen == "stageClear" then
         ship:update(dt, { turn = 0, thrust = false, brake = true, boost = false }, { disableWrapDetection = true })
-        if enemies and enemies.fire then
-            enemies.fire:updateHarmless(dt)
+        if enemies then
+            if enemies.fire then enemies.fire:updateHarmless(dt) end
+            if enemies.updateEffects then enemies:updateEffects(dt) end
         end
         camera:update(dt, ship, width, height)
         if turret then
@@ -811,7 +862,17 @@ function love.update(dt)
         return
     end
     if screen == "gameOver" then
+        if hitstopTimer > 0 then
+            hitstopTimer = math.max(0, hitstopTimer - dt)
+            if camera and ship then
+                camera:update(dt, ship, width, height, { freezeDecay = true })
+            end
+            return
+        end
+        hullFlashTimer = math.max(0, hullFlashTimer - dt)
         ship:update(dt, input)
+        if camera then camera:update(dt, ship, width, height) end
+        if enemies and enemies.updateEffects then enemies:updateEffects(dt) end
         gladiator:update(dt, ship)
         updateHudProximity(dt)
         if ship.destructionAge >= Ship.destructionDuration + gameOverHold then
@@ -860,6 +921,15 @@ function love.update(dt)
         return
     end
 
+    if hitstopTimer > 0 then
+        hitstopTimer = math.max(0, hitstopTimer - dt)
+        if camera and ship then
+            camera:update(dt, ship, width, height, { freezeDecay = true })
+        end
+        return
+    end
+    hullFlashTimer = math.max(0, hullFlashTimer - dt)
+
     ship:update(dt, input)
     input.boost = false
     camera:update(dt, ship, width, height)
@@ -873,6 +943,7 @@ function love.update(dt)
         (-290 + vy * 2.8 + ship.boostY * surge) * bgScale,
         ship.accelerating and 1 or 0, bgW, bgH, ship.boostLevel)
     enemies:update(dt, ship, turret.angle, camera, width, height)
+    processPlayerDamageFeedback()
     if ship:isDestroyed() then
         setScreen("gameOver")
         return
@@ -1078,6 +1149,28 @@ local function drawFlight()
         StageTransition.drawWarpGates(warpGates, ship, time, fonts, width, height)
     end
     gladiator:drawFeverOverlay(width, height, time)
+    if hullFlashTimer > 0 and hullFlashDuration > 0 then
+        local g = love.graphics
+        local p = math.max(0, math.min(1, hullFlashTimer / hullFlashDuration))
+        g.push("all")
+        if p > 0.70 then
+            local peak = (p - 0.70) / 0.30
+            g.setColor(1.0, 0.94, 0.86, 0.56 * peak)
+            g.rectangle("fill", 0, 0, width, height)
+        end
+        g.setColor(0.95, 0.14, 0.10, 0.34 * p * p)
+        g.rectangle("fill", 0, 0, width, height)
+        for band = 1, 3 do
+            local thickness = band * 14
+            local alpha = (0.30 / band) * p
+            g.setColor(1.0, 0.20, 0.14, alpha)
+            g.rectangle("fill", 0, 0, width, thickness)
+            g.rectangle("fill", 0, height - thickness, width, thickness)
+            g.rectangle("fill", 0, thickness, thickness, height - thickness * 2)
+            g.rectangle("fill", width - thickness, thickness, thickness, height - thickness * 2)
+        end
+        g.pop()
+    end
     gladiator:drawPopups(camera, width, height, fonts.small)
     drawHud()
     if screen == "warpSelect" then
@@ -1174,6 +1267,7 @@ function love.draw()
             originX = vpX,
             originY = vpY,
             pullback = camera and camera.pullback or 0,
+            shake = camera and camera:shakeIntensity() or 0,
             titleParallaxX = tpx,
             titleParallaxY = tpy,
         })

@@ -256,7 +256,14 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
         end
         local hit = table.remove(contacts, first)
         impact(fire, hit.shot, hit.x, hit.y, ship:hasShield())
-        ship:takeDamage(hit.shot.profile.damage)
+        local px = (motion.x + motion.vx * hit.at) % Arena.width
+        local py = (motion.y + motion.vy * hit.at) % Arena.height
+        local knockX = wrappedDelta(hit.x, px, Arena.width)
+        local knockY = wrappedDelta(hit.y, py, Arena.height)
+        if knockX * knockX + knockY * knockY < 1e-4 then
+            knockX, knockY = hit.shot.vx, hit.shot.vy
+        end
+        ship:takeDamage(hit.shot.profile.damage, knockX, knockY)
         if gladiator then gladiator:syncPlayerDamage(ship) end
         hit.shot.spent = true
 

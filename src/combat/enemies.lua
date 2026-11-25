@@ -2,6 +2,7 @@ local Ship = require("src.combat.ship")
 local Arena = require("src.core.arena")
 local Collision = require("src.core.collision")
 local EnemyFire = require("src.combat.enemy_fire")
+local Sfx = require("src.audio.sfx")
 local Enemies = {}
 Enemies.__index = Enemies
 local tau = 2 * math.pi
@@ -19,20 +20,20 @@ Enemies.types = {
         radius = 16, evadeSpeed = 94, turnSpeed = 3.0,
         thrust = 285, brake = 5.0, maxSpeed = 500,
         patrolMin = 55, patrolMax = 110, arrivalRadius = 32,
-        combatPower = 40,
+        combatPower = 40, maxHp = 10,
     },
     {
         name = "EQUILATERAL", vertices = {0, -24, -12 * math.sqrt(3), 12, 12 * math.sqrt(3), 12},
         radius = 24, evadeSpeed = 78,
         turnSpeed = 3.5, thrust = 255, brake = 2.5, maxSpeed = 320,
         patrolMin = 120, patrolMax = 185, arrivalRadius = 40,
-        combatPower = 70,
+        combatPower = 70, maxHp = 20,
     },
     {
         name = "OBTUSE", vertices = {0, -12, -26, 10, 26, 10},
         radius = 28, evadeSpeed = 62, turnSpeed = 2.5, thrust = 218, brake = 4.0, maxSpeed = 200,
         patrolMin = 195, patrolMax = 290, arrivalRadius = 48,
-        combatPower = 100,
+        combatPower = 100, maxHp = 50,
     },
 }
 
@@ -69,6 +70,8 @@ function Enemies.new(rng, gladiator)
         fire = EnemyFire.new(),
         gladiator = gladiator,
         playerCombatPower = Ship.combatPower,
+        deathParticles = {},
+        deathBursts = {},
     }, Enemies)
 end
 
@@ -103,6 +106,9 @@ function Enemies:spawn(ship, kindIndex, options)
     end
     enemy.kind, enemy.radius = kind, definition.radius
     enemy.combatPower = definition.combatPower
+    enemy.maxHp = (options and options.maxHp) or definition.maxHp or 10
+    enemy.hp = (options and options.hp) or enemy.maxHp
+    enemy.hitFlash = 0
     enemy.maxSpeed, enemy.thrust, enemy.turnSpeed = definition.maxSpeed, definition.thrust, definition.turnSpeed
     enemy.brake = definition.brake
     -- Give lighter thrust the same time to build momentum out of low-speed drag.
@@ -262,7 +268,7 @@ end
 
 local function wingWaypoint(group, enemy, ship, attacking)
     local definition = group.types[enemy.kind]
-    local vx, vy = ship:worldVelocity()
+    local vx, vy = (ship.vx or 0) + (ship.wrapVx or 0), (ship.vy or 0) + (ship.wrapVy or 0)
     local moving = vx * vx + vy * vy > 1
     if attacking and moving then
         local distance = math.sqrt((enemy.x - ship.x) ^ 2 + (enemy.y - ship.y) ^ 2)
@@ -437,8 +443,11 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     local startRx, startRy = rx + vx * first, ry + vy * first
     local segVx, segVy = vx * span, vy * span
     local collided = enemy.contactRadius ~= nil
-    if not enemy.contactRadius and Collision.circleEntry(startRx, startRy, segVx, segVy, radius) then
-        ship:takeDamage(contactDamage)
+    local contactT = not enemy.contactRadius and Collision.circleEntry(startRx, startRy, segVx, segVy, radius)
+    if contactT then
+        local knockX = -(startRx + segVx * contactT)
+        local knockY = -(startRy + segVy * contactT)
+        ship:takeDamage(contactDamage, knockX, knockY)
         if gladiator then gladiator:syncPlayerDamage(ship) end
         collided = true
     end
@@ -539,6 +548,7 @@ end
 
 function Enemies:update(dt, ship, aimAngle, camera, width, height)
     if dt <= 0 then return end
+    self:updateEffects(dt)
     if camera then
         self.view.left, self.view.top = camera:screenToWorld(0, 0, width, height)
         self.view.right, self.view.bottom = camera:screenToWorld(width, height, width, height)
@@ -547,6 +557,9 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
     for _, enemy in ipairs(self.items) do
         local wave = enemy.wave
         if enemy.wingman and wave.burst and wave.burst.remaining == 0 then wave.burst = nil end
+        if (enemy.hitFlash or 0) > 0 then
+            enemy.hitFlash = math.max(0, enemy.hitFlash - dt)
+        end
     end
     self.playerCombatPower = ship.combatPower or Ship.combatPower
     if self.gladiator then self.gladiator:beginEvasionBatch(ship) end
@@ -590,6 +603,90 @@ local function positionAt(enemy, fraction)
     return x + (enemy.x - x) * fraction, y + (enemy.y - y) * fraction
 end
 
+local deathPalettes = {
+    [1] = { { 1.0, 0.42, 0.18 }, { 1.0, 0.88, 0.56 }, { 0.72, 0.24, 0.28 } },
+    [2] = { { 1.0, 0.24, 0.62 }, { 1.0, 0.78, 0.92 }, { 0.68, 0.22, 0.36 } },
+    [3] = { { 1.0, 0.78, 0.28 }, { 1.0, 0.96, 0.74 }, { 1.0, 0.36, 0.22 } },
+}
+
+function Enemies:spawnDeathEffect(enemy)
+    if not enemy then return end
+    local rng = self.rng or math.random
+    local palette = deathPalettes[enemy.kind] or deathPalettes[1]
+    self.deathBursts = self.deathBursts or {}
+    self.deathParticles = self.deathParticles or {}
+
+    self.deathBursts[#self.deathBursts + 1] = {
+        x = enemy.x or 0,
+        y = enemy.y or 0,
+        maxRadius = (enemy.radius or 20) * 2.3,
+        age = 0,
+        duration = 0.28,
+        color = palette[1],
+    }
+
+    local count = enemy.kind == 3 and 30 or (enemy.kind == 2 and 20 or 14)
+    local speedScale = enemy.kind == 3 and 1.2 or 1.0
+    local evx, evy = (enemy.vx or 0) * 0.3, (enemy.vy or 0) * 0.3
+    local ex, ey = enemy.x or 0, enemy.y or 0
+    for i = 1, count do
+        local angle = (i / count) * tau + (rng() - 0.5) * 0.45
+        local speed = (85 + rng() * 195) * speedScale
+        local shape = (i % 3 == 0) and "shard" or "spark"
+        local color = palette[((i - 1) % #palette) + 1]
+        self.deathParticles[#self.deathParticles + 1] = {
+            x = ex + math.cos(angle) * (rng() * (enemy.radius or 16) * 0.45),
+            y = ey + math.sin(angle) * (rng() * (enemy.radius or 16) * 0.45),
+            vx = math.cos(angle) * speed + evx,
+            vy = math.sin(angle) * speed + evy,
+            drag = 2.4 + rng() * 1.4,
+            age = 0,
+            lifetime = 0.38 + rng() * 0.40,
+            size = shape == "shard" and (3.2 + rng() * 2.3) or (2.2 + rng() * 2.0),
+            shape = shape,
+            angle = rng() * tau,
+            spin = (rng() - 0.5) * 14,
+            r = color[1],
+            g = color[2],
+            b = color[3],
+        }
+    end
+end
+
+function Enemies:updateEffects(dt)
+    if not dt or dt <= 0 then return end
+    if self.deathBursts then
+        for i = #self.deathBursts, 1, -1 do
+            local burst = self.deathBursts[i]
+            burst.age = burst.age + dt
+            if burst.age >= burst.duration then
+                table.remove(self.deathBursts, i)
+            end
+        end
+    end
+    if self.deathParticles then
+        for i = #self.deathParticles, 1, -1 do
+            local p = self.deathParticles[i]
+            p.age = p.age + dt
+            if p.age >= p.lifetime then
+                table.remove(self.deathParticles, i)
+            else
+                local damp = math.exp(-p.drag * dt)
+                p.vx = p.vx * damp
+                p.vy = p.vy * damp
+                p.x = p.x + p.vx * dt
+                p.y = p.y + p.vy * dt
+                p.angle = p.angle + p.spin * dt
+            end
+        end
+    end
+end
+
+function Enemies:clearEffects()
+    self.deathParticles = {}
+    self.deathBursts = {}
+end
+
 function Enemies:destroy(index)
     local enemy = self.items[index]
     if not enemy then return end
@@ -599,6 +696,9 @@ function Enemies:destroy(index)
         enemy.wingman.wingman, enemy.wingman.goal = nil, nil
         enemy.wave.attacker, enemy.wave.burst = nil, nil
     end
+    self:spawnDeathEffect(enemy)
+    local pitchScale = enemy.kind == 1 and 1.14 or (enemy.kind == 3 and 0.80 or 1.0)
+    Sfx.play("enemy_destroy", pitchScale)
     table.remove(self.items, index)
     self.kills = self.kills + 1
     if enemy.kind then
@@ -610,6 +710,22 @@ function Enemies:destroy(index)
             or Ship.combatPower
         self.gladiator:recordDestroy(enemyPower, self.playerCombatPower or Ship.combatPower, enemy.x, enemy.y)
     end
+end
+
+function Enemies:damage(index, amount)
+    local enemy = self.items[index]
+    if not enemy then return false, false end
+    if enemy.hp == nil or amount == nil then
+        self:destroy(index)
+        return true, true
+    end
+    enemy.hp = enemy.hp - math.max(0, amount)
+    if enemy.hp <= 0 then
+        self:destroy(index)
+        return true, true
+    end
+    enemy.hitFlash = 0.09
+    return true, false
 end
 
 local function resolveView(group, viewOrCamera, width, height)
@@ -632,7 +748,7 @@ function Enemies:isOnScreen(x, y, viewOrCamera, width, height)
     return x >= left - eps and x <= right + eps and y >= top - eps and y <= bottom + eps
 end
 
-function Enemies:hitArea(x, y, radius, fraction, viewOrCamera, width, height)
+function Enemies:hitArea(x, y, radius, fraction, viewOrCamera, width, height, damage)
     local left, top, right, bottom = resolveView(self, viewOrCamera, width, height)
     local eps = 1e-6
     local hit = false
@@ -641,14 +757,14 @@ function Enemies:hitArea(x, y, radius, fraction, viewOrCamera, width, height)
         local ex, ey = positionAt(enemy, fraction or 1)
         if ex >= left - eps and ex <= right + eps and ey >= top - eps and ey <= bottom + eps
             and (ex - x) ^ 2 + (ey - y) ^ 2 <= (radius + enemy.radius) ^ 2 then
-            self:destroy(i)
+            self:damage(i, damage)
             hit = true
         end
     end
     return hit
 end
 
-function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCamera, width, height)
+function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCamera, width, height, damage, excludeEnemy)
     startFraction, endFraction = startFraction or 0, endFraction or 1
     local left, top, right, bottom = resolveView(self, viewOrCamera, width, height)
     local eps = 1e-6
@@ -667,25 +783,28 @@ function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCa
 
     local nearest, hitIndex = math.huge, nil
     for i, enemy in ipairs(self.items) do
-        local startX, startY = positionAt(enemy, fStart)
-        local endX, endY = positionAt(enemy, fEnd)
-        local rx, ry = cx1 - startX, cy1 - startY
-        local vx, vy = cdx - (endX - startX), cdy - (endY - startY)
-        local localT = Collision.circleEntry(rx, ry, vx, vy, enemy.radius + 2)
-        if localT then
-            local t = segStart + span * localT
-            if t < nearest then
-                local ex = startX + (endX - startX) * localT
-                local ey = startY + (endY - startY) * localT
-                if ex >= left - eps and ex <= right + eps and ey >= top - eps and ey <= bottom + eps then
-                    nearest, hitIndex = t, i
+        if enemy ~= excludeEnemy then
+            local startX, startY = positionAt(enemy, fStart)
+            local endX, endY = positionAt(enemy, fEnd)
+            local rx, ry = cx1 - startX, cy1 - startY
+            local vx, vy = cdx - (endX - startX), cdy - (endY - startY)
+            local localT = Collision.circleEntry(rx, ry, vx, vy, enemy.radius + 2)
+            if localT then
+                local t = segStart + span * localT
+                if t < nearest then
+                    local ex = startX + (endX - startX) * localT
+                    local ey = startY + (endY - startY) * localT
+                    if ex >= left - eps and ex <= right + eps and ey >= top - eps and ey <= bottom + eps then
+                        nearest, hitIndex = t, i
+                    end
                 end
             end
         end
     end
     if hitIndex then
-        self:destroy(hitIndex)
-        return x1 + dx * nearest, y1 + dy * nearest, nearest
+        local hitEnemy = self.items[hitIndex]
+        local _, destroyed = self:damage(hitIndex, damage)
+        return x1 + dx * nearest, y1 + dy * nearest, nearest, hitEnemy, destroyed
     end
 end
 
@@ -1029,6 +1148,44 @@ end
 function Enemies:draw(time)
     local g = love.graphics
     g.push("all")
+    for _, burst in ipairs(self.deathBursts or {}) do
+        local p = math.max(0, math.min(1, burst.age / burst.duration))
+        local fade = 1 - p
+        local radius = 6 + burst.maxRadius * (1 - fade * fade)
+        local c = burst.color
+        g.setColor(c[1], c[2], c[3], 0.28 * fade)
+        g.circle("fill", burst.x, burst.y, radius * 0.72)
+        g.setColor(1, 0.96, 0.86, 0.85 * fade * fade)
+        g.circle("fill", burst.x, burst.y, math.max(2, burst.maxRadius * 0.28 * fade))
+        g.setLineWidth(2.4 * fade + 0.6)
+        g.setColor(c[1], c[2], c[3], 0.92 * fade)
+        g.circle("line", burst.x, burst.y, radius)
+    end
+    for _, pt in ipairs(self.deathParticles or {}) do
+        local p = math.max(0, math.min(1, pt.age / pt.lifetime))
+        local alpha = 1 - p * p
+        local s = pt.size * (1 - 0.45 * p)
+        if pt.shape == "shard" then
+            g.push()
+            g.translate(pt.x, pt.y)
+            g.rotate(pt.angle)
+            g.setColor(pt.r, pt.g, pt.b, 0.92 * alpha)
+            g.polygon("fill", -s, -s * 0.55, s * 1.15, 0, -s * 0.45, s * 0.85)
+            g.setColor(1, 0.95, 0.84, 0.65 * alpha)
+            g.setLineWidth(0.8)
+            g.polygon("line", -s, -s * 0.55, s * 1.15, 0, -s * 0.45, s * 0.85)
+            g.pop()
+        else
+            local spd = math.sqrt(pt.vx * pt.vx + pt.vy * pt.vy)
+            local tail = math.min(14, 3 + spd * 0.045)
+            local dx, dy = spd > 1e-4 and pt.vx / spd or 1, spd > 1e-4 and pt.vy / spd or 0
+            g.setLineWidth(math.max(1.1, s * 0.75))
+            g.setColor(pt.r, pt.g, pt.b, 0.95 * alpha)
+            g.line(pt.x, pt.y, pt.x - dx * tail, pt.y - dy * tail)
+            g.setColor(1, 0.97, 0.88, 0.9 * alpha)
+            g.circle("fill", pt.x, pt.y, math.max(1, s * 0.42))
+        end
+    end
     for _, enemy in ipairs(self.items) do
         local thrust = 0
         if enemy.accelerating then
@@ -1041,7 +1198,32 @@ function Enemies:draw(time)
         g.translate(enemy.x, enemy.y)
         g.rotate(enemy.angle)
         Enemies.drawHull(enemy.kind, enemy.aimed, time, { thrust = thrust })
+        if (enemy.hitFlash or 0) > 0 then
+            local flashAlpha = math.min(1, enemy.hitFlash / 0.09)
+            local r = (enemy.radius or 20) * 1.15
+            g.setColor(1, 0.96, 0.88, 0.42 * flashAlpha)
+            g.circle("fill", 0, 0, r * 0.85)
+            g.setLineWidth(2.0)
+            g.setColor(1, 1, 1, 0.85 * flashAlpha)
+            g.circle("line", 0, 0, r)
+        end
         g.pop()
+        if enemy.hp and enemy.maxHp and enemy.hp > 0 and enemy.hp < enemy.maxHp then
+            local ratio = math.max(0, math.min(1, enemy.hp / enemy.maxHp))
+            local bw = enemy.kind == 3 and 44 or (enemy.kind == 2 and 32 or 24)
+            local bh = 3.5
+            local bx = enemy.x - bw * 0.5
+            local by = enemy.y - (enemy.radius or 20) - 10
+            g.setColor(0.03, 0.04, 0.08, 0.82)
+            g.rectangle("fill", bx - 1, by - 1, bw + 2, bh + 2, 1.5, 1.5)
+            local fillG = enemy.kind == 3 and (0.45 + 0.35 * ratio) or (0.24 + 0.36 * ratio)
+            local fillB = enemy.kind == 3 and 0.20 or 0.28
+            g.setColor(1.0, fillG, fillB, 0.95)
+            g.rectangle("fill", bx, by, math.max(2, bw * ratio), bh, 1, 1)
+            g.setColor(1, 1, 1, 0.25)
+            g.setLineWidth(0.7)
+            g.rectangle("line", bx - 1, by - 1, bw + 2, bh + 2, 1.5, 1.5)
+        end
     end
     g.pop()
     self.fire:draw()

@@ -16,6 +16,7 @@ local cues = {
     player_hit      = { "player_hit",   0.74, 1.00, 2, 0.05, 0.03 },
     boost           = { "boost",        0.60, 1.00, 1, 0.08, 0.02 },
     ship_destroy    = { "ship_destroy", 0.82, 1.00, 1, 0.10, 0.00 },
+    enemy_destroy   = { "enemy_destroy",0.72, 1.00, 4, 0.035, 0.08 },
 
     -- Gladiator / Stage feel
     evasion         = { "evasion",      0.56, 1.00, 3, 0.05, 0.05 },

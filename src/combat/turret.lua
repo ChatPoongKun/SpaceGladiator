@@ -19,6 +19,7 @@ Turret.turnSpeed = tau
 Turret.missileSpeed = 900
 Turret.missileLifetime = 600 / 900
 Turret.fireInterval = 0.18
+Turret.baseDamage = 5
 Turret.aimLineWidthRatio = 0.30
 Turret.weaponFireIntervals = {
     [1] = 0.18,
@@ -49,11 +50,11 @@ local function buildOffsets(baseCount, extraCount, baseSpread, extraSpreadRad)
     return offsets
 end
 
-local function nearestEnemy(enemies, x, y, excludeX, excludeY, camera, width, height)
+local function nearestEnemy(enemies, x, y, excludeX, excludeY, camera, width, height, excludeEnemy)
     if not enemies or not enemies.items then return nil end
     local best, bestDistSq = nil, math.huge
     for _, enemy in ipairs(enemies.items) do
-        if not enemies.isOnScreen or enemies:isOnScreen(enemy.x, enemy.y, camera, width, height) then
+        if enemy ~= excludeEnemy and (not enemies.isOnScreen or enemies:isOnScreen(enemy.x, enemy.y, camera, width, height)) then
             local dx, dy = enemy.x - x, enemy.y - y
             local dSq = dx * dx + dy * dy
             if dSq > 16 then
@@ -124,6 +125,7 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
     local extraSpreadRad = cfg and math.rad(cfg.extraSpreadDeg or 0) or 0
     local areaMult = (cfg and cfg.areaMult or 1) * (opts.areaMult or 1)
     local bounces = cfg and cfg.bounces or 0
+    local damage = math.max(0.1, (self.baseDamage or Turret.baseDamage) * (cfg and cfg.damageMult or 1))
     local dx, dy = math.sin(baseAngle), -math.cos(baseAngle)
     local x, y = ship.x + dx * muzzleLength, ship.y + dy * muzzleLength
 
@@ -136,13 +138,13 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
             local a = (baseAngle + offset) % tau
             local bdx, bdy = math.sin(a), -math.cos(a)
             local bx, by = ship.x + bdx * muzzleLength, ship.y + bdy * muzzleLength
-            local hitX, hitY
+            local hitX, hitY, hitEnemy
             if enemies then
                 local entry, exit = camera:clipRay(bx, by, bdx, bdy, width, height)
                 if exit then
                     local t = frameFraction or 1
-                    hitX, hitY = enemies:hitSegment(bx + bdx * entry, by + bdy * entry,
-                        bx + bdx * exit, by + bdy * exit, t, t, camera, width, height)
+                    hitX, hitY, _, hitEnemy = enemies:hitSegment(bx + bdx * entry, by + bdy * entry,
+                        bx + bdx * exit, by + bdy * exit, t, t, camera, width, height, damage)
                 end
             end
             if hitX then
@@ -152,13 +154,13 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
                     colors = beamImpactColors,
                 }
                 if bounces > 0 and enemies then
-                    local nxt = nearestEnemy(enemies, hitX, hitY, hitX, hitY, camera, width, height)
+                    local nxt = nearestEnemy(enemies, hitX, hitY, hitX, hitY, camera, width, height, hitEnemy)
                     if nxt then
                         local rdx, rdy = nxt.x - hitX, nxt.y - hitY
                         local rlen = math.sqrt(rdx * rdx + rdy * rdy)
                         if rlen > 0 then
                             local rhx, rhy = enemies:hitSegment(hitX, hitY, nxt.x, nxt.y,
-                                frameFraction or 1, frameFraction or 1, camera, width, height)
+                                frameFraction or 1, frameFraction or 1, camera, width, height, damage, hitEnemy)
                             if rhx then
                                 self.beams[#self.beams + 1] = {
                                     x = hitX, y = hitY, dx = rdx / rlen, dy = rdy / rlen,
@@ -200,6 +202,7 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
                 x = x, y = y, startX = x, startY = y,
                 owner = ship, angle = a, distance = 0, age = 0, shot = shot,
                 blastRadius = blastRadius * areaMult,
+                damage = damage,
             }
             local dist = math.sqrt((tx - x) ^ 2 + (ty - y) ^ 2)
             local bend = self.launchSide * math.min(rocketMaxBend, dist * 0.18)
@@ -233,6 +236,7 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
             homing = cfg and cfg.homing or false,
             homingTurnRate = cfg and cfg.homingTurnRate or 0,
             bounces = bounces,
+            damage = damage,
         }
     end
     Sfx.play("projectile")
@@ -390,11 +394,12 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                     missile.y = missile.startY + missile.vy * missile.age
                 end
             end
-            local hitX, hitY, hitTime
+            local hitX, hitY, hitTime, hitEnemy
             if enemies and not isRocket then
                 local frameStart = dt > 0 and (dt - remaining) / dt or 0
                 local frameEnd = dt > 0 and (dt - remaining + flightTime) / dt or 0
-                hitX, hitY, hitTime = enemies:hitSegment(oldX, oldY, missile.x, missile.y, frameStart, frameEnd, camera, width, height)
+                hitX, hitY, hitTime, hitEnemy = enemies:hitSegment(oldX, oldY, missile.x, missile.y,
+                    frameStart, frameEnd, camera, width, height, missile.damage, missile.lastHitEnemy)
             end
             if hitX or elapsed >= missile.lifetime then
                 local age = hitX and step - flightTime * hitTime or elapsed - missile.lifetime
@@ -403,7 +408,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                 local rRadius = missile.blastRadius or blastRadius
                 if enemies and isRocket then
                     local fraction = dt > 0 and (dt - remaining + flightTime) / dt or 0
-                    hit = enemies:hitArea(x, y, rRadius, fraction, camera, width, height)
+                    hit = enemies:hitArea(x, y, rRadius, fraction, camera, width, height, missile.damage)
                 end
                 if hit and not missile.shot.hit then
                     missile.shot.hit = true
@@ -417,12 +422,13 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                     }
                 end
                 if hitX and not isRocket and (missile.bounces or 0) > 0 and enemies then
-                    local nxt = nearestEnemy(enemies, x, y, x, y, camera, width, height)
+                    local nxt = nearestEnemy(enemies, x, y, x, y, camera, width, height, hitEnemy)
                     if nxt then
                         local bdx, bdy = nxt.x - x, nxt.y - y
                         local blen = math.sqrt(bdx * bdx + bdy * bdy)
                         if blen > 0 then
                             missile.bounces = missile.bounces - 1
+                            missile.lastHitEnemy = hitEnemy
                             missile.startX, missile.startY = x, y
                             missile.x, missile.y = x, y
                             missile.vx, missile.vy = (bdx / blen) * missile.speed, (bdy / blen) * missile.speed

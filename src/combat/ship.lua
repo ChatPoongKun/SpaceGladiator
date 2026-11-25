@@ -3,10 +3,10 @@ local Sfx = require("src.audio.sfx")
 local Ship = {}
 Ship.__index = Ship
 
-Ship.thrust = 315
-Ship.brake = 2.0
-Ship.maxSpeed = 180
-Ship.turnSpeed = 3.5
+Ship.thrust = 350
+Ship.brake = 2.5
+Ship.maxSpeed = 250
+Ship.turnSpeed = 4.5
 Ship.radius = 23
 Ship.shieldMargin = 1.3
 Ship.destructionDuration = 0.7
@@ -15,19 +15,23 @@ Ship.invulnBlinkInterval = 0.05
 Ship.driftThreshold = 50
 Ship.driftDeceleration = 50
 Ship.naturalDrag = 0.5
-Ship.boostSpeed = 420
+Ship.boostSpeed = 450
 Ship.boostHold = 0.24
 Ship.boostFalloff = 0.24
 Ship.boostCost = 25
 Ship.batteryRecharge = 12
 Ship.wrapBonusSpeed = 110
 Ship.combatPower = 100
+Ship.hitKnockbackSpeed = 190
+Ship.hullKnockbackSpeed = 270
+Ship.knockbackDecay = 14
 
 function Ship.new(width, height)
     return setmetatable({
         x = width / 2, y = height / 2,
         vx = 0, vy = 0, angle = 0,
         wrapVx = 0, wrapVy = 0,
+        knockVx = 0, knockVy = 0,
         accelerating = false, braking = false,
         boostRemaining = 0, boostLevel = 0,
         boostX = 0, boostY = -1,
@@ -43,6 +47,8 @@ function Ship.new(width, height)
         wrapInvulnDuration = 0, invulnTimer = 0, invulnDuration = 0, wrapEvents = 0,
         combatPower = Ship.combatPower,
         damageCount = 0,
+        hullDamageCount = 0,
+        lastHitLayer = nil,
         shieldDamageTaken = 0,
         armorDamageTaken = 0,
     }, Ship)
@@ -54,7 +60,7 @@ end
 
 -- The wrap bonus is part of world motion and is kept separate from flight speed.
 function Ship:worldVelocity()
-    return self.vx + self.wrapVx, self.vy + self.wrapVy
+    return self.vx + self.wrapVx + (self.knockVx or 0), self.vy + self.wrapVy + (self.knockVy or 0)
 end
 
 function Ship:hasShield()
@@ -124,36 +130,61 @@ function Ship:rechargeBattery(amount)
     self.battery = math.min(self.maxBattery, self.battery + amount)
 end
 
-function Ship:takeDamage(amount)
-    if amount <= 0 or self:isDestroyed() or self:isInvulnerable() then return end
+function Ship:applyKnockback(dx, dy, speed)
+    if not dx or not dy or not speed or speed <= 0 then return end
+    local len = math.sqrt(dx * dx + dy * dy)
+    if len > 1e-6 then
+        self.knockVx = (dx / len) * speed
+        self.knockVy = (dy / len) * speed
+    end
+end
+
+function Ship:takeDamage(amount, knockX, knockY)
+    if amount <= 0 or self:isDestroyed() or self:isInvulnerable() then return nil end
     self.damageCount = (self.damageCount or 0) + 1
     Sfx.play("player_hit")
+    local hitLayer = nil
     if self:hasShield() then
         local absorbed = math.min(self.shield, amount)
         self.shield = self.shield - absorbed
         self.shieldDamageTaken = (self.shieldDamageTaken or 0) + absorbed
         amount = amount - absorbed
+        hitLayer = "shield"
     end
-    if amount <= 0 then return end
+    if amount <= 0 then
+        self:applyKnockback(knockX, knockY, self.hitKnockbackSpeed or Ship.hitKnockbackSpeed)
+        self.lastHitLayer = hitLayer
+        return hitLayer
+    end
 
     local absorbed = math.min(self.armor, amount)
     self.armor = self.armor - absorbed
     self.armorDamageTaken = (self.armorDamageTaken or 0) + absorbed
+    hitLayer = "armor"
     if amount > absorbed then
+        hitLayer = "hull"
         self.hull = math.max(0, self.hull - 1)
+        self.hullDamageCount = (self.hullDamageCount or 0) + 1
         if self:isDestroyed() then
             Sfx.play("ship_destroy")
             self.destructionAge = 0
             self.invulnTimer = 0
             self.invulnDuration = 0
             self.vx, self.vy, self.wrapVx, self.wrapVy = 0, 0, 0, 0
+            self.knockVx, self.knockVy = 0, 0
             self.accelerating, self.braking = false, false
             self.boostRemaining, self.boostLevel = 0, 0
-            return
+            self.lastHitLayer = hitLayer
+            return hitLayer
         end
     end
 
+    local kbSpeed = hitLayer == "hull" and (self.hullKnockbackSpeed or Ship.hullKnockbackSpeed)
+        or (self.hitKnockbackSpeed or Ship.hitKnockbackSpeed)
+    self:applyKnockback(knockX, knockY, kbSpeed)
+    self.lastHitLayer = hitLayer
     self:grantInvulnerability(self.hitInvulnDuration)
+    return hitLayer
 end
 
 local function crossEdge(position, oldVelocity, velocity, bonus, extent, margin, dt, wrapBonusSpeed)
@@ -268,12 +299,25 @@ function Ship:update(dt, input, options)
             self.invulnDuration = 0
         end
     end
+    local kOldX, kOldY = self.knockVx or 0, self.knockVy or 0
+    if kOldX ~= 0 or kOldY ~= 0 then
+        local kDecay = math.exp(-(self.knockbackDecay or Ship.knockbackDecay) * dt)
+        self.knockVx = kOldX * kDecay
+        self.knockVy = kOldY * kDecay
+        if self.knockVx * self.knockVx + self.knockVy * self.knockVy < 4 then
+            self.knockVx, self.knockVy = 0, 0
+        end
+    end
+    local kNewX, kNewY = self.knockVx or 0, self.knockVy or 0
+
     local margin = self:hitRadius() + 1
     local detectWrap = not (options and options.disableWrapDetection)
     local wrapBonusSpeed = detectWrap and self.wrapBonusSpeed or Ship.wrapBonusSpeed
     local wrappedX, wrappedY
-    self.x, self.vx, self.wrapVx, wrappedX = crossEdge(self.x, oldVx, self.vx, self.wrapVx, Arena.width, margin, dt, wrapBonusSpeed)
-    self.y, self.vy, self.wrapVy, wrappedY = crossEdge(self.y, oldVy, self.vy, self.wrapVy, Arena.height, margin, dt, wrapBonusSpeed)
+    self.x, _, self.wrapVx, wrappedX = crossEdge(self.x, oldVx + kOldX, self.vx + kNewX, self.wrapVx, Arena.width, margin, dt, wrapBonusSpeed)
+    if self.vx * self.wrapVx < 0 then self.vx = 0 end
+    self.y, _, self.wrapVy, wrappedY = crossEdge(self.y, oldVy + kOldY, self.vy + kNewY, self.wrapVy, Arena.height, margin, dt, wrapBonusSpeed)
+    if self.vy * self.wrapVy < 0 then self.vy = 0 end
     if detectWrap and (wrappedX or wrappedY) then
         self.wrapEvents = (self.wrapEvents or 0) + 1
         if (self.wrapInvulnDuration or 0) > 0 then
