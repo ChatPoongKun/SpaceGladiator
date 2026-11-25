@@ -759,6 +759,9 @@ function love.load(args)
         Display.applyMode(saved.mode, saved.width, saved.height)
     end
     Display.syncFromWindow()
+    if not anyTest and love.window and love.window.hasFocus then
+        focused = love.window.hasFocus()
+    end
     width, height = Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT
     Arena.resize()
     hud = Hud.new(Display.fontDpiScale())
@@ -868,7 +871,8 @@ local function updateHudProximity(dt)
 end
 
 function love.update(dt)
-    if not focused and not testMode then return end
+    local isFrontendScreen = (screen == "title" or screen == "armory" or screen == "settings" or screen == "results")
+    if not focused and not testMode and not isFrontendScreen then return end
     dt = math.min(dt, 1 / 20)
     if dt <= 0 then return end
     if screen == "replay" and replay then
@@ -1340,6 +1344,7 @@ function love.draw()
     if screen == "replay" and replay then
         replay:drawPlayback(width, height, fonts)
         Display.drawLetterboxFrame()
+        love.graphics.setScissor()
         return
     end
     if screen == "warping" and warpState then
@@ -1382,6 +1387,7 @@ function love.draw()
         end
         love.graphics.pop()
         Display.drawLetterboxFrame()
+        love.graphics.setScissor()
         return
     end
     if stageBackground then
@@ -1437,6 +1443,7 @@ function love.draw()
     end
     love.graphics.pop()
     Display.drawLetterboxFrame()
+    love.graphics.setScissor()
     if testMode and not captureRequested then
         captureRequested = true
         love.graphics.captureScreenshot(function(data)
@@ -1453,6 +1460,9 @@ end
 
 function love.keypressed(key, _, isRepeat)
     if isRepeat then return end
+    if not focused and love.window and love.window.hasFocus and love.window.hasFocus() then
+        focused = true
+    end
     if confirmDialog then
         local count = #(confirmDialog.buttons or {})
         if key == "escape" then
@@ -1615,6 +1625,9 @@ function love.mousemoved(x, y)
 end
 
 function love.mousepressed(x, y, button)
+    if not focused and love.window and love.window.hasFocus and love.window.hasFocus() then
+        focused = true
+    end
     x, y = Display.windowToVirtual(x, y)
     if confirmDialog then
         if button ~= 1 then return end
