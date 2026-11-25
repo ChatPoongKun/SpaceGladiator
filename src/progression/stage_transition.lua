@@ -996,9 +996,6 @@ function StageTransition.drawWarp(warp, ship, camera, width, height, time, fonts
             g.pop()
         end
         g.translate(-ship.x, -ship.y)
-        if turret then
-            turret:drawMount(ship, time, width)
-        end
         ship:draw(time)
         g.pop()
     end
