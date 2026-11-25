@@ -452,8 +452,8 @@ end
 
 local function showResults(reason)
     if replay then replay:finalizeStage() end
-    local shield = ship.shieldDamageTaken or 0
-    local armor = ship.armorDamageTaken or 0
+    local shield = math.floor((ship.shieldDamageTaken or 0) + 0.5)
+    local armor = math.floor((ship.armorDamageTaken or 0) + 0.5)
     local rows = {
         {label = "글레디에이터 포인트", value = gladiator.total .. "점", heading = true},
         {label = "적 파괴", value = string.format("%d회 · %d점", gladiator.destroy.count, gladiator.destroy.points)},
@@ -461,9 +461,9 @@ local function showResults(reason)
         {label = "곡예비행", value = string.format("%d회 · %d점", gladiator.aerobatics.count, gladiator.aerobatics.points)},
         {label = "피버타임 유지시간", value = string.format("%.1f초", gladiator.feverTotalTime)},
         {label = "피버타임 최대 지속시간", value = string.format("%.1f초", gladiator.feverMaxDuration)},
-        {label = "입은 피해", value = tostring(shield + armor), heading = true},
-        {label = "실드 손실", value = tostring(shield)},
-        {label = "장갑 손실", value = tostring(armor)},
+        {label = "입은 피해", value = string.format("%d", shield + armor), heading = true},
+        {label = "실드 손실", value = string.format("%d", shield)},
+        {label = "장갑 손실", value = string.format("%d", armor)},
         {label = "격추한 적", value = enemies.kills .. "기", heading = true},
     }
     for i, kind in ipairs(Enemies.types) do
