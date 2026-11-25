@@ -111,7 +111,7 @@ ChipsData.list = {
     {
         id = "dodge_charge",
         name = "곡예 충전기",
-        target = "battery",
+        target = "generator",
         rarity = "NORMAL",
         modifiers = {
             onDodgeBattery = 15,
@@ -175,6 +175,10 @@ end
 function ChipsData.isCompatible(chipDef, moduleDef)
     if not chipDef or not moduleDef then return false end
     if chipDef.target == "any" then return true end
+    if (chipDef.target == "generator" or chipDef.target == "battery")
+        and (moduleDef.category == "generator" or moduleDef.category == "battery") then
+        return true
+    end
     return chipDef.target == moduleDef.category
 end
 

@@ -98,31 +98,58 @@ function Ship:grantInvulnerability(duration)
     end
 end
 
-function Ship:applyBuild(build)
+function Ship:applyBuild(build, opts)
     if not build then return end
     local prevMaxShield, prevMaxArmor, prevMaxBattery = self.maxShield, self.maxArmor, self.maxBattery
-    self.maxShield = build.noShield and 0 or (self.baseMaxShield + (build.maxShieldBonus or 0))
-    self.maxArmor = self.baseMaxArmor + (build.maxArmorBonus or 0)
-    self.maxBattery = self.baseMaxBattery + (build.maxBatteryBonus or 0)
-    self.batteryRecharge = (self.baseBatteryRecharge + (build.batteryRechargeBonus or 0)) * (build.batteryRechargeMult or 1)
-    self.maxSpeed = self.baseMaxSpeed + (build.maxSpeedBonus or 0)
-    self.boostSpeed = self.baseBoostSpeed + (build.boostSpeedBonus or 0)
-    self.boostCost = math.max(5, self.baseBoostCost + (build.boostCostBonus or 0))
-    self.wrapBonusSpeed = (self.baseWrapBonusSpeed + (build.wrapBonusSpeedAdd or 0)) * (build.wrapSpeedMult or 1)
-    self.wrapInvulnDuration = build.wrapInvulnDuration or 0
+    local resetVitals = opts and opts.resetVitals == true
 
-    if self.maxShield > prevMaxShield then
-        self.shield = self.shield + (self.maxShield - prevMaxShield)
+    if build.fromChassis then
+        self.chassisId = build.chassisId or self.chassisId or "striker"
+        self.maxShield = build.noShield and 0 or (build.maxShield or 0)
+        self.maxArmor = build.maxArmor or 0
+        self.maxHull = build.maxHull or self.maxHull or 3
+        self.maxBattery = build.maxBattery or 0
+        self.batteryRecharge = build.batteryRecharge or 0
+        self.maxSpeed = build.maxSpeed or 0
+        self.thrust = build.thrust or Ship.thrust
+        self.boostSpeed = build.boostSpeed or 0
+        self.boostCost = (build.boostCost and build.boostCost > 0) and build.boostCost or Ship.boostCost
+        self.wrapBonusSpeed = build.wrapBonusSpeed or Ship.wrapBonusSpeed
+        self.turnSpeed = build.turnSpeed or Ship.turnSpeed
+        self.brake = build.brake or Ship.brake
+        self.wrapInvulnDuration = build.wrapInvulnDuration or 0
+    else
+        self.maxShield = build.noShield and 0 or (self.baseMaxShield + (build.maxShieldBonus or 0))
+        self.maxArmor = self.baseMaxArmor + (build.maxArmorBonus or 0)
+        self.maxBattery = self.baseMaxBattery + (build.maxBatteryBonus or 0)
+        self.batteryRecharge = (self.baseBatteryRecharge + (build.batteryRechargeBonus or 0)) * (build.batteryRechargeMult or 1)
+        self.maxSpeed = self.baseMaxSpeed + (build.maxSpeedBonus or 0)
+        self.boostSpeed = self.baseBoostSpeed + (build.boostSpeedBonus or 0)
+        self.boostCost = math.max(5, self.baseBoostCost + (build.boostCostBonus or 0))
+        self.wrapBonusSpeed = (self.baseWrapBonusSpeed + (build.wrapBonusSpeedAdd or 0)) * (build.wrapSpeedMult or 1)
+        self.wrapInvulnDuration = build.wrapInvulnDuration or 0
     end
-    self.shield = math.min(self.maxShield, self.shield)
-    if self.maxArmor > prevMaxArmor then
-        self.armor = self.armor + (self.maxArmor - prevMaxArmor)
+
+    if resetVitals then
+        self.shield = self.maxShield
+        self.armor = self.maxArmor
+        self.hull = self.maxHull
+        self.battery = self.maxBattery
+    else
+        if self.maxShield > prevMaxShield then
+            self.shield = self.shield + (self.maxShield - prevMaxShield)
+        end
+        self.shield = math.min(self.maxShield, self.shield)
+        if self.maxArmor > prevMaxArmor then
+            self.armor = self.armor + (self.maxArmor - prevMaxArmor)
+        end
+        self.armor = math.min(self.maxArmor, self.armor)
+        self.hull = math.min(self.maxHull, self.hull)
+        if self.maxBattery > prevMaxBattery then
+            self.battery = self.battery + (self.maxBattery - prevMaxBattery)
+        end
+        self.battery = math.min(self.maxBattery, self.battery)
     end
-    self.armor = math.min(self.maxArmor, self.armor)
-    if self.maxBattery > prevMaxBattery then
-        self.battery = self.battery + (self.maxBattery - prevMaxBattery)
-    end
-    self.battery = math.min(self.maxBattery, self.battery)
 end
 
 function Ship:rechargeBattery(amount)
@@ -346,13 +373,95 @@ local function setBlendedColor(g, r, gg, b, a, flash, alpha)
     g.setColor(br, bg, bb, a * alpha)
 end
 
+function Ship.drawChassis(chassisId, x, y, angle, scale, time, opts)
+    opts = opts or {}
+    local g = love.graphics
+    local t = time or 0
+    local pulse = 0.86 + 0.14 * math.sin(t * 6.5)
+    local blinkAlpha = opts.blinkAlpha or opts.alpha or 1
+    local blinkFlash = opts.blinkFlash or 0
+    local locked = opts.locked == true
+    local drawScale = scale or 1
+
+    g.push("all")
+    g.translate(x, y)
+    g.rotate(angle or 0)
+    if drawScale ~= 1 then
+        g.scale(drawScale, drawScale)
+    end
+
+    if locked then
+        -- Dark mystery silhouette for locked ??? chassis
+        g.setColor(0.05, 0.08, 0.13, 0.92 * blinkAlpha)
+        g.polygon("fill", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
+        g.setLineWidth(1.2 / math.max(1, drawScale * 0.45))
+        g.setColor(0.32, 0.56, 0.70, 0.72 * blinkAlpha)
+        g.polygon("line", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
+        g.setColor(0.24, 0.44, 0.56, 0.35 * blinkAlpha)
+        g.line(0, -18, 0, 14)
+        g.line(-8, 3, -17.5, 11)
+        g.line(8, 3, 17.5, 11)
+        g.pop()
+        return
+    end
+
+    -- Soft cyan ambient aura behind the Option A Solid Silhouette hull.
+    for s = 2, 1, -1 do
+        local glowAlpha = (0.04 + 0.065 * blinkFlash) * (3 - s) * blinkAlpha
+        setBlendedColor(g, 0.50, 0.91, 1, glowAlpha, blinkFlash, 1)
+        g.push()
+        g.scale(1 + s * 0.08)
+        g.polygon("fill", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, 0, 17)
+        g.polygon("fill", 0, -26, 0, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
+        g.pop()
+    end
+
+    -- 1. Main hull (two-tone directional shading: lit right ice-white, shaded left cool-steel).
+    setBlendedColor(g, 0.894, 0.933, 0.969, 1, blinkFlash * 0.72, blinkAlpha)
+    g.polygon("fill", 0, -26, 5, -13, 7, -3, 8, 12, 5, 17, 0, 17)
+    g.polygon("fill", 7, -3, 20, 9, 20, 14, 8, 12)
+
+    setBlendedColor(g, 0.624, 0.702, 0.780, 1, blinkFlash * 0.72, blinkAlpha)
+    g.polygon("fill", 0, -26, 0, 17, -5, 17, -8, 12, -7, -3, -5, -13)
+    g.polygon("fill", -7, -3, -8, 12, -20, 14, -20, 9)
+
+    -- 2. Wing cyan energy stripes & center spine seam.
+    g.setLineWidth(1.6)
+    setBlendedColor(g, 0.173, 0.812, 1, 0.95, blinkFlash, blinkAlpha)
+    g.line(-8, 3, -17.5, 11)
+    g.line(8, 3, 17.5, 11)
+
+    g.setLineWidth(0.75)
+    setBlendedColor(g, 0.424, 0.506, 0.592, 0.9, blinkFlash, blinkAlpha)
+    g.line(0, -2, 0, 14)
+
+    -- 3. Cockpit canopy & glowing visor glint.
+    setBlendedColor(g, 0.051, 0.106, 0.173, 1, blinkFlash * 0.72, blinkAlpha)
+    g.polygon("fill", 0, -18, 3, -10, 2, -4, -2, -4, -3, -10)
+    setBlendedColor(g, 0.561, 0.953, 1, 0.95 * pulse, blinkFlash, blinkAlpha)
+    g.polygon("fill", 0, -16.5, 1.6, -10.5, 0, -8.5)
+
+    -- 4. Twin plasma exhaust bars & wingtip emitter dots.
+    setBlendedColor(g, 0.435, 0.941, 1, 0.84 + 0.16 * pulse, blinkFlash, blinkAlpha)
+    g.rectangle("fill", -5.2, 15.6, 4, 2.6, 0.6, 0.6)
+    g.rectangle("fill", 1.2, 15.6, 4, 2.6, 0.6, 0.6)
+    g.circle("fill", -20, 11.5, 1.5)
+    g.circle("fill", 20, 11.5, 1.5)
+
+    -- 5. Crisp outer silhouette outline.
+    g.setLineWidth(0.8 + blinkFlash * 0.6)
+    setBlendedColor(g, 1, 1, 1, 0.85, blinkFlash, blinkAlpha)
+    g.polygon("line", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
+
+    g.pop()
+end
+
 function Ship:draw(time)
     local g = love.graphics
     local t = time or 0
     local speed = self:speed()
     local boost = self.boostLevel
     local blinkAlpha, blinkFlash = self:invulnBlinkAlpha()
-    local pulse = 0.86 + 0.14 * math.sin(t * 6.5)
 
     g.push("all")
     if self:hasShield() then
@@ -372,7 +481,7 @@ function Ship:draw(time)
     if speed > 4 then
         -- The small marker shows momentum, independently of the ship's nose.
         local dx, dy = self.vx / speed, self.vy / speed
-        local length = 36 + speed / self.maxSpeed * 30
+        local length = 36 + speed / math.max(1, self.maxSpeed) * 30
         local x, y = self.x + dx * length, self.y + dy * length
         g.setLineWidth(1)
         g.setColor(0.40, 0.85, 0.92, 0.23 * blinkAlpha)
@@ -420,56 +529,13 @@ function Ship:draw(time)
             g.polygon("fill", nx - 1.0, 16.5, nx, 16 + flame * 0.42, nx + 1.0, 16.5)
         end
     end
-
-    -- Soft cyan ambient aura behind the Option A Solid Silhouette hull.
-    for scale = 2, 1, -1 do
-        local glowAlpha = (0.04 + 0.065 * blinkFlash) * (3 - scale) * blinkAlpha
-        setBlendedColor(g, 0.50, 0.91, 1, glowAlpha, blinkFlash, 1)
-        g.push()
-        g.scale(1 + scale * 0.08)
-        g.polygon("fill", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, 0, 17)
-        g.polygon("fill", 0, -26, 0, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
-        g.pop()
-    end
-
-    -- 1. Main hull (two-tone directional shading: lit right ice-white, shaded left cool-steel).
-    setBlendedColor(g, 0.894, 0.933, 0.969, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 0, -26, 5, -13, 7, -3, 8, 12, 5, 17, 0, 17)
-    g.polygon("fill", 7, -3, 20, 9, 20, 14, 8, 12)
-
-    setBlendedColor(g, 0.624, 0.702, 0.780, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 0, -26, 0, 17, -5, 17, -8, 12, -7, -3, -5, -13)
-    g.polygon("fill", -7, -3, -8, 12, -20, 14, -20, 9)
-
-    -- 2. Wing cyan energy stripes & center spine seam.
-    g.setLineWidth(1.6)
-    setBlendedColor(g, 0.173, 0.812, 1, 0.95, blinkFlash, blinkAlpha)
-    g.line(-8, 3, -17.5, 11)
-    g.line(8, 3, 17.5, 11)
-
-    g.setLineWidth(0.75)
-    setBlendedColor(g, 0.424, 0.506, 0.592, 0.9, blinkFlash, blinkAlpha)
-    g.line(0, -2, 0, 14)
-
-    -- 3. Cockpit canopy & glowing visor glint.
-    setBlendedColor(g, 0.051, 0.106, 0.173, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 0, -18, 3, -10, 2, -4, -2, -4, -3, -10)
-    setBlendedColor(g, 0.561, 0.953, 1, 0.95 * pulse, blinkFlash, blinkAlpha)
-    g.polygon("fill", 0, -16.5, 1.6, -10.5, 0, -8.5)
-
-    -- 4. Twin plasma exhaust bars & wingtip emitter dots.
-    setBlendedColor(g, 0.435, 0.941, 1, 0.84 + 0.16 * pulse, blinkFlash, blinkAlpha)
-    g.rectangle("fill", -5.2, 15.6, 4, 2.6, 0.6, 0.6)
-    g.rectangle("fill", 1.2, 15.6, 4, 2.6, 0.6, 0.6)
-    g.circle("fill", -20, 11.5, 1.5)
-    g.circle("fill", 20, 11.5, 1.5)
-
-    -- 5. Crisp outer silhouette outline.
-    g.setLineWidth(0.8 + blinkFlash * 0.6)
-    setBlendedColor(g, 1, 1, 1, 0.85, blinkFlash, blinkAlpha)
-    g.polygon("line", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
-
     g.pop()
+
+    Ship.drawChassis(self.chassisId or "striker", self.x, self.y, self.angle, 1, t, {
+        blinkAlpha = blinkAlpha,
+        blinkFlash = blinkFlash,
+    })
+
     g.pop()
 end
 

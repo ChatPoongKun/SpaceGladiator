@@ -1,21 +1,15 @@
--- 4x4 -> 6x6 Diamond Grid Inventory.
+-- Chassis-driven Grid Inventory (e.g. 5x3 triangle for Striker MK-I).
 -- Pure Lua logic (no LÖVE graphics dependency) so it can be unit-tested cleanly.
--- No permanent separate stash exists for modules or support chips: every item
--- has a grid shape and must fit inside the main diamond inventory (or a module
--- socket for support chips). Post-stage rewards sit in a temporary pending tray
--- and are discarded if not placed into the main inventory before the next stage.
+-- Handles module & support chip placement, rotation, socket activation,
+-- derived build stats, sortie validation, cloning, and loadout serialization.
 
+local ChassisData = require("src.data.chassis_data")
 local ModulesData = require("src.data.modules_data")
 local ChipsData = require("src.data.chips_data")
 local Rarity = require("src.data.rarity")
 
 local Inventory = {}
 Inventory.__index = Inventory
-
-Inventory.GRID_SIZE = 6
-Inventory.CENTER = 3.5
-Inventory.START_RADIUS = 2 -- 4x4 diamond (12 cells: 2+4+4+2)
-Inventory.MAX_RADIUS = 3   -- 6x6 diamond (24 cells: 2+4+6+6+4+2)
 
 local function cellKey(r, c)
     return r .. "," .. c
@@ -31,12 +25,26 @@ local function removeFromList(list, item)
     return false
 end
 
-function Inventory.isInDiamond(r, c, radius)
-    if r < 1 or r > Inventory.GRID_SIZE or c < 1 or c > Inventory.GRID_SIZE then
-        return false
+local function initGridForChassis(self, chassis)
+    self.chassisId = chassis.id
+    self.chassis = chassis
+    self.rows = chassis.grid.rows
+    self.cols = chassis.grid.cols
+    self.mask = chassis.grid.mask
+    self.gridSize = math.max(self.rows, self.cols)
+    self.unlocked = {}
+    self.cells = {}
+    self.placed = {}
+    self.placedChips = {}
+    self.pendingRewards = {}
+
+    for r = 1, self.rows do
+        self.cells[r] = {}
+        self.unlocked[r] = {}
+        for c = 1, self.cols do
+            self.unlocked[r][c] = (self.mask[r] and self.mask[r][c] == 1) or false
+        end
     end
-    local dist = math.abs(r - Inventory.CENTER) + math.abs(c - Inventory.CENTER)
-    return dist <= (radius or Inventory.MAX_RADIUS) + 1e-6
 end
 
 function Inventory.normalizeRotation(rot)
@@ -109,31 +117,19 @@ end
 
 function Inventory.new(opts)
     opts = opts or {}
+    local chassis = ChassisData.get(opts.chassisId or ChassisData.DEFAULT_ID)
     local self = setmetatable({
-        gridSize = Inventory.GRID_SIZE,
-        center = Inventory.CENTER,
-        unlocked = {},
-        cells = {},          -- cells[r][c] = placed module or placed chip or nil
-        placed = {},         -- list of placed moduleInstances
-        placedChips = {},    -- list of unequipped chipInstances stored directly on grid cells
-        pendingRewards = {}, -- temporary post-stage reward items (discarded if not placed)
         nextId = 1,
         metaPoints = opts.metaPoints or 0,
         expandCost = opts.expandCost or 100,
     }, Inventory)
 
-    for r = 1, self.gridSize do
-        self.cells[r] = {}
-        self.unlocked[r] = {}
-        for c = 1, self.gridSize do
-            self.unlocked[r][c] = Inventory.isInDiamond(r, c, Inventory.START_RADIUS)
-        end
-    end
+    initGridForChassis(self, chassis)
 
     if opts.unlockedCells then
         for _, coord in ipairs(opts.unlockedCells) do
             local r, c = coord[1], coord[2]
-            if Inventory.isInDiamond(r, c, Inventory.MAX_RADIUS) then
+            if self:isValidCell(r, c) then
                 self.unlocked[r][c] = true
             end
         end
@@ -142,16 +138,31 @@ function Inventory.new(opts)
     return self
 end
 
+function Inventory:setChassis(chassisId)
+    local chassis = ChassisData.get(chassisId)
+    initGridForChassis(self, chassis)
+    return chassis
+end
+
+function Inventory:isValidCell(r, c)
+    if not r or not c or r < 1 or r > self.rows or c < 1 or c > self.cols then
+        return false
+    end
+    return self.mask[r] ~= nil and self.mask[r][c] == 1
+end
+
 function Inventory:isUnlocked(r, c)
-    if not self.unlocked[r] then return false end
+    if not self:isValidCell(r, c) or not self.unlocked[r] then
+        return false
+    end
     return self.unlocked[r][c] == true
 end
 
 function Inventory:unlockedCellCount()
     local count = 0
-    for r = 1, self.gridSize do
-        for c = 1, self.gridSize do
-            if self.unlocked[r][c] then count = count + 1 end
+    for r = 1, self.rows do
+        for c = 1, self.cols do
+            if self:isUnlocked(r, c) then count = count + 1 end
         end
     end
     return count
@@ -159,19 +170,17 @@ end
 
 function Inventory:maxCellCount()
     local count = 0
-    for r = 1, self.gridSize do
-        for c = 1, self.gridSize do
-            if Inventory.isInDiamond(r, c, Inventory.MAX_RADIUS) then count = count + 1 end
+    for r = 1, self.rows do
+        for c = 1, self.cols do
+            if self:isValidCell(r, c) then count = count + 1 end
         end
     end
     return count
 end
 
--- Permanent expansion: can unlock any locked cell inside the 6x6 diamond
--- that is orthogonally adjacent to an already-unlocked cell.
 function Inventory:canUnlockCell(r, c)
-    if not Inventory.isInDiamond(r, c, Inventory.MAX_RADIUS) then
-        return false, "outside_diamond"
+    if not self:isValidCell(r, c) then
+        return false, "outside_chassis"
     end
     if self:isUnlocked(r, c) then
         return false, "already_unlocked"
@@ -187,8 +196,8 @@ end
 
 function Inventory:expandableCells()
     local result = {}
-    for r = 1, self.gridSize do
-        for c = 1, self.gridSize do
+    for r = 1, self.rows do
+        for c = 1, self.cols do
             if self:canUnlockCell(r, c) then
                 result[#result + 1] = { r = r, c = c }
             end
@@ -222,7 +231,7 @@ function Inventory:createModule(defId, opts)
         col = nil,
         disabled = false,
         maxSockets = def.maxSockets,
-        sockets = {}, -- sockets[i] = chipInstance or nil
+        sockets = {},
     }
     self.nextId = self.nextId + 1
     return mod
@@ -249,8 +258,6 @@ function Inventory:createChip(chipId, opts)
     return chip
 end
 
--- Post-stage temporary reward queue (not a permanent stash).
--- Anything remaining here when advancing to the next stage is discarded.
 function Inventory:addPendingModule(defId, opts)
     local mod = type(defId) == "table" and defId or self:createModule(defId, opts)
     self.pendingRewards[#self.pendingRewards + 1] = mod
@@ -332,6 +339,7 @@ end
 
 function Inventory:canPlace(item, row, col, rotation)
     if not item or not row or not col then return false, "invalid_item" end
+    if self.chassis and self.chassis.locked then return false, "locked_chassis" end
     local shapeCells = Inventory.getShapeCells(item, rotation)
     if #shapeCells == 0 then return false, "invalid_shape" end
     for _, coord in ipairs(shapeCells) do
@@ -349,8 +357,8 @@ end
 
 function Inventory:removeItem(item, toPending)
     if not item or not item.row then return false end
-    for r = 1, self.gridSize do
-        for c = 1, self.gridSize do
+    for r = 1, self.rows do
+        for c = 1, self.cols do
             if self.cells[r][c] == item then
                 self.cells[r][c] = nil
             end
@@ -475,14 +483,22 @@ function Inventory.isWeaponModule(item)
     return item ~= nil and item.kind == "module" and item.def ~= nil and item.def.category == "weapon"
 end
 
-function Inventory:activeWeaponCount(excludeMod)
+function Inventory:countByCategory(category, excludeMod)
+    local target = (category == "battery") and "generator" or category
     local count = 0
     for _, mod in ipairs(self.placed) do
-        if mod ~= excludeMod and Inventory.isWeaponModule(mod) and not mod.disabled then
-            count = count + 1
+        if mod ~= excludeMod and mod.def then
+            local cat = (mod.def.category == "battery") and "generator" or mod.def.category
+            if cat == target and not (cat == "weapon" and mod.disabled) then
+                count = count + 1
+            end
         end
     end
     return count
+end
+
+function Inventory:activeWeaponCount(excludeMod)
+    return self:countByCategory("weapon", excludeMod)
 end
 
 function Inventory:totalWeaponCount(excludeItem)
@@ -561,8 +577,45 @@ function Inventory:getActiveChips(mod)
     return result
 end
 
--- Compute full derived ship + weapon build from all currently placed modules
--- and their equipped support chips.
+function Inventory:getPartPeakBatteryCost(mod, feverActive)
+    if not mod or not mod.def then return 0 end
+    local def = mod.def
+    local baseLoad = def.batteryLoad or 0
+    local fireCost = def.baseBatteryCost or 0
+    local activationCost = def.activationBatteryCost or (def.stats and def.stats.boostCost) or 0
+
+    local activeChips = self:getActiveChips(mod)
+    local nonFeverBatteryMult = 1.0
+    local chipFireAdd = 0
+    local boostCostAdd = 0
+    local triggerCost = 0
+    for _, chip in ipairs(activeChips) do
+        local m = chip.def and chip.def.modifiers
+        if m then
+            if m.nonFeverBatteryMult and not feverActive then
+                nonFeverBatteryMult = nonFeverBatteryMult * m.nonFeverBatteryMult
+            end
+            if m.batteryCost then
+                chipFireAdd = chipFireAdd + m.batteryCost
+            end
+            if m.boostCostAdd then
+                boostCostAdd = boostCostAdd + m.boostCostAdd
+            end
+            if m.hitTriggerBattery then
+                triggerCost = math.max(triggerCost, m.hitTriggerBattery)
+            end
+        end
+    end
+
+    if def.weaponIndex and chipFireAdd > 0 then
+        fireCost = fireCost + math.floor(chipFireAdd * nonFeverBatteryMult + 0.5)
+    end
+    if activationCost > 0 then
+        activationCost = activationCost + boostCostAdd
+    end
+    return math.max(baseLoad, fireCost, activationCost, triggerCost)
+end
+
 local function newWeaponConfig(def, mod)
     return {
         moduleId = mod and mod.id or nil,
@@ -577,6 +630,7 @@ local function newWeaponConfig(def, mod)
         cooldownMult = 1.0,
         manualCooldownMult = 1.0,
         batteryCost = (def and def.baseBatteryCost) or 0,
+        batteryLoad = (def and def.batteryLoad) or 0,
         bounces = 0,
         homing = false,
         homingTurnRate = 0,
@@ -636,20 +690,64 @@ local function applyWeaponChipModifiers(targetCfg, m, chipScale)
     end
 end
 
+-- Compute full derived ship + weapon build from the selected chassis, all
+-- currently placed modules, and their equipped support chips.
 function Inventory:computeBuild(feverActive)
+    local chassis = self.chassis or ChassisData.get(self.chassisId)
+    local base = (chassis and chassis.baseStats) or {}
+
+    local baseShield = base.maxShield or 0
+    local baseArmor = base.maxArmor or 0
+    local baseHull = base.maxHull or 0
+    local baseBattery = base.maxBattery or 0
+    local baseBatteryOutput = base.batteryOutput or 0
+    local baseRecharge = base.batteryRecharge or 0
+    local baseMaxSpeed = base.maxSpeed or 0
+    local baseThrust = base.thrust or 0
+    local baseBoostSpeed = base.boostSpeed or 0
+    local baseBoostCost = base.boostCost or 0
+    local baseWrapBonusSpeed = base.wrapBonusSpeed or 0
+
     local build = {
-        -- Ship additive bonuses on top of Ship base stats (100/100/3/100)
+        fromChassis = true,
+        chassisId = chassis and chassis.id or self.chassisId,
+        chassis = chassis,
+        specialEffect = chassis and chassis.specialEffect or nil,
+
+        -- Absolute derived chassis + module stats
+        maxShield = baseShield,
+        maxArmor = baseArmor,
+        maxHull = baseHull,
+        maxBattery = baseBattery,
+        batteryOutput = baseBatteryOutput,
+        batteryRecharge = baseRecharge,
+        maxSpeed = baseMaxSpeed,
+        thrust = baseThrust,
+        boostSpeed = baseBoostSpeed,
+        boostCost = baseBoostCost,
+        wrapBonusSpeed = baseWrapBonusSpeed,
+        turnSpeed = base.turnSpeed or 4.5,
+        brake = base.brake or 2.5,
+
+        -- Additive bonus view (module contribution over chassis base)
         maxShieldBonus = 0,
         maxArmorBonus = 0,
         maxBatteryBonus = 0,
+        batteryOutputBonus = 0,
         batteryRechargeBonus = 0,
         batteryRechargeMult = 1.0,
         maxSpeedBonus = 0,
+        thrustBonus = 0,
         boostSpeedBonus = 0,
         boostCostBonus = 0,
         wrapBonusSpeedAdd = 0,
         wrapSpeedMult = 1.0,
         wrapInvulnDuration = 0,
+
+        totalBatteryLoad = 0,
+        maxPartBatteryCost = 0,
+        maxPartBatteryName = nil,
+
         noShield = false,
         scoreMultiplier = 1.0,
         onDodgeBattery = 0,
@@ -666,19 +764,39 @@ function Inventory:computeBuild(feverActive)
         build.weapons[w] = cfg
     end
 
+    local thrusterCount = 0
     for _, mod in ipairs(self.placed) do
         local def = mod.def
         local isDisabledWeapon = Inventory.isWeaponModule(mod) and mod.disabled == true
-        if not isDisabledWeapon then
+        if not isDisabledWeapon and def then
             local stats = def.stats
+            if def.category == "thruster" then
+                thrusterCount = thrusterCount + 1
+                if thrusterCount > 1 and def.stackStats then
+                    stats = def.stackStats
+                end
+            end
+
             if stats then
                 build.maxShieldBonus = build.maxShieldBonus + (stats.maxShield or 0)
                 build.maxArmorBonus = build.maxArmorBonus + (stats.maxArmor or 0)
                 build.maxBatteryBonus = build.maxBatteryBonus + (stats.maxBattery or 0)
+                build.batteryOutputBonus = build.batteryOutputBonus + (stats.batteryOutput or 0)
                 build.batteryRechargeBonus = build.batteryRechargeBonus + (stats.batteryRecharge or 0)
                 build.maxSpeedBonus = build.maxSpeedBonus + (stats.maxSpeed or 0)
+                build.thrustBonus = build.thrustBonus + (stats.thrust or 0)
                 build.boostSpeedBonus = build.boostSpeedBonus + (stats.boostSpeed or 0)
                 build.wrapBonusSpeedAdd = build.wrapBonusSpeedAdd + (stats.wrapBonusSpeed or 0)
+                if stats.boostCost and build.boostCost == 0 then
+                    build.boostCost = stats.boostCost
+                end
+            end
+
+            build.totalBatteryLoad = build.totalBatteryLoad + (def.batteryLoad or 0)
+            local partPeak = self:getPartPeakBatteryCost(mod, feverActive)
+            if partPeak > build.maxPartBatteryCost then
+                build.maxPartBatteryCost = partPeak
+                build.maxPartBatteryName = def.name
             end
 
             local activeChips = self:getActiveChips(mod)
@@ -700,6 +818,7 @@ function Inventory:computeBuild(feverActive)
                 wCfg.installed = true
                 wCfg.fireInterval = wCfg.fireInterval or def.fireInterval
                 wCfg.batteryCost = wCfg.batteryCost + (def.baseBatteryCost or 0)
+                wCfg.batteryLoad = wCfg.batteryLoad + (def.batteryLoad or 0)
                 mCfg = newWeaponConfig(def, mod)
                 build.weaponModules[#build.weaponModules + 1] = mCfg
             end
@@ -751,23 +870,217 @@ function Inventory:computeBuild(feverActive)
         end
     end
 
+    build.maxShield = build.noShield and 0 or (baseShield + build.maxShieldBonus)
+    build.maxArmor = baseArmor + build.maxArmorBonus
+    build.maxBattery = baseBattery + build.maxBatteryBonus
+    build.batteryOutput = baseBatteryOutput + build.batteryOutputBonus
+    build.batteryRecharge = (baseRecharge + build.batteryRechargeBonus) * build.batteryRechargeMult
+    build.maxSpeed = baseMaxSpeed + build.maxSpeedBonus
+    build.thrust = baseThrust + build.thrustBonus
+    build.boostSpeed = baseBoostSpeed + build.boostSpeedBonus
+    if build.boostCost > 0 then
+        build.boostCost = math.max(5, build.boostCost + build.boostCostBonus)
+    end
+    build.wrapBonusSpeed = (baseWrapBonusSpeed + build.wrapBonusSpeedAdd) * build.wrapSpeedMult
+
+    if chassis and chassis.applySpecialEffect then
+        chassis.applySpecialEffect(build, self)
+    end
+
     return build
 end
 
--- Create a default starter inventory on the 4x4 diamond (expandable to 6x6)
--- with the baseline projectile turret installed and NO separate stash.
+function Inventory:validateLoadout(feverActive)
+    local build = self:computeBuild(feverActive)
+    local warnings = {}
+    local weaponCount = self:countByCategory("weapon")
+    local thrusterCount = self:countByCategory("thruster")
+    local generatorCount = self:countByCategory("generator")
+
+    if self.chassis and self.chassis.locked then
+        warnings[#warnings + 1] = {
+            code = "locked_chassis",
+            message = "해금되지 않은 섀시입니다.",
+        }
+    end
+    if weaponCount < 1 then
+        warnings[#warnings + 1] = {
+            code = "missing_weapon",
+            message = "무기 모듈을 최소 1개 이상 장착해야 합니다.",
+        }
+    end
+    if thrusterCount < 1 then
+        warnings[#warnings + 1] = {
+            code = "missing_thruster",
+            message = "추진기 모듈을 최소 1개 이상 장착해야 합니다.",
+        }
+    end
+    if generatorCount < 1 then
+        warnings[#warnings + 1] = {
+            code = "missing_generator",
+            message = "제너레이터 모듈을 최소 1개 이상 장착해야 합니다.",
+        }
+    end
+    if build.totalBatteryLoad > build.batteryOutput then
+        warnings[#warnings + 1] = {
+            code = "output_exceeded",
+            message = string.format("부품 배터리 소모 합계(%d)가 제너레이터 출력(%d)을 초과했습니다.",
+                build.totalBatteryLoad, build.batteryOutput),
+        }
+    end
+    if build.maxPartBatteryCost > build.maxBattery then
+        warnings[#warnings + 1] = {
+            code = "capacity_exceeded",
+            message = string.format("%s의 배터리 소모량(%d)이 배터리 총량(%d)을 초과했습니다.",
+                build.maxPartBatteryName or "부품", build.maxPartBatteryCost, build.maxBattery),
+        }
+    end
+
+    local summary = {
+        build = build,
+        weaponCount = weaponCount,
+        thrusterCount = thrusterCount,
+        generatorCount = generatorCount,
+        totalBatteryLoad = build.totalBatteryLoad,
+        batteryOutput = build.batteryOutput,
+        maxBattery = build.maxBattery,
+        maxPartBatteryCost = build.maxPartBatteryCost,
+        maxPartBatteryName = build.maxPartBatteryName,
+    }
+    return #warnings == 0, warnings, summary
+end
+
+function Inventory:clone()
+    local copy = Inventory.new({ chassisId = self.chassisId })
+    for r = 1, self.rows do
+        for c = 1, self.cols do
+            copy.unlocked[r][c] = self.unlocked[r][c] == true
+        end
+    end
+
+    for _, mod in ipairs(self.placed) do
+        local newMod = copy:createModule(mod.defId, { rarity = mod.rarity })
+        newMod.disabled = mod.disabled == true
+        copy:placeItem(newMod, mod.row, mod.col, mod.rotation)
+        for i = 1, (mod.maxSockets or 0) do
+            local chip = mod.sockets[i]
+            if chip then
+                local newChip = copy:createChip(chip.defId, { rarity = chip.rarity })
+                copy:equipChip(newMod, i, newChip)
+            end
+        end
+    end
+
+    for _, chip in ipairs(self.placedChips) do
+        local newChip = copy:createChip(chip.defId, { rarity = chip.rarity })
+        copy:placeItem(newChip, chip.row, chip.col, chip.rotation)
+    end
+
+    for _, item in ipairs(self.pendingRewards) do
+        if item.kind == "chip" then
+            copy:addPendingChip(item.defId, { rarity = item.rarity })
+        else
+            copy:addPendingModule(item.defId, { rarity = item.rarity })
+        end
+    end
+
+    return copy
+end
+
+-- Create a default valid starter loadout on the Striker MK-I 5x3 triangle grid:
+-- projectile (1x2) at (1,3), battery/generator (1x2) at (2,2), thruster (1x1) at (3,3).
 function Inventory.newStarter(opts)
-    local inv = Inventory.new(opts)
-    local proj = inv:createModule("projectile")
-    inv:placeModule(proj, 3, 3, 0)
+    local inv = Inventory.new({
+        chassisId = opts and opts.chassisId or ChassisData.DEFAULT_ID,
+        metaPoints = opts and opts.metaPoints or 0,
+        expandCost = opts and opts.expandCost or 100,
+    })
+    if not (inv.chassis and inv.chassis.locked) then
+        local proj = inv:createModule("projectile")
+        inv:placeModule(proj, 1, 3, 0)
+        local gen = inv:createModule("battery")
+        inv:placeModule(gen, 2, 2, 0)
+        local thr = inv:createModule("thruster")
+        inv:placeModule(thr, 3, 3, 0)
+    end
+    return inv
+end
+
+function Inventory:serializeLoadout()
+    local lines = {
+        "chassis=" .. tostring(self.chassisId or ChassisData.DEFAULT_ID),
+    }
+    for idx, mod in ipairs(self.placed) do
+        lines[#lines + 1] = string.format("mod=%s,%d,%d,%d,%d",
+            mod.defId, mod.row or 1, mod.col or 1, mod.rotation or 0, mod.disabled and 1 or 0)
+        for s = 1, (mod.maxSockets or 0) do
+            local chip = mod.sockets[s]
+            if chip then
+                lines[#lines + 1] = string.format("chip=%d,%d,%s", idx, s, chip.defId)
+            end
+        end
+    end
+    for _, chip in ipairs(self.placedChips) do
+        lines[#lines + 1] = string.format("gridchip=%s,%d,%d,%d",
+            chip.defId, chip.row or 1, chip.col or 1, chip.rotation or 0)
+    end
+    return table.concat(lines, "\n")
+end
+
+function Inventory.deserializeLoadout(str)
+    if type(str) ~= "string" or str == "" then
+        return nil, "empty"
+    end
+    local chassisId = str:match("chassis=([%w_%-]+)")
+    local chassis = chassisId and ChassisData.byId[chassisId] or nil
+    if not chassis or chassis.locked then
+        return nil, "invalid_chassis"
+    end
+
+    local inv = Inventory.new({ chassisId = chassis.id })
+    local placedMods = {}
+
+    for line in str:gmatch("[^\r\n]+") do
+        local defId, rStr, cStr, rotStr, disStr = line:match("^mod=([%w_%-]+),(%d+),(%d+),(%d+),(%d+)$")
+        if defId then
+            if not ModulesData.get(defId) then return nil, "unknown_module" end
+            local mod = inv:createModule(defId)
+            mod.disabled = (tonumber(disStr) == 1)
+            local ok, reason = inv:placeItem(mod, tonumber(rStr), tonumber(cStr), tonumber(rotStr))
+            if not ok then return nil, reason or "place_failed" end
+            placedMods[#placedMods + 1] = mod
+        else
+            local modIdxStr, sockStr, chipId = line:match("^chip=(%d+),(%d+),([%w_%-]+)$")
+            if modIdxStr then
+                local host = placedMods[tonumber(modIdxStr)]
+                if not host or not ChipsData.get(chipId) then return nil, "invalid_chip" end
+                local chip = inv:createChip(chipId)
+                local ok, reason = inv:equipChip(host, tonumber(sockStr), chip)
+                if not ok then return nil, reason or "equip_failed" end
+            else
+                local gChipId, grStr, gcStr, gRotStr = line:match("^gridchip=([%w_%-]+),(%d+),(%d+),(%d+)$")
+                if gChipId then
+                    if not ChipsData.get(gChipId) then return nil, "unknown_chip" end
+                    local chip = inv:createChip(gChipId)
+                    local ok, reason = inv:placeItem(chip, tonumber(grStr), tonumber(gcStr), tonumber(gRotStr))
+                    if not ok then return nil, reason or "chip_place_failed" end
+                end
+            end
+        end
+    end
+
+    local valid = inv:validateLoadout(false)
+    if not valid then
+        return nil, "invalid_loadout"
+    end
     return inv
 end
 
 function Inventory:serializeUnlockedCells()
     local parts = {}
-    for r = 1, self.gridSize do
-        for c = 1, self.gridSize do
-            if self.unlocked[r][c] then
+    for r = 1, self.rows do
+        for c = 1, self.cols do
+            if self:isUnlocked(r, c) then
                 parts[#parts + 1] = cellKey(r, c)
             end
         end
@@ -779,7 +1092,7 @@ function Inventory:loadUnlockedCells(str)
     if not str or str == "" then return end
     for rStr, cStr in string.gmatch(str, "(%d+),(%d+)") do
         local r, c = tonumber(rStr), tonumber(cStr)
-        if r and c and Inventory.isInDiamond(r, c, Inventory.MAX_RADIUS) then
+        if r and c and self:isValidCell(r, c) then
             self.unlocked[r][c] = true
         end
     end
