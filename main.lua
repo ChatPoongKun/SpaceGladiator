@@ -31,11 +31,13 @@ local inventoryReturnScreen = "playing"
 local inventoryStageEndMode = false
 local pauseReturnScreen = "playing"
 local permanentUnlocksFile = "grid_unlocks.txt"
+local saveDataFiles = { permanentUnlocksFile }
 local lastFeverState, lastEvasionCount, lastWrapEvents, lastDamageCount = false, 0, 0, 0
 local wrapTriggerCooldown, shockwaveCooldown = 0, 0
 local width, height, time = Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT, 0
 local currentFontScale = nil
 local screen, selectedButton
+local confirmDialog = nil
 local focused = true
 local gameOverHold = 1.25
 local input = { turn = 0, thrust = false, brake = false, boost = false }
@@ -54,6 +56,7 @@ end
 local function setScreen(nextScreen)
     local prevScreen = screen
     screen, selectedButton = nextScreen, 1
+    confirmDialog = nil
     input.boost, firing = false, false
     local preserveSfx = (screen == "gameOver" or screen == "stageClear" or screen == "plinko"
         or screen == "warpSelect" or screen == "warping" or screen == "playing")
@@ -465,13 +468,54 @@ local function rebuildFontsIfNeeded()
     buildFonts(Display.fontDpiScale())
 end
 
-local function openSettings()
-    menus.settings.subtitle = nil
-    setScreen("settings")
+local function closeSettings()
+    confirmDialog = nil
+    setScreen(ship and "pause" or "title")
 end
 
-local function closeSettings()
-    setScreen(ship and "pause" or "title")
+local function resetSaveData()
+    local removedOk = true
+    for _, filename in ipairs(saveDataFiles) do
+        if love.filesystem.getInfo(filename) then
+            local ok, removed = pcall(love.filesystem.remove, filename)
+            if not ok or not removed then
+                removedOk = false
+            end
+        end
+    end
+    inventory = nil
+    if removedOk then
+        menus.settings.subtitle = "저장 데이터가 초기화되었습니다."
+        selectedButton = 3
+    else
+        menus.settings.subtitle = "저장 데이터를 초기화할 수 없습니다."
+        Sfx.play("ui_error")
+    end
+end
+
+local function openResetSaveConfirm()
+    confirmDialog = {
+        title = "저장 데이터 초기화",
+        message = "정말로 모든 데이터를 초기화하시겠습니까?",
+        warning = "초기화된 데이터는 되돌릴 수 없습니다.",
+        selected = 1,
+        buttons = {
+            {
+                label = "취소",
+                action = function()
+                    confirmDialog = nil
+                end,
+            },
+            {
+                label = "초기화",
+                danger = true,
+                action = function()
+                    confirmDialog = nil
+                    resetSaveData()
+                end,
+            },
+        },
+    }
 end
 
 local function displayModeValue()
@@ -513,6 +557,43 @@ local function changeResolution(dir)
     applyDisplayChange(Display.mode, nextRes.w, nextRes.h)
 end
 
+local function buildSettingsButtons(fromTitle)
+    local buttons = {
+        {
+            label = "화면 모드",
+            value = displayModeValue,
+            action = function() changeDisplayMode(1) end,
+            onLeft = function() changeDisplayMode(-1) end,
+            onRight = function() changeDisplayMode(1) end,
+        },
+        {
+            label = "해상도",
+            value = resolutionValue,
+            action = function() changeResolution(1) end,
+            onLeft = function() changeResolution(-1) end,
+            onRight = function() changeResolution(1) end,
+        },
+        {label = "뒤로", action = closeSettings},
+    }
+    if fromTitle then
+        buttons[#buttons + 1] = {
+            label = "저장 데이터 초기화",
+            compact = true,
+            danger = true,
+            dividerBefore = true,
+            action = openResetSaveConfirm,
+        }
+    end
+    return buttons
+end
+
+local function openSettings()
+    confirmDialog = nil
+    menus.settings.subtitle = nil
+    menus.settings.buttons = buildSettingsButtons(ship == nil)
+    setScreen("settings")
+end
+
 menus.title = {title = "SPACE GLADIATOR", buttons = {
     {label = "게임 시작", sublabel = "LAUNCH", primary = true, action = function()
         if titleScreen then titleScreen:beginLaunch(menus.title, selectedButton) end
@@ -527,23 +608,7 @@ menus.pause = {title = "일시정지", buttons = {
     {label = "포기하기", action = function() showResults("전투 포기") end},
     {label = "타이틀로 나가기", action = function() setScreen("title") end},
 }}
-menus.settings = {title = "설정", panelWidth = 510, buttons = {
-    {
-        label = "화면 모드",
-        value = displayModeValue,
-        action = function() changeDisplayMode(1) end,
-        onLeft = function() changeDisplayMode(-1) end,
-        onRight = function() changeDisplayMode(1) end,
-    },
-    {
-        label = "해상도",
-        value = resolutionValue,
-        action = function() changeResolution(1) end,
-        onLeft = function() changeResolution(-1) end,
-        onRight = function() changeResolution(1) end,
-    },
-    {label = "뒤로", action = closeSettings},
-}}
+menus.settings = {title = "설정", panelWidth = 510, buttons = buildSettingsButtons(true)}
 menus.results = {title = "전투 정산", buttons = {
     {label = "확인", action = function() setScreen("title") end},
 }}
@@ -985,8 +1050,8 @@ local function drawPlayer(originX, originY)
             if destroyed then
                 ship:drawDestruction()
             else
+                turret:drawMount(ship, time, width)
                 ship:draw(time)
-                turret:drawMount(ship, time)
             end
             g.pop()
         end
@@ -1126,6 +1191,9 @@ function love.draw()
         titleScreen:draw(menu, fonts, selectedButton, width, height)
     elseif menu then
         Menu.draw(menu, fonts, selectedButton, width, height, ship ~= nil)
+        if confirmDialog then
+            Menu.drawConfirm(confirmDialog, fonts, confirmDialog.selected, width, height)
+        end
     end
     love.graphics.pop()
     if testMode and not captureRequested then
@@ -1144,6 +1212,23 @@ end
 
 function love.keypressed(key, _, isRepeat)
     if isRepeat then return end
+    if confirmDialog then
+        local count = #(confirmDialog.buttons or {})
+        if key == "escape" then
+            confirmDialog = nil
+            Sfx.play("ui_click")
+        elseif (key == "left" or key == "up" or key == "a" or key == "w") and count > 0 then
+            confirmDialog.selected = (confirmDialog.selected - 2) % count + 1
+            Sfx.play("ui_hover")
+        elseif (key == "right" or key == "down" or key == "d" or key == "s" or key == "tab") and count > 0 then
+            confirmDialog.selected = confirmDialog.selected % count + 1
+            Sfx.play("ui_hover")
+        elseif (key == "return" or key == "kpenter") and confirmDialog.buttons[confirmDialog.selected] then
+            Sfx.play("ui_click")
+            confirmDialog.buttons[confirmDialog.selected].action()
+        end
+        return
+    end
     if screen == "replay" and replay then
         if key == "escape" then
             closeReplay()
@@ -1260,6 +1345,14 @@ end
 
 function love.mousemoved(x, y)
     x, y = Display.windowToVirtual(x, y)
+    if confirmDialog then
+        local hovered = Menu.confirmButtonAt(confirmDialog, width, height, x, y)
+        if hovered and hovered ~= confirmDialog.selected then
+            confirmDialog.selected = hovered
+            Sfx.play("ui_hover")
+        end
+        return
+    end
     if screen == "inventory" and inventoryUI then
         inventoryUI:mousemoved(x, y)
         return
@@ -1285,6 +1378,16 @@ end
 
 function love.mousepressed(x, y, button)
     x, y = Display.windowToVirtual(x, y)
+    if confirmDialog then
+        if button ~= 1 then return end
+        local index = Menu.confirmButtonAt(confirmDialog, width, height, x, y)
+        if index and confirmDialog.buttons[index] then
+            confirmDialog.selected = index
+            Sfx.play("ui_click")
+            confirmDialog.buttons[index].action()
+        end
+        return
+    end
     if screen == "inventory" and inventory and inventoryUI then
         local action = inventoryUI:mousepressed(inventory, x, y, button, {
             stageEndMode = inventoryStageEndMode,

@@ -30,6 +30,14 @@ Theme.colors = {
     buttonSelectedBg    = { 0.12,  0.32,  0.34  },
     buttonValue         = { 0.58,  0.80,  0.86  },
     buttonSelectedValue = { 0.46,  0.95,  0.90  },
+
+    danger              = { 0.88,  0.26,  0.28  },
+    dangerBright        = { 1.00,  0.44,  0.42  },
+    dangerBg            = { 0.16,  0.045, 0.060 },
+    dangerSelectedBg    = { 0.34,  0.085, 0.105 },
+    dangerBorder        = { 0.62,  0.21,  0.24  },
+    dangerText          = { 0.96,  0.66,  0.66  },
+    dangerSelectedText  = { 1.00,  0.92,  0.92  },
 }
 
 function Theme.clamp(v, lo, hi)
