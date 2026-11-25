@@ -1,9 +1,9 @@
--- Interactive Hangar / 4x4 -> 6x6 Diamond Grid Inventory Overlay for LÖVE.
+-- Interactive Hangar / Chassis Grid Inventory Overlay for LÖVE.
 -- All items (modules and support chips) are drawn in their actual grid shapes
 -- and moved/equipped via click-and-drop. Pressing R while holding an item
 -- rotates it 90 degrees clockwise. No separate permanent stash exists: stage-end
 -- rewards appear in a temporary tray and are discarded if not placed into the
--- main diamond inventory before advancing to the next stage.
+-- main chassis inventory before advancing to the next stage.
 
 local Display = require("src.core.display")
 local Inventory = require("src.progression.inventory")
@@ -45,9 +45,10 @@ local targetShortTag = {
 
 local targetKoreanLabel = {
     weapon = "무기 모듈",
-    defense = "방어 모듈",
-    battery = "배터리 모듈",
-    thruster = "추진 모듈",
+    defense = "방호 모듈",
+    battery = "제너레이터 모듈",
+    generator = "제너레이터 모듈",
+    thruster = "추진기 모듈",
     any = "모든 모듈",
 }
 
@@ -216,12 +217,16 @@ function InventoryUI:pixelToDirectCell(px, py)
     local gr = self.gridRect
     if not gr then return nil, nil end
     local step = gr.cellSize + gr.gap
-    if not pointInRect(px, py, gr.x - 4, gr.y - 4, gr.span + 8, gr.span + 8) then
+    local spanW = gr.spanW or gr.span
+    local spanH = gr.spanH or gr.span
+    if not pointInRect(px, py, gr.x - 4, gr.y - 4, spanW + 8, spanH + 8) then
         return nil, nil
     end
     local col = math.floor((px - gr.x) / step) + 1
     local row = math.floor((py - gr.y) / step) + 1
-    if row < 1 or row > gr.gridSize or col < 1 or col > gr.gridSize then
+    local rows = gr.rows or gr.gridSize
+    local cols = gr.cols or gr.gridSize
+    if row < 1 or row > rows or col < 1 or col > cols then
         return nil, nil
     end
     return row, col
@@ -235,8 +240,10 @@ function InventoryUI:computeSnappedOrigin(item, rotation, px, py)
     local step = gr.cellSize + gr.gap
     local itemW = w * gr.cellSize + (w - 1) * gr.gap
     local itemH = h * gr.cellSize + (h - 1) * gr.gap
+    local spanW = gr.spanW or gr.span
+    local spanH = gr.spanH or gr.span
     local margin = gr.cellSize * 0.65
-    if not pointInRect(px, py, gr.x - margin, gr.y - margin, gr.span + margin * 2, gr.span + margin * 2) then
+    if not pointInRect(px, py, gr.x - margin, gr.y - margin, spanW + margin * 2, spanH + margin * 2) then
         return nil, nil
     end
     local topLeftX = px - itemW * 0.5
@@ -502,8 +509,9 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
 
     g.setFont(fonts.menuBody)
     g.setColor(0.62, 0.84, 0.92, 1)
-    local cellInfo = string.format("확장 슬롯 %d / %d  (4x4 > 6x6 다이아몬드)  ·  드래그 배치 · 클릭 유지+R 회전",
-        inv:unlockedCellCount(), inv:maxCellCount())
+    local chassisName = (inv.chassis and inv.chassis.name) or "함선"
+    local cellInfo = string.format("%s  ·  슬롯 %d / %d  ·  드래그 배치 · 클릭 유지+R 회전",
+        chassisName, inv:unlockedCellCount(), inv:maxCellCount())
     g.print(cellInfo, px + 26, py + 56)
 
     -- Close / Proceed button
@@ -529,29 +537,35 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
     g.printf(closeLabel, closeX, closeY + 9, closeW, "center")
     self:addRegion(closeX, closeY, closeW, closeH, { type = "close" })
 
-    -- Left: 6x6 Diamond Grid
-    local gap = 5
-    local maxGridH = panelH - 156
-    local cellSize = math.min(72, math.floor((maxGridH - (inv.gridSize - 1) * gap) / inv.gridSize))
+    -- Left: Chassis Grid
+    local rows = inv.rows or inv.gridSize or 3
+    local cols = inv.cols or inv.gridSize or 5
+    local gap = 6
+    local maxGridH = panelH - 180
+    local maxGridW = 440
+    local cellSize = math.min(72,
+        math.floor((maxGridH - (rows - 1) * gap) / rows),
+        math.floor((maxGridW - (cols - 1) * gap) / cols))
     local step = cellSize + gap
-    local gridSpan = inv.gridSize * cellSize + (inv.gridSize - 1) * gap
-    local gx = px + 28
-    local gy = py + 94
+    local gridW = cols * cellSize + (cols - 1) * gap
+    local gridH = rows * cellSize + (rows - 1) * gap
+    local gridSpan = gridW
+    local gx = px + 28 + math.floor((maxGridW - gridW) * 0.5)
+    local gy = py + 94 + math.floor((maxGridH - gridH) * 0.35)
     self.gridRect = {
-        x = gx, y = gy, span = gridSpan,
-        cellSize = cellSize, gap = gap, gridSize = inv.gridSize,
+        x = gx, y = gy, span = gridSpan, spanW = gridW, spanH = gridH,
+        cellSize = cellSize, gap = gap, rows = rows, cols = cols, gridSize = math.max(rows, cols),
     }
 
-    for r = 1, inv.gridSize do
-        for c = 1, inv.gridSize do
+    for r = 1, rows do
+        for c = 1, cols do
             local cx = gx + (c - 1) * step
             local cy = gy + (r - 1) * step
-            if Inventory.isInDiamond(r, c, Inventory.MAX_RADIUS) then
-                local isCore4x4 = Inventory.isInDiamond(r, c, Inventory.START_RADIUS)
+            if inv:isValidCell(r, c) then
                 if inv:isUnlocked(r, c) then
-                    g.setColor(isCore4x4 and 0.065 or 0.052, isCore4x4 and 0.135 or 0.115, isCore4x4 and 0.205 or 0.175, 0.96)
+                    g.setColor(0.065, 0.135, 0.205, 0.96)
                     g.rectangle("fill", cx, cy, cellSize, cellSize, 6, 6)
-                    g.setColor(isCore4x4 and 0.36 or 0.28, isCore4x4 and 0.78 or 0.66, isCore4x4 and 0.92 or 0.80, 0.55)
+                    g.setColor(0.36, 0.78, 0.92, 0.55)
                     g.setLineWidth(1.2)
                     g.rectangle("line", cx, cy, cellSize, cellSize, 6, 6)
                 elseif inv:canUnlockCell(r, c) then
@@ -684,7 +698,7 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
                 local shapeCells = Inventory.getShapeCells(d.item, d.rotation)
                 for _, coord in ipairs(shapeCells) do
                     local tr, tc = snapR + coord[1], snapC + coord[2]
-                    if tr >= 1 and tr <= inv.gridSize and tc >= 1 and tc <= inv.gridSize then
+                    if tr >= 1 and tr <= rows and tc >= 1 and tc <= cols then
                         local cx = gx + (tc - 1) * step
                         local cy = gy + (tr - 1) * step
                         if valid then
@@ -707,7 +721,7 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
     end
 
     -- Right Panel: Inspector + (Stage Reward Tray OR Build Summary) + Discard Zone
-    local rx = gx + gridSpan + 24
+    local rx = px + 28 + maxGridW + 24
     local rw = px + panelW - rx - 22
     local curY = py + 94
 
@@ -787,7 +801,7 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         end
     else
         g.setColor(0.62, 0.74, 0.82, 0.95)
-        g.printf("모듈이나 서포트 칩을 클릭·드래그해 다이아몬드 격자에 배치하세요.", rx + 12, curY + 46, rw - 24, "center")
+        g.printf("모듈이나 서포트 칩을 클릭·드래그해 기체 격자에 배치하세요.", rx + 12, curY + 46, rw - 24, "center")
     end
 
     curY = curY + inspectH + 14

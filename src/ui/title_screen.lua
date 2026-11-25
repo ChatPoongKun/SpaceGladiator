@@ -25,7 +25,7 @@ TitleScreen.PARALLAX_BG_MAX_PX = 7.0
 TitleScreen.PARALLAX_UI_MAX_PX = 2.6
 
 local MENU_LEFT = 86
-local MENU_TOP = 406
+local MENU_TOP = 388
 local MENU_WIDTH = 278
 local PRIMARY_ROW_H = 58
 local REGULAR_ROW_H = 46

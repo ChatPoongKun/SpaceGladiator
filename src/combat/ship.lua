@@ -169,7 +169,6 @@ end
 function Ship:takeDamage(amount, knockX, knockY)
     if amount <= 0 or self:isDestroyed() or self:isInvulnerable() then return nil end
     self.damageCount = (self.damageCount or 0) + 1
-    Sfx.play("player_hit")
     local hitLayer = nil
     if self:hasShield() then
         local absorbed = math.min(self.shield, amount)
@@ -179,6 +178,7 @@ function Ship:takeDamage(amount, knockX, knockY)
         hitLayer = "shield"
     end
     if amount <= 0 then
+        Sfx.play("player_hit_shield")
         self:applyKnockback(knockX, knockY, self.hitKnockbackSpeed or Ship.hitKnockbackSpeed)
         self.lastHitLayer = hitLayer
         return hitLayer
@@ -192,6 +192,7 @@ function Ship:takeDamage(amount, knockX, knockY)
         hitLayer = "hull"
         self.hull = math.max(0, self.hull - 1)
         self.hullDamageCount = (self.hullDamageCount or 0) + 1
+        Sfx.play("player_hit_hull")
         if self:isDestroyed() then
             Sfx.play("ship_destroy")
             self.destructionAge = 0
@@ -204,6 +205,8 @@ function Ship:takeDamage(amount, knockX, knockY)
             self.lastHitLayer = hitLayer
             return hitLayer
         end
+    else
+        Sfx.play("player_hit_armor")
     end
 
     local kbSpeed = hitLayer == "hull" and (self.hullKnockbackSpeed or Ship.hullKnockbackSpeed)

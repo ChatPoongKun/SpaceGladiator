@@ -14,6 +14,7 @@ local Sfx = require("src.audio.sfx")
 local Bgm = require("src.audio.bgm")
 local Inventory = require("src.progression.inventory")
 local InventoryUI = require("src.ui.inventory_ui")
+local ArmoryUI = require("src.ui.armory_ui")
 local Stage = require("src.progression.stage")
 local StageTransition = require("src.progression.stage_transition")
 local Replay = require("src.replay.replay")
@@ -21,6 +22,7 @@ local ReplayExport = require("src.replay.replay_export")
 
 local ship, stars, stageBackground, fonts, camera, turret, enemies, hud, gladiator, titleScreen
 local inventory, inventoryUI, currentBuild
+local armoryInventory, armoryUI
 local stage
 local stageClearState, warpShutter, warpGates, warpState
 local replay, activeExporter
@@ -29,7 +31,8 @@ local inventoryReturnScreen = "playing"
 local inventoryStageEndMode = false
 local pauseReturnScreen = "playing"
 local permanentUnlocksFile = "grid_unlocks.txt"
-local saveDataFiles = { permanentUnlocksFile }
+local armoryLoadoutFile = "armory_loadout.txt"
+local saveDataFiles = { permanentUnlocksFile, armoryLoadoutFile }
 local lastFeverState, lastEvasionCount, lastWrapEvents, lastDamageCount = false, 0, 0, 0
 local lastFeedbackDamageCount, lastHullDamageCount = 0, 0
 local hitstopTimer = 0
@@ -39,6 +42,12 @@ local HIT_SHAKE_AMP = 5.0
 local HIT_SHAKE_DURATION = 0.16
 local HULL_SHAKE_AMP = 16.0
 local HULL_SHAKE_DURATION = 0.40
+local LOW_SHIELD_THRESHOLD = 0.30
+local LOW_ARMOR_THRESHOLD = 0.30
+local LOW_ARMOR_ALERT_INTERVAL = 3.2
+local lowShieldWarned, lowArmorWarned = false, false
+local lowArmorAlertCooldown = 0
+local lowArmorAura = 0
 local wrapTriggerCooldown, shockwaveCooldown = 0, 0
 local width, height, time = Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT, 0
 local currentFontScale = nil
@@ -89,8 +98,8 @@ local function setScreen(nextScreen)
         end
         if titleScreen then
             titleScreen:reset({
-                quick = (prevScreen == "settings"),
-                keepParallax = (prevScreen == "settings"),
+                quick = (prevScreen == "settings" or prevScreen == "armory"),
+                keepParallax = (prevScreen == "settings" or prevScreen == "armory"),
             })
         end
     end
@@ -101,6 +110,8 @@ local function setScreen(nextScreen)
         coinWallet, lastGladiatorTotal = 0, 0
         lastFeedbackDamageCount, lastHullDamageCount = 0, 0
         hitstopTimer, hullFlashTimer = 0, 0
+        lowShieldWarned, lowArmorWarned = false, false
+        lowArmorAlertCooldown, lowArmorAura = 0, 0
         pauseReturnScreen = "playing"
     end
     Bgm.syncScreen(screen, stage and stage.level or nil, {
@@ -108,10 +119,10 @@ local function setScreen(nextScreen)
     })
 end
 
-local function syncInventoryBuild()
+local function syncInventoryBuild(opts)
     if not inventory or not ship or not gladiator then return end
     currentBuild = inventory:computeBuild(gladiator.feverActive)
-    ship:applyBuild(currentBuild)
+    ship:applyBuild(currentBuild, opts)
     local stageMult = (stage and stage.scoreMultiplier) or 1
     gladiator.scoreMultiplier = (currentBuild.scoreMultiplier or 1) * stageMult
     lastFeverState = gladiator.feverActive
@@ -120,6 +131,29 @@ end
 local function savePermanentUnlocks()
     if not inventory or testMode or testFlow or testGladiator or testInventory then return end
     pcall(love.filesystem.write, permanentUnlocksFile, inventory:serializeUnlockedCells())
+end
+
+local function isAnyTestActive()
+    return testMode or testFlow or testGladiator or testInventory or testReplay
+        or testFullscreen or testBackground or testTitle or testCombat
+end
+
+local function saveArmoryLoadout()
+    if not armoryInventory or isAnyTestActive() then return end
+    local valid = armoryInventory:validateLoadout(false)
+    if not valid then return end
+    pcall(love.filesystem.write, armoryLoadoutFile, armoryInventory:serializeLoadout())
+end
+
+local function loadArmoryLoadout()
+    if not isAnyTestActive() and love.filesystem.getInfo(armoryLoadoutFile) then
+        local data = love.filesystem.read(armoryLoadoutFile)
+        local loaded = Inventory.deserializeLoadout(data)
+        if loaded then
+            return loaded
+        end
+    end
+    return Inventory.newStarter()
 end
 
 local function startRun(opts)
@@ -137,7 +171,7 @@ local function startRun(opts)
         if replay then replay:recordPointEvent(category, points, x, y, fever, basePoints) end
     end
     enemies = Enemies.new(nil, gladiator)
-    inventory = Inventory.newStarter()
+    inventory = armoryInventory and armoryInventory:clone() or Inventory.newStarter()
     if not (testMode or testFlow or testGladiator or testInventory or testCombat)
         and love.filesystem.getInfo(permanentUnlocksFile) then
         inventory:loadUnlockedCells(love.filesystem.read(permanentUnlocksFile))
@@ -164,8 +198,10 @@ local function startRun(opts)
     lastEvasionCount, lastWrapEvents, lastDamageCount = 0, 0, 0
     lastFeedbackDamageCount, lastHullDamageCount = 0, 0
     hitstopTimer, hullFlashTimer = 0, 0
+    lowShieldWarned, lowArmorWarned = false, false
+    lowArmorAlertCooldown, lowArmorAura = 0, 0
     wrapTriggerCooldown, shockwaveCooldown = 0, 0
-    syncInventoryBuild()
+    syncInventoryBuild({ resetVitals = true })
     if hud then hud:reset() end
     input.turn, input.thrust, input.brake, input.boost = 0, false, false, false
     time = 0
@@ -191,6 +227,7 @@ local function beginStageClear()
         lastHullDamageCount = ship.hullDamageCount or 0
     end
     hitstopTimer, hullFlashTimer = 0, 0
+    lowArmorAlertCooldown = 0
     if gladiator then
         lastEvasionCount = gladiator.evasionCount or 0
     end
@@ -254,6 +291,7 @@ local function enterWarpSelectFromStageClear()
         if enemies.clearEffects then enemies:clearEffects() end
     end
     hitstopTimer, hullFlashTimer = 0, 0
+    lowArmorAlertCooldown, lowArmorAura = 0, 0
     if turret then turret:clearEffects() end
     stageClearState = nil
     warpShutter = StageTransition.newShutterOpen()
@@ -282,8 +320,13 @@ local function completeEntryWarpAndStartStage()
         lastDamageCount = ship.damageCount or 0
         lastFeedbackDamageCount = ship.damageCount or 0
         lastHullDamageCount = ship.hullDamageCount or 0
+        lowShieldWarned = (ship.maxShield or 0) > 0 and (ship.shield / ship.maxShield) < LOW_SHIELD_THRESHOLD
+        lowArmorWarned = false
+    else
+        lowShieldWarned, lowArmorWarned = false, false
     end
     hitstopTimer, hullFlashTimer = 0, 0
+    lowArmorAlertCooldown, lowArmorAura = 0, 0
     if turret and ship then
         turret.angle = ship.angle
     end
@@ -321,8 +364,13 @@ local function completeWarpAndStartStage(gate)
         lastDamageCount = ship.damageCount or 0
         lastFeedbackDamageCount = ship.damageCount or 0
         lastHullDamageCount = ship.hullDamageCount or 0
+        lowShieldWarned = (ship.maxShield or 0) > 0 and (ship.shield / ship.maxShield) < LOW_SHIELD_THRESHOLD
+        lowArmorWarned = false
+    else
+        lowShieldWarned, lowArmorWarned = false, false
     end
     hitstopTimer, hullFlashTimer = 0, 0
+    lowArmorAlertCooldown, lowArmorAura = 0, 0
     if turret and ship then
         turret.angle = ship.angle
     end
@@ -473,6 +521,7 @@ local function resetSaveData()
         end
     end
     inventory = nil
+    armoryInventory = Inventory.newStarter()
     if removedOk then
         menus.settings.subtitle = "저장 데이터가 초기화되었습니다."
         selectedButton = 3
@@ -583,11 +632,34 @@ local function openSettings()
     setScreen("settings")
 end
 
+local function openArmory()
+    confirmDialog = nil
+    if not armoryUI then
+        armoryUI = ArmoryUI.new()
+    end
+    if not armoryInventory then
+        armoryInventory = Inventory.newStarter()
+    end
+    armoryInventory = armoryUI:open(armoryInventory)
+    setScreen("armory")
+end
+
+local function closeArmory(nextInv, saveChanges)
+    if nextInv then
+        armoryInventory = nextInv
+    end
+    if saveChanges then
+        saveArmoryLoadout()
+    end
+    setScreen("title")
+end
+
 menus.title = {title = "SPACE GLADIATOR", buttons = {
     {label = "게임 시작", sublabel = "LAUNCH", primary = true, action = function()
         if titleScreen then titleScreen:beginLaunch(menus.title, selectedButton) end
         startRun({ entryWarp = true })
     end},
+    {label = "아머리", sublabel = "ARMORY", action = openArmory},
     {label = "설정", sublabel = "SETTINGS", action = openSettings},
     {label = "게임 종료", sublabel = "EXIT", action = function() love.event.quit() end},
 }}
@@ -630,6 +702,8 @@ function love.load(args)
     Arena.resize()
     hud = Hud.new(Display.fontDpiScale())
     titleScreen = TitleScreen.new()
+    armoryUI = ArmoryUI.new()
+    armoryInventory = loadArmoryLoadout()
     buildFonts(Display.fontDpiScale())
     local _, _, vpW, vpH = Display.viewportRect()
     stars = Starfield.new(vpW, vpH)
@@ -672,7 +746,7 @@ function love.load(args)
     end
     if testCombat then
         require("tests.combat_feel")(Ship, Enemies, Turret, Gladiator, Camera, function()
-            return screen, ship, enemies, turret, gladiator, camera, hitstopTimer, hullFlashTimer, startRun
+            return screen, ship, enemies, turret, gladiator, camera, hitstopTimer, hullFlashTimer, startRun, lowArmorAura
         end)
         love.event.quit(0)
         return
@@ -714,6 +788,50 @@ local function processPlayerDamageFeedback()
         lastFeedbackDamageCount = ship.damageCount
         camera:addShake(HIT_SHAKE_AMP, HIT_SHAKE_DURATION)
     end
+end
+
+local function updateLowStatusWarnings(dt)
+    if not ship or ship:isDestroyed() then
+        lowShieldWarned, lowArmorWarned = false, false
+        lowArmorAlertCooldown = 0
+        return
+    end
+    local shieldLow = (ship.maxShield or 0) > 0 and (ship.shield / ship.maxShield) < LOW_SHIELD_THRESHOLD
+    local armorLow = (ship.maxArmor or 0) > 0 and (ship.armor / ship.maxArmor) < LOW_ARMOR_THRESHOLD
+    local armorJustTriggered = armorLow and not lowArmorWarned
+
+    if armorLow then
+        if not lowArmorWarned then
+            lowArmorWarned = true
+            Sfx.play("low_armor")
+            lowArmorAlertCooldown = LOW_ARMOR_ALERT_INTERVAL
+        else
+            lowArmorAlertCooldown = lowArmorAlertCooldown - dt
+            if lowArmorAlertCooldown <= 0 then
+                Sfx.play("low_armor")
+                lowArmorAlertCooldown = LOW_ARMOR_ALERT_INTERVAL
+            end
+        end
+    else
+        lowArmorWarned = false
+        lowArmorAlertCooldown = 0
+    end
+
+    if shieldLow then
+        if not lowShieldWarned then
+            lowShieldWarned = true
+            if not armorJustTriggered then
+                Sfx.play("low_shield")
+            end
+        end
+    else
+        lowShieldWarned = false
+    end
+
+    local targetAura = armorLow and 1 or 0
+    local auraRate = armorLow and 5.0 or 3.5
+    lowArmorAura = lowArmorAura + (targetAura - lowArmorAura) * math.min(1, dt * auraRate)
+    if not armorLow and lowArmorAura < 0.005 then lowArmorAura = 0 end
 end
 
 local function updateHudProximity(dt)
@@ -762,12 +880,18 @@ function love.update(dt)
         stars:update(dt, 12 * bgScale, -18 * bgScale, 0, bgW, bgH, 0)
         if screen == "title" and titleScreen then
             titleScreen:update(dt, menus.title, selectedButton)
+        elseif screen == "armory" and armoryUI then
+            armoryUI:update(dt)
         end
         return
     end
     if screen == "pause" or screen == "settings" or screen == "inventory" then return end
     time = time + dt
     if screen == "stageClear" then
+        if lowArmorAura > 0 then
+            lowArmorAura = lowArmorAura * math.max(0, 1 - math.min(1, dt * 3.5))
+            if lowArmorAura < 0.005 then lowArmorAura = 0 end
+        end
         ship:update(dt, { turn = 0, thrust = false, brake = true, boost = false }, { disableWrapDetection = true })
         if enemies then
             if enemies.fire then enemies.fire:updateHarmless(dt) end
@@ -816,6 +940,10 @@ function love.update(dt)
             return
         end
         hullFlashTimer = math.max(0, hullFlashTimer - dt)
+        if lowArmorAura > 0 then
+            lowArmorAura = lowArmorAura * math.max(0, 1 - math.min(1, dt * 3.5))
+            if lowArmorAura < 0.005 then lowArmorAura = 0 end
+        end
         ship:update(dt, input)
         if camera then camera:update(dt, ship, width, height) end
         if enemies and enemies.updateEffects then enemies:updateEffects(dt) end
@@ -897,6 +1025,7 @@ function love.update(dt)
         setScreen("gameOver")
         return
     end
+    updateLowStatusWarnings(dt)
     local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
     if currentBuild and gladiator.feverActive ~= lastFeverState then
         syncInventoryBuild()
@@ -914,7 +1043,7 @@ function love.update(dt)
         coinWallet = coinWallet + (gladiator.total - lastGladiatorTotal)
         lastGladiatorTotal = gladiator.total
     end
-    if stage and not (testMode or testFlow or testGladiator or testInventory) then
+    if stage and not (testMode or testFlow or testGladiator or testInventory or testCombat) then
         if stage:update(dt, enemies) then
             beginStageClear()
             return
@@ -1098,6 +1227,36 @@ local function drawFlight()
         StageTransition.drawWarpGates(warpGates, ship, time, fonts, width, height)
     end
     gladiator:drawFeverOverlay(width, height, time)
+    if lowArmorAura > 0 then
+        local g = love.graphics
+        local pulse = math.min(1.1, 0.55 + 0.45 * math.sin(time * 4.2) + 0.12 * math.max(0, math.sin(time * 8.4)))
+        g.push("all")
+        g.setColor(0.88, 0.05, 0.07, 0.11 * lowArmorAura * pulse)
+        g.rectangle("fill", 0, 0, width, height)
+        local bands = { 14, 30, 50, 74, 102 }
+        for idx, thickness in ipairs(bands) do
+            local alpha = (0.20 / idx) * lowArmorAura * pulse
+            g.setColor(0.95, 0.06, 0.08, alpha)
+            g.rectangle("fill", 0, 0, width, thickness)
+            g.rectangle("fill", 0, height - thickness, width, thickness)
+            g.rectangle("fill", 0, thickness, thickness, height - thickness * 2)
+            g.rectangle("fill", width - thickness, thickness, thickness, height - thickness * 2)
+        end
+        g.setLineWidth(2.0)
+        g.setColor(1.0, 0.18, 0.20, 0.52 * lowArmorAura * pulse)
+        g.rectangle("line", 4, 4, width - 8, height - 8)
+        local span = 28 + math.sin(time * 4.2) * 4
+        g.setLineWidth(2.5)
+        g.setColor(1.0, 0.22, 0.24, 0.72 * lowArmorAura * pulse)
+        for _, cx in ipairs({ 12, width - 12 }) do
+            local sx = cx == 12 and 1 or -1
+            for _, cy in ipairs({ 12, height - 12 }) do
+                local sy = cy == 12 and 1 or -1
+                g.line(cx + sx * span, cy, cx, cy, cx, cy + sy * span)
+            end
+        end
+        g.pop()
+    end
     if hullFlashTimer > 0 and hullFlashDuration > 0 then
         local g = love.graphics
         local p = math.max(0, math.min(1, hullFlashTimer / hullFlashDuration))
@@ -1242,6 +1401,8 @@ function love.draw()
             stageEndMode = inventoryStageEndMode,
             returnTarget = inventoryReturnScreen,
         })
+    elseif screen == "armory" and armoryUI then
+        armoryInventory = armoryUI:draw(armoryInventory, fonts, width, height)
     elseif screen == "title" and titleScreen then
         titleScreen:draw(menu, fonts, selectedButton, width, height)
     elseif menu then
@@ -1315,6 +1476,16 @@ function love.keypressed(key, _, isRepeat)
             end
             return
         end
+    end
+    if screen == "armory" and armoryUI then
+        local nextInv, action = armoryUI:keypressed(armoryInventory, key)
+        if nextInv then armoryInventory = nextInv end
+        if action == "saveAndExit" then
+            closeArmory(armoryInventory, true)
+        elseif action == "cancelExit" then
+            closeArmory(armoryInventory, false)
+        end
+        return
     end
     if screen == "inventory" then
         if inventoryUI and inventoryUI:hasWarningPopup() then
@@ -1395,6 +1566,10 @@ function love.mousemoved(x, y)
         end
         return
     end
+    if screen == "armory" and armoryUI then
+        armoryUI:mousemoved(armoryInventory, x, y)
+        return
+    end
     if screen == "inventory" and inventoryUI then
         inventoryUI:mousemoved(x, y)
         return
@@ -1424,6 +1599,16 @@ function love.mousepressed(x, y, button)
             confirmDialog.selected = index
             Sfx.play("ui_click")
             confirmDialog.buttons[index].action()
+        end
+        return
+    end
+    if screen == "armory" and armoryUI then
+        local nextInv, action = armoryUI:mousepressed(armoryInventory, x, y, button)
+        if nextInv then armoryInventory = nextInv end
+        if action == "saveAndExit" then
+            closeArmory(armoryInventory, true)
+        elseif action == "cancelExit" then
+            closeArmory(armoryInventory, false)
         end
         return
     end
@@ -1481,6 +1666,14 @@ end
 
 function love.mousereleased(x, y, button)
     x, y = Display.windowToVirtual(x, y)
+    if screen == "armory" and armoryUI then
+        local nextInv, action = armoryUI:mousereleased(armoryInventory, x, y, button)
+        if nextInv then armoryInventory = nextInv end
+        if action == "saveAndExit" then
+            closeArmory(armoryInventory, true)
+        end
+        return
+    end
     if screen == "inventory" and inventory and inventoryUI then
         local action = inventoryUI:mousereleased(inventory, x, y, button, {
             stageEndMode = inventoryStageEndMode,
@@ -1494,6 +1687,13 @@ function love.mousereleased(x, y, button)
         return
     end
     if button == 1 then firing = false end
+end
+
+function love.wheelmoved(wx, wy)
+    if screen == "armory" and armoryUI then
+        local mx, my = Display.getMousePosition()
+        armoryUI:wheelmoved(mx, my, wx, wy)
+    end
 end
 
 function love.focus(hasFocus)
