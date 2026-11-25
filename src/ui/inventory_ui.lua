@@ -909,11 +909,21 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         }
         g.setColor(0.84, 0.92, 0.96, 0.95)
         for i, line in ipairs(lines) do
-            g.print(line, rx + 14, curY + 42 + (i - 1) * 26)
+            g.print(line, rx + 14, curY + 42 + (i - 1) * 24)
+        end
+
+        local cautions = build.duplicateCautions or {}
+        if #cautions > 0 then
+            local cautionText = "주의: " .. cautions[1].message
+            if #cautions > 1 then
+                cautionText = cautionText .. string.format(" (외 %d건)", #cautions - 1)
+            end
+            g.setColor(1.0, 0.78, 0.28, 0.98)
+            g.print(cautionText, rx + 14, curY + 140)
         end
 
         g.setColor(0.62, 0.80, 0.88, 0.90)
-        local helpY = curY + 158
+        local helpY = #cautions > 0 and (curY + 170) or (curY + 158)
         if helpY + 70 < curY + middleH then
             g.print("조작 안내", rx + 14, helpY)
             g.print("· 좌클릭 드래그: 모듈·칩 이동 및 소켓 장착", rx + 14, helpY + 24)

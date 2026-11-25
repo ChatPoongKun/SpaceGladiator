@@ -674,24 +674,39 @@ function ArmoryUI:_drawInspectorPanel(inv, fonts, validationSummary)
         g.printf(inspectDef.description or "", tx, py + 104, tw, "left")
 
         g.setFont(fonts.menuSmall or fonts.menuBody)
-        Theme.setColor(c.textMuted, 0.85)
-        local hint
-        if inspectItem and inspectItem.row then
-            hint = inv.rotationUnlocked
-                and "드래그해 이동 · R: 회전 · 우클릭: 배치 해제"
-                or "드래그해 이동 · 우클릭: 배치 해제"
+        local inspectCat = inspectDef.category == "battery" and "generator" or inspectDef.category
+        local pen = (inspectItem and inspectItem.row and validationSummary.categoryPenalties)
+            and validationSummary.categoryPenalties[inspectCat]
+            or nil
+        if pen and pen.addPct > 0 then
+            g.setColor(1.0, 0.78, 0.28, 0.96)
+            drawWarningTriangle(tx + 7, py + ph - 19, 5.5)
+            g.print(string.format("주의: %s %d개 장착 — 이 모듈 배터리 사용량 +%d%% (우클릭: 배치 해제)",
+                pen.label, pen.count, pen.addPct), tx + 18, py + ph - 26)
         else
-            hint = inv.rotationUnlocked
-                and "그리드로 드래그해 장착 · 드래그 중 R: 회전"
-                or "그리드로 드래그해 장착"
+            Theme.setColor(c.textMuted, 0.85)
+            local hint
+            if inspectItem and inspectItem.row then
+                hint = inv.rotationUnlocked
+                    and "드래그해 이동 · R: 회전 · 우클릭: 배치 해제"
+                    or "드래그해 이동 · 우클릭: 배치 해제"
+            else
+                hint = inv.rotationUnlocked
+                    and "그리드로 드래그해 장착 · 드래그 중 R: 회전"
+                    or "그리드로 드래그해 장착"
+            end
+            g.print(hint, tx, py + ph - 26)
         end
-        g.print(hint, tx, py + ph - 26)
         return
     end
 
     -- Idle state: full assembled ship spec summary
     local ch = inv.chassis or ChassisData.get(inv.chassisId)
     local build = validationSummary.build
+    local cautions = validationSummary.cautions or {}
+    local penalties = validationSummary.categoryPenalties or {}
+    local hasThrPenalty = penalties.thruster and penalties.thruster.addPct > 0
+
     g.setFont(fonts.menuButton or fonts.menuBody)
     Theme.setColor(c.accentBright, 0.98)
     g.print("현재 기체 종합 스펙", px + 20, py + 14)
@@ -710,23 +725,47 @@ function ArmoryUI:_drawInspectorPanel(inv, fonts, validationSummary)
     end
 
     local col1X, col2X, col3X = px + 20, px + 278, px + 532
-    local rowY = py + 52
+    local rowY = #cautions > 0 and (py + 46) or (py + 52)
+    local rowStep = #cautions > 0 and 26 or 28
     g.setFont(fonts.menuBody)
     Theme.setColor(c.textPrimary, 0.96)
     g.print(string.format("실드: %d", build.maxShield or 0), col1X, rowY)
-    g.print(string.format("아머: %d", build.maxArmor or 0), col1X, rowY + 28)
-    g.print(string.format("헐: %d", build.maxHull or 0), col1X, rowY + 56)
-    g.print(string.format("장착 무기: %d개", validationSummary.weaponCount or 0), col1X, rowY + 84)
+    g.print(string.format("아머: %d", build.maxArmor or 0), col1X, rowY + rowStep)
+    g.print(string.format("헐: %d", build.maxHull or 0), col1X, rowY + rowStep * 2)
+    g.print(string.format("장착 무기: %d개", validationSummary.weaponCount or 0), col1X, rowY + rowStep * 3)
 
     g.print(string.format("배터리 총량: %d", build.maxBattery or 0), col2X, rowY)
-    g.print(string.format("초당 충전: +%.0f/s", build.batteryRecharge or 0), col2X, rowY + 28)
-    g.print(string.format("가속 소모: %.0f/s", build.thrustBatteryCost or 0), col2X, rowY + 56)
-    g.print(string.format("부스트 소모: %d", build.boostCost or 0), col2X, rowY + 84)
+    g.print(string.format("초당 충전: +%.0f/s", build.batteryRecharge or 0), col2X, rowY + rowStep)
+    if hasThrPenalty then g.setColor(1.0, 0.80, 0.34, 0.98) else Theme.setColor(c.textPrimary, 0.96) end
+    g.print(string.format("가속 소모: %.0f/s", build.thrustBatteryCost or 0), col2X, rowY + rowStep * 2)
+    g.print(string.format("부스트 소모: %d", build.boostCost or 0), col2X, rowY + rowStep * 3)
 
+    Theme.setColor(c.textPrimary, 0.96)
     g.print(string.format("최고속도: %d", build.maxSpeed or 0), col3X, rowY)
-    g.print(string.format("부스트속도: %d", build.boostSpeed or 0), col3X, rowY + 28)
-    g.print(string.format("추진력: %d", build.thrust or 0), col3X, rowY + 56)
-    g.print("특수 효과: " .. (ch and ch.specialEffect or "없음"), col3X, rowY + 84)
+    g.print(string.format("부스트속도: %d", build.boostSpeed or 0), col3X, rowY + rowStep)
+    g.print(string.format("추진력: %d", build.thrust or 0), col3X, rowY + rowStep * 2)
+    g.print("특수 효과: " .. (ch and ch.specialEffect or "없음"), col3X, rowY + rowStep * 3)
+
+    if #cautions > 0 then
+        local stripX, stripY, stripW, stripH = px + 18, py + ph - 30, pw - 36, 22
+        g.setColor(0.24, 0.16, 0.04, 0.86)
+        g.rectangle("fill", stripX, stripY, stripW, stripH, 4, 4)
+        g.setColor(1.0, 0.78, 0.28, 0.55)
+        g.setLineWidth(1.0)
+        g.rectangle("line", stripX, stripY, stripW, stripH, 4, 4)
+        g.setColor(1.0, 0.80, 0.30, 0.98)
+        drawWarningTriangle(stripX + 14, stripY + 11, 5.5)
+        local msgs = {}
+        for i = 1, math.min(2, #cautions) do
+            msgs[#msgs + 1] = cautions[i].message
+        end
+        local text = "주의: " .. table.concat(msgs, "  /  ")
+        if #cautions > 2 then
+            text = text .. string.format(" (외 %d건)", #cautions - 2)
+        end
+        g.setFont(fonts.menuSmall or fonts.menuBody)
+        g.print(text, stripX + 26, stripY + 3)
+    end
 end
 
 function ArmoryUI:_drawChassisAndGridPanel(inv, fonts, isValid, warnings, summary)
@@ -956,13 +995,11 @@ function ArmoryUI:_drawChassisAndGridPanel(inv, fonts, isValid, warnings, summar
     Theme.setColor(c.textPrimary, 0.96)
     g.printf(string.format("초당 충전: +%.0f/s", rechargeVal), footX + 550, footY + 10, footW - 564, "right")
 
-    -- Bottom warning / status line
+    -- Bottom warning / caution / status line
     local warnY = footY + 42
+    local cautions = summary.cautions or {}
     g.setFont(fonts.menuBody)
-    if isValid then
-        g.setColor(0.44, 0.95, 0.72, 0.96)
-        g.print("출격 가능 · " .. self.statusMessage, footX + 14, warnY)
-    else
+    if not isValid then
         local pulse = 0.78 + 0.22 * math.sin(self.time * 6.0)
         g.setColor(0.28, 0.06, 0.08, 0.88 * pulse)
         g.rectangle("fill", footX + 8, warnY - 3, footW - 16, 26, 4, 4)
@@ -973,6 +1010,19 @@ function ArmoryUI:_drawChassisAndGridPanel(inv, fonts, isValid, warnings, summar
             primaryMsg = primaryMsg .. string.format(" (외 %d건)", #warnings - 1)
         end
         g.print("출격 불가: " .. primaryMsg, footX + 36, warnY)
+    elseif #cautions > 0 then
+        g.setColor(0.24, 0.16, 0.04, 0.88)
+        g.rectangle("fill", footX + 8, warnY - 3, footW - 16, 26, 4, 4)
+        g.setColor(1.0, 0.78, 0.28, 0.96)
+        drawWarningTriangle(footX + 22, warnY + 10, 7)
+        local cautionMsg = cautions[1].message
+        if #cautions > 1 then
+            cautionMsg = cautionMsg .. string.format(" (외 %d건)", #cautions - 1)
+        end
+        g.print("주의: " .. cautionMsg .. " · 출격 가능", footX + 36, warnY)
+    else
+        g.setColor(0.44, 0.95, 0.72, 0.96)
+        g.print("출격 가능 · " .. self.statusMessage, footX + 14, warnY)
     end
 end
 

@@ -16,6 +16,25 @@ local function cellKey(r, c)
     return r .. "," .. c
 end
 
+local function canonicalCategory(category)
+    if category == "battery" then
+        return "generator"
+    end
+    return category
+end
+
+-- Duplicate parts in the same non-generator category add +50% battery usage per
+-- extra part on every module in that category (2 -> +50%, 3 -> +100%, 4 -> +150%).
+function Inventory.getDuplicateBatteryPenalty(category, count)
+    local cat = canonicalCategory(category)
+    local n = math.floor(tonumber(count) or 0)
+    if cat == "generator" or n <= 1 then
+        return 1.0, 0
+    end
+    local addPct = (n - 1) * 50
+    return 1.0 + 0.5 * (n - 1), addPct
+end
+
 local function removeFromList(list, item)
     for i = 1, #list do
         if list[i] == item then
@@ -779,10 +798,37 @@ function Inventory:computeBuild(feverActive)
         build.weapons[w] = cfg
     end
 
+    local categoryCounts = {}
+    local categoryHasBatteryUsage = {
+        weapon = true,
+        thruster = true,
+    }
+    for _, mod in ipairs(self.placed) do
+        local def = mod.def
+        local isDisabledWeapon = Inventory.isWeaponModule(mod) and mod.disabled == true
+        if not isDisabledWeapon and def and def.category then
+            local cat = canonicalCategory(def.category)
+            categoryCounts[cat] = (categoryCounts[cat] or 0) + 1
+            local s = def.stats
+            if (def.baseBatteryCost or 0) > 0
+                or (s and ((s.boostCost or 0) > 0 or (s.thrustBatteryCost or 0) > 0)) then
+                categoryHasBatteryUsage[cat] = true
+            end
+        end
+    end
+
+    build.categoryCounts = categoryCounts
+    build.categoryPenalties = {}
+    build.duplicateCautions = {}
+
     for _, mod in ipairs(self.placed) do
         local def = mod.def
         local isDisabledWeapon = Inventory.isWeaponModule(mod) and mod.disabled == true
         if not isDisabledWeapon and def then
+            local cat = canonicalCategory(def.category)
+            local catMult = Inventory.getDuplicateBatteryPenalty(cat, categoryCounts[cat])
+            local _, catAddPct = Inventory.getDuplicateBatteryPenalty(cat, categoryCounts[cat])
+
             local stats = def.stats
             if stats then
                 build.maxShieldBonus = build.maxShieldBonus + (stats.maxShield or 0)
@@ -792,8 +838,8 @@ function Inventory:computeBuild(feverActive)
                 build.maxSpeedBonus = build.maxSpeedBonus + (stats.maxSpeed or 0)
                 build.thrustBonus = build.thrustBonus + (stats.thrust or 0)
                 build.boostSpeedBonus = build.boostSpeedBonus + (stats.boostSpeed or 0)
-                build.boostCostBase = build.boostCostBase + (stats.boostCost or 0)
-                build.thrustBatteryCostBonus = build.thrustBatteryCostBonus + (stats.thrustBatteryCost or 0)
+                build.boostCostBase = build.boostCostBase + (stats.boostCost or 0) * catMult
+                build.thrustBatteryCostBonus = build.thrustBatteryCostBonus + (stats.thrustBatteryCost or 0) * catMult
                 build.wrapBonusSpeedAdd = build.wrapBonusSpeedAdd + (stats.wrapBonusSpeed or 0)
             end
 
@@ -815,7 +861,6 @@ function Inventory:computeBuild(feverActive)
             if wCfg then
                 wCfg.installed = true
                 wCfg.fireInterval = wCfg.fireInterval or def.fireInterval
-                wCfg.batteryCost = wCfg.batteryCost + (def.baseBatteryCost or 0)
                 mCfg = newWeaponConfig(def, mod)
                 build.weaponModules[#build.weaponModules + 1] = mCfg
             end
@@ -847,7 +892,8 @@ function Inventory:computeBuild(feverActive)
                     build.wrapInvulnDuration = math.max(build.wrapInvulnDuration, m.wrapInvuln * chipScale)
                 end
                 if m.boostCostAdd then
-                    build.boostCostBonus = build.boostCostBonus + m.boostCostAdd
+                    categoryHasBatteryUsage[cat] = true
+                    build.boostCostBonus = build.boostCostBonus + m.boostCostAdd * catMult
                 end
 
                 if wCfg and mCfg then
@@ -859,10 +905,19 @@ function Inventory:computeBuild(feverActive)
                 end
             end
 
-            if wCfg and mCfg and moduleBatteryAdd > 0 then
-                local scaledBatteryAdd = math.floor(moduleBatteryAdd * nonFeverBatteryMult + 0.5)
-                wCfg.batteryCost = wCfg.batteryCost + scaledBatteryAdd
-                mCfg.batteryCost = mCfg.batteryCost + scaledBatteryAdd
+            if wCfg and mCfg then
+                local scaledBatteryAdd = moduleBatteryAdd > 0
+                    and math.floor(moduleBatteryAdd * nonFeverBatteryMult + 0.5)
+                    or 0
+                local rawWeaponCost = (def.baseBatteryCost or 0) + scaledBatteryAdd
+                mCfg.baseBatteryCostBeforePenalty = rawWeaponCost
+                mCfg.batteryPenaltyPct = catAddPct
+                mCfg.batteryCost = math.floor(rawWeaponCost * catMult + 0.5)
+                if mCfg.triggerOnHit and (mCfg.hitTriggerBattery or 0) > 0 then
+                    mCfg.hitTriggerBattery = math.floor(mCfg.hitTriggerBattery * catMult + 0.5)
+                    wCfg.hitTriggerBattery = math.max(wCfg.hitTriggerBattery or 0, mCfg.hitTriggerBattery)
+                end
+                wCfg.batteryCost = wCfg.batteryCost + mCfg.batteryCost
             end
 
             if mCfg then
@@ -875,6 +930,31 @@ function Inventory:computeBuild(feverActive)
         end
     end
 
+    for _, catDef in ipairs(ModulesData.categories) do
+        local cat = canonicalCategory(catDef.id)
+        local count = categoryCounts[cat] or 0
+        if cat ~= "generator" and count >= 2 and categoryHasBatteryUsage[cat] then
+            local mult, addPct = Inventory.getDuplicateBatteryPenalty(cat, count)
+            local label = ModulesData.getCategoryLabel(cat)
+            build.categoryPenalties[cat] = {
+                category = cat,
+                label = label,
+                count = count,
+                addPct = addPct,
+                mult = mult,
+            }
+            build.duplicateCautions[#build.duplicateCautions + 1] = {
+                code = "duplicate_category_" .. cat,
+                category = cat,
+                label = label,
+                count = count,
+                addPct = addPct,
+                mult = mult,
+                message = string.format("%s %d개 장착: 각 모듈 배터리 사용량 +%d%%", label, count, addPct),
+            }
+        end
+    end
+
     build.maxShield = build.noShield and 0 or (baseShield + build.maxShieldBonus)
     build.maxArmor = baseArmor + build.maxArmorBonus
     build.maxBattery = baseBattery + build.maxBatteryBonus
@@ -882,9 +962,9 @@ function Inventory:computeBuild(feverActive)
     build.maxSpeed = baseMaxSpeed + build.maxSpeedBonus
     build.thrust = baseThrust + build.thrustBonus
     build.boostSpeed = baseBoostSpeed + build.boostSpeedBonus
-    build.boostCost = baseBoostCost + build.boostCostBase
+    build.boostCost = math.floor((baseBoostCost + build.boostCostBase) + 0.5)
     if build.boostCost > 0 then
-        build.boostCost = math.max(5, build.boostCost + build.boostCostBonus)
+        build.boostCost = math.max(5, math.floor(build.boostCost + build.boostCostBonus + 0.5))
     end
     build.thrustBatteryCost = baseThrustBatteryCost + build.thrustBatteryCostBonus
     build.wrapBonusSpeed = (baseWrapBonusSpeed + build.wrapBonusSpeedAdd) * build.wrapSpeedMult
@@ -965,6 +1045,8 @@ function Inventory:validateLoadout(feverActive)
         maxSingleActionBatteryCost = build.maxSingleActionBatteryCost,
         maxPartBatteryCost = build.maxPartBatteryCost,
         maxPartBatteryName = build.maxPartBatteryName,
+        cautions = build.duplicateCautions or {},
+        categoryPenalties = build.categoryPenalties or {},
     }
     return #warnings == 0, warnings, summary
 end
