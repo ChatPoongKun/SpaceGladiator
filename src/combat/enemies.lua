@@ -1,5 +1,5 @@
-local Ship = require("src.combat.ship")
 local Arena = require("src.core.arena")
+local Ship = require("src.combat.ship")
 local Collision = require("src.core.collision")
 local EnemyFire = require("src.combat.enemy_fire")
 local Sfx = require("src.audio.sfx")
@@ -10,6 +10,12 @@ local exitMargin = 155
 local wingAlignment = math.rad(6)
 local attackAlignment = math.rad(6)
 local contactDamage = 20
+local collisionIterations = 4
+local enemyPushBase = 80
+local playerPushBase = 110
+local collisionRestitution = 0.30
+local enemyMaxPushSpeed = 240
+local playerMaxPushSpeed = 260
 
 Enemies.spawnRate = 1 / 4
 Enemies.maxCount = 15
@@ -17,21 +23,21 @@ Enemies.patrolDuration = 10
 Enemies.types = {
     {
         name = "WEDGE", vertices = {0, -15, 10, 10, 0, 5, -10, 10},
-        radius = 16, evadeSpeed = 94, turnSpeed = 3.0,
+        radius = 16, mass = 1.0, evadeSpeed = 94, turnSpeed = 3.0,
         thrust = 285, brake = 5.0, maxSpeed = 500,
         patrolMin = 55, patrolMax = 110, arrivalRadius = 32,
         combatPower = 40, maxHp = 10,
     },
     {
         name = "EQUILATERAL", vertices = {0, -24, -12 * math.sqrt(3), 12, 12 * math.sqrt(3), 12},
-        radius = 24, evadeSpeed = 78,
+        radius = 24, mass = 1.8, evadeSpeed = 78,
         turnSpeed = 3.5, thrust = 255, brake = 2.5, maxSpeed = 320,
         patrolMin = 120, patrolMax = 185, arrivalRadius = 40,
         combatPower = 70, maxHp = 20,
     },
     {
         name = "OBTUSE", vertices = {0, -12, -26, 10, 26, 10},
-        radius = 28, evadeSpeed = 62, turnSpeed = 2.5, thrust = 218, brake = 4.0, maxSpeed = 200,
+        radius = 28, mass = 3.0, evadeSpeed = 62, turnSpeed = 2.5, thrust = 218, brake = 4.0, maxSpeed = 200,
         patrolMin = 195, patrolMax = 290, arrivalRadius = 48,
         combatPower = 100, maxHp = 50,
     },
@@ -105,6 +111,7 @@ function Enemies:spawn(ship, kindIndex, options)
         enemy.x, enemy.y = spawnPoint(self.rng, ship)
     end
     enemy.kind, enemy.radius = kind, definition.radius
+    enemy.mass = definition.mass or 1.0
     enemy.combatPower = definition.combatPower
     enemy.maxHp = (options and options.maxHp) or definition.maxHp or 10
     enemy.hp = (options and options.hp) or enemy.maxHp
@@ -116,6 +123,7 @@ function Enemies:spawn(ship, kindIndex, options)
     enemy.driftThreshold = Ship.driftThreshold * thrustRatio
     enemy.driftDeceleration = Ship.driftDeceleration * thrustRatio
     enemy.vx, enemy.vy = limitVector(options and options.vx or 0, options and options.vy or 0, enemy.maxSpeed)
+    enemy.pushVx, enemy.pushVy = 0, 0
     enemy.prevX, enemy.prevY = enemy.x, enemy.y
     enemy.angle = (options and options.angle or math.atan2(ship.x - enemy.x, enemy.y - ship.y)) % tau
     enemy.wave = options and options.wave or {}
@@ -470,18 +478,173 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     end
 end
 
-local function move(group, enemy, dt, ship, aimAngle, motion)
+local function addEntityPush(entity, dvx, dvy, maxSpeed)
+    if not dvx or not dvy then return end
+    if entity.addPush then
+        entity:addPush(dvx, dvy, maxSpeed)
+        return
+    end
+    local vx = (entity.pushVx or 0) + dvx
+    local vy = (entity.pushVy or 0) + dvy
+    local cap = maxSpeed or entity.maxPushSpeed or Ship.maxPushSpeed
+    if cap and cap > 0 then
+        local lenSq = vx * vx + vy * vy
+        if lenSq > cap * cap then
+            local scale = cap / math.sqrt(lenSq)
+            vx, vy = vx * scale, vy * scale
+        end
+    end
+    entity.pushVx, entity.pushVy = vx, vy
+end
+
+local function integrateEnemyPush(enemy, dt)
+    local pOldX, pOldY = enemy.pushVx or 0, enemy.pushVy or 0
+    if pOldX == 0 and pOldY == 0 then return end
+    local pDecay = math.exp(-(enemy.pushDecay or Ship.pushDecay) * dt)
+    local pNewX, pNewY = pOldX * pDecay, pOldY * pDecay
+    if pNewX * pNewX + pNewY * pNewY < 4 then
+        pNewX, pNewY = 0, 0
+    end
+    enemy.pushVx, enemy.pushVy = pNewX, pNewY
+    enemy.x = enemy.x + (pOldX + pNewX) * 0.5 * dt
+    enemy.y = enemy.y + (pOldY + pNewY) * 0.5 * dt
+end
+
+local function resolveEnemyEnemy(items, contacted)
+    local count = #items
+    local moved = false
+    for i = 1, count - 1 do
+        local a = items[i]
+        for j = i + 1, count do
+            local b = items[j]
+            local minDist = (a.radius or 0) + (b.radius or 0)
+            local dx, dy = a.x - b.x, a.y - b.y
+            local distSq = dx * dx + dy * dy
+            if distSq < minDist * minDist then
+                local dist = math.sqrt(distSq)
+                local nx, ny
+                if dist > 1e-6 then
+                    nx, ny = dx / dist, dy / dist
+                else
+                    local fallback = (i * 1.7 + j * 2.3) % tau
+                    nx, ny = math.cos(fallback), math.sin(fallback)
+                end
+                local overlap = minDist - dist
+                local invA, invB = 1 / (a.mass or 1), 1 / (b.mass or 1)
+                local invSum = invA + invB
+                local shareA, shareB = invA / invSum, invB / invSum
+                a.x = a.x + nx * overlap * shareA
+                a.y = a.y + ny * overlap * shareA
+                b.x = b.x - nx * overlap * shareB
+                b.y = b.y - ny * overlap * shareB
+
+                local pairKey = i * (count + 1) + j
+                if not contacted[pairKey] then
+                    contacted[pairKey] = true
+                    local avx, avy = (a.vx or 0) + (a.pushVx or 0), (a.vy or 0) + (a.pushVy or 0)
+                    local bvx, bvy = (b.vx or 0) + (b.pushVx or 0), (b.vy or 0) + (b.pushVy or 0)
+                    local relVn = (avx - bvx) * nx + (avy - bvy) * ny
+                    local targetSep = math.min(enemyMaxPushSpeed,
+                        enemyPushBase + math.max(0, -relVn) * collisionRestitution)
+                    if relVn < targetSep then
+                        local impulse = targetSep - relVn
+                        addEntityPush(a, nx * impulse * shareA, ny * impulse * shareA, enemyMaxPushSpeed)
+                        addEntityPush(b, -nx * impulse * shareB, -ny * impulse * shareB, enemyMaxPushSpeed)
+                    end
+                end
+                moved = true
+            end
+        end
+    end
+    return moved
+end
+
+local function resolvePlayerEnemy(items, ship, contacted)
+    if not ship or ship:isDestroyed() then return false end
+    local shipRadius = ship:hitRadius()
+    local invShip = 1 / (ship.mass or Ship.mass)
+    local moved = false
+    for i = 1, #items do
+        local enemy = items[i]
+        local er = enemy.radius or 0
+        if enemy.x + er >= 0 and enemy.x - er <= Arena.width
+            and enemy.y + er >= 0 and enemy.y - er <= Arena.height then
+            local minDist = shipRadius + er
+            local dx = wrappedDelta(ship.x - enemy.x, Arena.width)
+            local dy = wrappedDelta(ship.y - enemy.y, Arena.height)
+            local distSq = dx * dx + dy * dy
+            if distSq < minDist * minDist then
+                local dist = math.sqrt(distSq)
+                local nx, ny
+                if dist > 1e-6 then
+                    nx, ny = dx / dist, dy / dist
+                else
+                    nx, ny = 1, 0
+                end
+                local overlap = minDist - dist
+                local invEnemy = 1 / (enemy.mass or 1)
+                local invSum = invShip + invEnemy
+                local shareShip, shareEnemy = invShip / invSum, invEnemy / invSum
+                ship.x = (ship.x + nx * overlap * shareShip) % Arena.width
+                ship.y = (ship.y + ny * overlap * shareShip) % Arena.height
+                enemy.x = enemy.x - nx * overlap * shareEnemy
+                enemy.y = enemy.y - ny * overlap * shareEnemy
+
+                local pairKey = -i
+                if not contacted[pairKey] then
+                    contacted[pairKey] = true
+                    local svxNoKnock = (ship.vx or 0) + (ship.wrapVx or 0) + (ship.pushVx or 0)
+                    local svyNoKnock = (ship.vy or 0) + (ship.wrapVy or 0) + (ship.pushVy or 0)
+                    local svxFull, svyFull = svxNoKnock + (ship.knockVx or 0), svyNoKnock + (ship.knockVy or 0)
+                    local evx, evy = (enemy.vx or 0) + (enemy.pushVx or 0), (enemy.vy or 0) + (enemy.pushVy or 0)
+                    local relVnNoKnock = (svxNoKnock - evx) * nx + (svyNoKnock - evy) * ny
+                    local relVnFull = (svxFull - evx) * nx + (svyFull - evy) * ny
+                    local targetSep = math.min(playerMaxPushSpeed,
+                        playerPushBase + math.max(0, -relVnNoKnock) * collisionRestitution)
+
+                    local enemyImpulse = math.max(playerPushBase * shareEnemy,
+                        (targetSep - relVnNoKnock) * shareEnemy)
+                    addEntityPush(enemy, -nx * enemyImpulse, -ny * enemyImpulse, enemyMaxPushSpeed)
+
+                    if relVnFull < targetSep then
+                        local playerImpulse = (targetSep - relVnFull) * shareShip
+                        addEntityPush(ship, nx * playerImpulse, ny * playerImpulse, playerMaxPushSpeed)
+                    end
+                end
+                moved = true
+            end
+        end
+    end
+    return moved
+end
+
+local function resolveCollisions(items, ship, includePlayer)
+    if #items == 0 then return end
+    local contacted = {}
+    for _ = 1, collisionIterations do
+        local moved = resolveEnemyEnemy(items, contacted)
+        if includePlayer and resolvePlayerEnemy(items, ship, contacted) then
+            moved = true
+        end
+        if not moved then break end
+    end
+end
+
+local function moveEnemyStep(group, enemy, dt, ship, aimAngle, motion, elapsed)
     local definition = group.types[enemy.kind]
     local view = group.view
-    while dt > 1e-9 do
+    local remaining = dt
+    local localElapsed = elapsed
+    while remaining > 1e-9 do
         local x, y = enemy.x, enemy.y
-        local step = math.min(dt, 1 / 60)
+        local step = remaining
         if enemy.phase == "departing" then
             local exit = departureGoal(enemy, view)
             if clearedExit(enemy, view, exit.edge) then return true end
             flyTo(enemy, step, exit.x, exit.y, enemy.maxSpeed, 0, 0)
+            integrateEnemyPush(enemy, step)
         else
-            step = math.min(step, enemy.phaseRemaining)
+            step = math.min(remaining, enemy.phaseRemaining)
             if step > 0 then
                 if enemy.phase == "patrol" then
                     patrol(group, enemy, step, ship, aimAngle, definition)
@@ -489,6 +652,7 @@ local function move(group, enemy, dt, ship, aimAngle, motion)
                     local angle = enemy.angle
                     pilot(enemy, step, math.sin(angle) * entrySpeed, -math.cos(angle) * entrySpeed, angle)
                 end
+                integrateEnemyPush(enemy, step)
             end
             enemy.phaseRemaining = enemy.phaseRemaining - step
             if enemy.phaseRemaining <= 1e-9 then
@@ -500,21 +664,34 @@ local function move(group, enemy, dt, ship, aimAngle, motion)
                 end
             end
         end
-        if step > 0 then checkContact(enemy, ship, x, y, motion, motion.duration - dt, step, group.gladiator) end
-        dt = dt - step
+        if step > 0 then checkContact(enemy, ship, x, y, motion, localElapsed, step, group.gladiator) end
+        localElapsed = localElapsed + step
+        remaining = remaining - step
     end
     return enemy.phase == "departing" and clearedExit(enemy, view, enemy.wave.exit.edge)
 end
 
-local function advance(group, first, dt, ship, aimAngle, motion)
-    for i = #group.items, first, -1 do
+local function advance(group, first, totalDt, ship, aimAngle, motion)
+    for i = first, #group.items do
         local enemy = group.items[i]
         enemy.prevX, enemy.prevY = enemy.x, enemy.y
-        if move(group, enemy, dt, ship, aimAngle, motion) then
-            enemy.dead = true
-            table.remove(group.items, i)
-        end
     end
+    local remaining = totalDt
+    local elapsed = motion.duration - totalDt
+    while remaining > 1e-9 do
+        local substep = math.min(remaining, 1 / 60)
+        for i = #group.items, first, -1 do
+            local enemy = group.items[i]
+            if moveEnemyStep(group, enemy, substep, ship, aimAngle, motion, elapsed) then
+                enemy.dead = true
+                table.remove(group.items, i)
+            end
+        end
+        resolveCollisions(group.items, ship, false)
+        elapsed = elapsed + substep
+        remaining = remaining - substep
+    end
+    resolveCollisions(group.items, ship, true)
 end
 
 local function computeSeparation(items)

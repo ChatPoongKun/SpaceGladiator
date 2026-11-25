@@ -67,7 +67,8 @@ end
 
 -- The wrap bonus is part of world motion and is kept separate from flight speed.
 function Ship:worldVelocity()
-    return self.vx + self.wrapVx + (self.knockVx or 0), self.vy + self.wrapVy + (self.knockVy or 0)
+    return self.vx + self.wrapVx + (self.knockVx or 0) + (self.pushVx or 0),
+        self.vy + self.wrapVy + (self.knockVy or 0) + (self.pushVy or 0)
 end
 
 function Ship:hasShield()
@@ -175,6 +176,21 @@ function Ship:applyKnockback(dx, dy, speed)
     end
 end
 
+function Ship:addPush(dvx, dvy, maxSpeed)
+    if not dvx or not dvy then return end
+    local vx = (self.pushVx or 0) + dvx
+    local vy = (self.pushVy or 0) + dvy
+    local cap = maxSpeed or self.maxPushSpeed or Ship.maxPushSpeed
+    if cap and cap > 0 then
+        local lenSq = vx * vx + vy * vy
+        if lenSq > cap * cap then
+            local scale = cap / math.sqrt(lenSq)
+            vx, vy = vx * scale, vy * scale
+        end
+    end
+    self.pushVx, self.pushVy = vx, vy
+end
+
 function Ship:takeDamage(amount, knockX, knockY)
     if amount <= 0 or self:isDestroyed() or self:isInvulnerable() then return nil end
     self.damageCount = (self.damageCount or 0) + 1
@@ -209,6 +225,7 @@ function Ship:takeDamage(amount, knockX, knockY)
             self.invulnDuration = 0
             self.vx, self.vy, self.wrapVx, self.wrapVy = 0, 0, 0, 0
             self.knockVx, self.knockVy = 0, 0
+            self.pushVx, self.pushVy = 0, 0
             self.accelerating, self.braking = false, false
             self.boostRemaining, self.boostLevel = 0, 0
             self.lastHitLayer = hitLayer
@@ -360,14 +377,24 @@ function Ship:update(dt, input, options)
         end
     end
     local kNewX, kNewY = self.knockVx or 0, self.knockVy or 0
+    local pOldX, pOldY = self.pushVx or 0, self.pushVy or 0
+    if pOldX ~= 0 or pOldY ~= 0 then
+        local pDecay = math.exp(-(self.pushDecay or Ship.pushDecay) * dt)
+        self.pushVx = pOldX * pDecay
+        self.pushVy = pOldY * pDecay
+        if self.pushVx * self.pushVx + self.pushVy * self.pushVy < 4 then
+            self.pushVx, self.pushVy = 0, 0
+        end
+    end
+    local pNewX, pNewY = self.pushVx or 0, self.pushVy or 0
 
     local margin = self:hitRadius() + 1
     local detectWrap = not (options and options.disableWrapDetection)
     local wrapBonusSpeed = detectWrap and self.wrapBonusSpeed or Ship.wrapBonusSpeed
     local wrappedX, wrappedY
-    self.x, _, self.wrapVx, wrappedX = crossEdge(self.x, oldVx + kOldX, self.vx + kNewX, self.wrapVx, Arena.width, margin, dt, wrapBonusSpeed)
+    self.x, _, self.wrapVx, wrappedX = crossEdge(self.x, oldVx + kOldX + pOldX, self.vx + kNewX + pNewX, self.wrapVx, Arena.width, margin, dt, wrapBonusSpeed)
     if self.vx * self.wrapVx < 0 then self.vx = 0 end
-    self.y, _, self.wrapVy, wrappedY = crossEdge(self.y, oldVy + kOldY, self.vy + kNewY, self.wrapVy, Arena.height, margin, dt, wrapBonusSpeed)
+    self.y, _, self.wrapVy, wrappedY = crossEdge(self.y, oldVy + kOldY + pOldY, self.vy + kNewY + pNewY, self.wrapVy, Arena.height, margin, dt, wrapBonusSpeed)
     if self.vy * self.wrapVy < 0 then self.vy = 0 end
     if detectWrap and (wrappedX or wrappedY) then
         self.wrapEvents = (self.wrapEvents or 0) + 1

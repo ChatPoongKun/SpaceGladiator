@@ -268,6 +268,7 @@ local function enterWarpSelect(keepExistingGates)
             ship.x, ship.y = Arena.width * 0.5, Arena.height * 0.5
             ship.vx, ship.vy, ship.wrapVx, ship.wrapVy = 0, 0, 0, 0
             ship.knockVx, ship.knockVy = 0, 0
+            ship.pushVx, ship.pushVy = 0, 0
             ship.invulnTimer, ship.invulnDuration = 0, 0
             ship.boostRemaining, ship.boostLevel = 0, 0
             ship.accelerating, ship.braking = false, false
