@@ -1274,37 +1274,16 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
     g.pop()
     drawEnemyFireSnapshot(f0.shots, f0.impacts)
 
-    gladProxy:drawFeverWorld(shipProxy, srcTime, { skipShipAura = true })
+    gladProxy:drawFeverWorld(shipProxy, srcTime)
 
-    -- Draw player across torus wrap offsets without arena-boundary clipping
+    -- Draw player once without arena-boundary clipping or duplicate wrap copies
     g.push("all")
-    local destroyed = shipProxy:isDestroyed()
-    local xOffsets, yOffsets, viewLeft, viewTop, viewRight, viewBottom = Arena.playerWrapOffsets(shipProxy, turretProxy, cam, width, height)
-    if not destroyed and shipProxy.boostOriginX and shipProxy.boostOriginY then
-        local pulseXOffsets = Arena.wrapOffsets(shipProxy.boostOriginX, Arena.width, 80, 80, viewLeft, viewRight)
-        local pulseYOffsets = Arena.wrapOffsets(shipProxy.boostOriginY, Arena.height, 80, 80, viewTop, viewBottom)
-        for _, pdx in ipairs(pulseXOffsets) do
-            for _, pdy in ipairs(pulseYOffsets) do
-                g.push()
-                g.translate(pdx, pdy)
-                shipProxy:drawBoostPulse()
-                g.pop()
-            end
-        end
-    end
-    for _, dx in ipairs(xOffsets) do
-        for _, dy in ipairs(yOffsets) do
-            g.push()
-            g.translate(dx, dy)
-            if destroyed then
-                shipProxy:drawDestruction()
-            else
-                gladProxy:drawFeverShipAura(shipProxy, srcTime)
-                turretProxy:drawMount(shipProxy, srcTime, width)
-                shipProxy:draw(srcTime)
-            end
-            g.pop()
-        end
+    if shipProxy:isDestroyed() then
+        shipProxy:drawDestruction()
+    else
+        shipProxy:drawBoostPulse()
+        turretProxy:drawMount(shipProxy, srcTime, width)
+        shipProxy:draw(srcTime)
     end
     g.pop()
 

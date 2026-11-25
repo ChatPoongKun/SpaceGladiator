@@ -234,28 +234,9 @@ function TitleDemo:draw(time, width, height)
     enemies:draw(t)
 
     g.push("all")
-    local xOffsets, yOffsets, viewLeft, viewTop, viewRight, viewBottom = Arena.playerWrapOffsets(ship, turret, camera, width, height)
-    if ship.boostOriginX and ship.boostOriginY then
-        local pulseXOffsets = Arena.wrapOffsets(ship.boostOriginX, Arena.width, 80, 80, viewLeft, viewRight)
-        local pulseYOffsets = Arena.wrapOffsets(ship.boostOriginY, Arena.height, 80, 80, viewTop, viewBottom)
-        for _, pdx in ipairs(pulseXOffsets) do
-            for _, pdy in ipairs(pulseYOffsets) do
-                g.push()
-                g.translate(pdx, pdy)
-                ship:drawBoostPulse()
-                g.pop()
-            end
-        end
-    end
-    for _, dx in ipairs(xOffsets) do
-        for _, dy in ipairs(yOffsets) do
-            g.push()
-            g.translate(dx, dy)
-            turret:drawMount(ship, t, width)
-            ship:draw(t)
-            g.pop()
-        end
-    end
+    ship:drawBoostPulse()
+    turret:drawMount(ship, t, width)
+    ship:draw(t)
     g.pop()
 
     turret:drawEffects(camera, width, height)

@@ -1208,33 +1208,12 @@ end
 local function drawPlayer()
     local g = love.graphics
     g.push("all")
-    local destroyed = ship:isDestroyed()
-    local xOffsets, yOffsets, viewLeft, viewTop, viewRight, viewBottom = Arena.playerWrapOffsets(ship, turret, camera, width, height)
-    if not destroyed and ship.boostOriginX and ship.boostOriginY then
-        local pulseXOffsets = Arena.wrapOffsets(ship.boostOriginX, Arena.width, 80, 80, viewLeft, viewRight)
-        local pulseYOffsets = Arena.wrapOffsets(ship.boostOriginY, Arena.height, 80, 80, viewTop, viewBottom)
-        for _, pdx in ipairs(pulseXOffsets) do
-            for _, pdy in ipairs(pulseYOffsets) do
-                g.push()
-                g.translate(pdx, pdy)
-                ship:drawBoostPulse()
-                g.pop()
-            end
-        end
-    end
-    for _, dx in ipairs(xOffsets) do
-        for _, dy in ipairs(yOffsets) do
-            g.push()
-            g.translate(dx, dy)
-            if destroyed then
-                ship:drawDestruction()
-            else
-                gladiator:drawFeverShipAura(ship, time)
-                turret:drawMount(ship, time, width)
-                ship:draw(time)
-            end
-            g.pop()
-        end
+    if ship:isDestroyed() then
+        ship:drawDestruction()
+    else
+        ship:drawBoostPulse()
+        turret:drawMount(ship, time, width)
+        ship:draw(time)
     end
     g.pop()
 end
@@ -1246,7 +1225,7 @@ local function drawFlight()
     love.graphics.scale(camera.zoom)
     Arena.draw(ship.boostLevel, gladiator.feverAura)
     enemies:draw(time)
-    gladiator:drawFeverWorld(ship, time, { skipShipAura = true })
+    gladiator:drawFeverWorld(ship, time)
     drawPlayer()
     turret:drawEffects(camera, width, height)
     love.graphics.pop()

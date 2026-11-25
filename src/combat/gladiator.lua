@@ -597,34 +597,7 @@ function Gladiator:drawPopups(camera, width, height, font)
     g.pop()
 end
 
-function Gladiator:drawFeverShipAura(ship, time)
-    if self.feverAura <= 0 or not ship or ship:isDestroyed() then return end
-    local g = love.graphics
-    local t = time or self.elapsed
-    g.push("all")
-    g.setLineStyle("smooth")
-
-    local aura = self.feverAura
-    local pulse = 0.85 + math.sin(t * 14) * 0.15
-    local baseR = ship:hitRadius() + 9 + math.sin(t * 10) * 2.5
-    g.setColor(1.0, 0.72, 0.22, 0.10 * aura * pulse)
-    g.circle("fill", ship.x, ship.y, baseR + 10)
-    g.setLineWidth(2.0)
-    for i = 0, 3 do
-        local start = t * 3.4 + i * (math.pi * 0.5)
-        g.setColor(1.0, 0.86, 0.34, 0.82 * aura)
-        g.arc("line", "open", ship.x, ship.y, baseR, start, start + 0.95)
-    end
-    g.setLineWidth(1.4)
-    for i = 0, 2 do
-        local start = -t * 2.6 + i * (math.pi * 2 / 3)
-        g.setColor(1.0, 0.38, 0.68, 0.68 * aura)
-        g.arc("line", "open", ship.x, ship.y, baseR + 6, start, start + 1.1)
-    end
-    g.pop()
-end
-
-function Gladiator:drawFeverWorld(ship, time, opts)
+function Gladiator:drawFeverWorld(ship, time)
     if self.feverAura <= 0 and #self.feverBursts == 0 and #self.feverSparks == 0 then return end
     local g = love.graphics
     local t = time or self.elapsed
@@ -670,8 +643,24 @@ function Gladiator:drawFeverWorld(ship, time, opts)
             spark.x - s, spark.y)
     end
 
-    if not (opts and opts.skipShipAura) then
-        self:drawFeverShipAura(ship, t)
+    if self.feverAura > 0 and ship and not ship:isDestroyed() then
+        local aura = self.feverAura
+        local pulse = 0.85 + math.sin(t * 14) * 0.15
+        local baseR = ship:hitRadius() + 9 + math.sin(t * 10) * 2.5
+        g.setColor(1.0, 0.72, 0.22, 0.10 * aura * pulse)
+        g.circle("fill", ship.x, ship.y, baseR + 10)
+        g.setLineWidth(2.0)
+        for i = 0, 3 do
+            local start = t * 3.4 + i * (math.pi * 0.5)
+            g.setColor(1.0, 0.86, 0.34, 0.82 * aura)
+            g.arc("line", "open", ship.x, ship.y, baseR, start, start + 0.95)
+        end
+        g.setLineWidth(1.4)
+        for i = 0, 2 do
+            local start = -t * 2.6 + i * (math.pi * 2 / 3)
+            g.setColor(1.0, 0.38, 0.68, 0.68 * aura)
+            g.arc("line", "open", ship.x, ship.y, baseR + 6, start, start + 1.1)
+        end
     end
     g.pop()
 end
