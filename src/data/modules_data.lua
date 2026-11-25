@@ -1,7 +1,7 @@
 -- Module definitions for the ship chassis grid inventory.
 -- Categories: weapon (무기), defense (방호), thruster (추진기), generator (제너레이터).
 -- Each module has a grid shape (list of 0-indexed {dr, dc} cells), a bounding
--- box (w x h), batteryLoad (output draw), and a socket layout (1 open socket per cell).
+-- box (w x h), and a socket layout (1 open socket per cell).
 
 local Rarity = require("src.data.rarity")
 
@@ -32,9 +32,8 @@ ModulesData.list = {
         h = 2,
         shape = { { 0, 0 }, { 1, 0 } },
         maxSockets = 2,
-        batteryLoad = 8,
         baseBatteryCost = 0,
-        description = "기본 3발 확산탄 (0.18초 간격). 발사 시 배터리 소모가 없고 출력 부하가 낮아 안정적입니다.",
+        description = "기본 3발 확산탄 (0.18초 간격). 발사 시 배터리 소모 없이 안정적으로 사격합니다.",
     },
     {
         id = "missile",
@@ -47,7 +46,6 @@ ModulesData.list = {
         h = 2,
         shape = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 1, 0 } },
         maxSockets = 4,
-        batteryLoad = 18,
         baseBatteryCost = 4,
         description = "곡선 궤적 폭발 로켓 (0.55초 간격). 2x2 공간을 차지하지만 광역 폭발과 최대 4소켓 포텐셜을 가집니다.",
     },
@@ -62,7 +60,6 @@ ModulesData.list = {
         h = 3,
         shape = { { 0, 0 }, { 1, 0 }, { 2, 0 } },
         maxSockets = 3,
-        batteryLoad = 16,
         baseBatteryCost = 3,
         description = "즉시 타격 레이저 빔 (0.34초 간격). 일렬 3소켓 구조로 굴절·연발 조합에 특화됩니다.",
     },
@@ -75,7 +72,6 @@ ModulesData.list = {
         h = 1,
         shape = { { 0, 0 }, { 0, 1 } },
         maxSockets = 2,
-        batteryLoad = 14,
         stats = { maxShield = 50 },
         description = "최대 실드 +50. 선체와 장갑을 보호하는 에너지 실드를 생성합니다.",
     },
@@ -88,9 +84,8 @@ ModulesData.list = {
         h = 2,
         shape = { { 0, 0 }, { 1, 0 } },
         maxSockets = 2,
-        batteryLoad = 4,
         stats = { maxArmor = 50 },
-        description = "최대 장갑 +50. 낮은 전력 부하로 기체의 내구력을 크게 보강합니다.",
+        description = "최대 장갑 +50. 배터리 소모 없이 기체의 내구력을 크게 보강합니다.",
     },
     {
         id = "thruster",
@@ -101,11 +96,8 @@ ModulesData.list = {
         h = 1,
         shape = { { 0, 0 } },
         maxSockets = 1,
-        batteryLoad = 10,
-        activationBatteryCost = 25,
-        stats = { maxSpeed = 250, thrust = 350, boostSpeed = 450, wrapBonusSpeed = 110, boostCost = 25 },
-        stackStats = { maxSpeed = 35, thrust = 45, boostSpeed = 65, wrapBonusSpeed = 35 },
-        description = "1x1 메인 추진 모듈. 기본 기동·부스트(소모 25)를 제공하며 추가 장착 시 기동력이 상승합니다.",
+        stats = { maxSpeed = 250, thrust = 350, boostSpeed = 450, wrapBonusSpeed = 110, boostCost = 25, thrustBatteryCost = 2 },
+        description = "1x1 메인 추진 모듈. 일반 가속 시 소량(초당 2), 부스트 시 크게(25) 배터리를 소모하며 중복 장착 시 수치가 모두 가산됩니다.",
     },
     {
         id = "battery",
@@ -116,16 +108,14 @@ ModulesData.list = {
         h = 2,
         shape = { { 0, 0 }, { 1, 0 } },
         maxSockets = 2,
-        batteryLoad = 0,
-        stats = { maxBattery = 100, batteryOutput = 40, batteryRecharge = 12 },
-        description = "출력 +40, 배터리 총량 +100, 초당 충전 +12. 기체 전체 부품에 전력을 공급합니다.",
+        stats = { maxBattery = 100, batteryRecharge = 12 },
+        description = "배터리 총량 +100, 초당 충전 +12. 기체 무기와 추진기에 전력을 공급합니다.",
     },
 }
 
 ModulesData.byId = {}
 for _, def in ipairs(ModulesData.list) do
     def.rarity = Rarity.normalize(def.rarity)
-    def.batteryLoad = def.batteryLoad or 0
     def.image = def.image or ("assets/items/modules/" .. def.id .. ".png")
     ModulesData.byId[def.id] = def
 end

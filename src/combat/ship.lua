@@ -25,6 +25,9 @@ Ship.combatPower = 100
 Ship.hitKnockbackSpeed = 190
 Ship.hullKnockbackSpeed = 270
 Ship.knockbackDecay = 14
+Ship.mass = 1.6
+Ship.pushDecay = 8
+Ship.maxPushSpeed = 260
 
 function Ship.new(width, height)
     return setmetatable({
@@ -32,6 +35,8 @@ function Ship.new(width, height)
         vx = 0, vy = 0, angle = 0,
         wrapVx = 0, wrapVy = 0,
         knockVx = 0, knockVy = 0,
+        pushVx = 0, pushVy = 0,
+        mass = Ship.mass,
         accelerating = false, braking = false,
         boostRemaining = 0, boostLevel = 0,
         boostX = 0, boostY = -1,
@@ -42,7 +47,9 @@ function Ship.new(width, height)
         baseMaxShield = 100, baseMaxArmor = 100, baseMaxBattery = 100,
         baseBatteryRecharge = Ship.batteryRecharge,
         baseMaxSpeed = Ship.maxSpeed, baseBoostSpeed = Ship.boostSpeed,
-        baseBoostCost = Ship.boostCost, baseWrapBonusSpeed = Ship.wrapBonusSpeed,
+        baseBoostCost = Ship.boostCost, baseThrustBatteryCost = 0,
+        thrustBatteryCost = 0,
+        baseWrapBonusSpeed = Ship.wrapBonusSpeed,
         wrapBonusSpeed = Ship.wrapBonusSpeed,
         wrapInvulnDuration = 0, invulnTimer = 0, invulnDuration = 0, wrapEvents = 0,
         combatPower = Ship.combatPower,
@@ -114,6 +121,7 @@ function Ship:applyBuild(build, opts)
         self.thrust = build.thrust or Ship.thrust
         self.boostSpeed = build.boostSpeed or 0
         self.boostCost = (build.boostCost and build.boostCost > 0) and build.boostCost or Ship.boostCost
+        self.thrustBatteryCost = build.thrustBatteryCost or 0
         self.wrapBonusSpeed = build.wrapBonusSpeed or Ship.wrapBonusSpeed
         self.turnSpeed = build.turnSpeed or Ship.turnSpeed
         self.brake = build.brake or Ship.brake
@@ -126,6 +134,7 @@ function Ship:applyBuild(build, opts)
         self.maxSpeed = self.baseMaxSpeed + (build.maxSpeedBonus or 0)
         self.boostSpeed = self.baseBoostSpeed + (build.boostSpeedBonus or 0)
         self.boostCost = math.max(5, self.baseBoostCost + (build.boostCostBonus or 0))
+        self.thrustBatteryCost = (self.baseThrustBatteryCost or 0) + (build.thrustBatteryCostBonus or 0)
         self.wrapBonusSpeed = (self.baseWrapBonusSpeed + (build.wrapBonusSpeedAdd or 0)) * (build.wrapSpeedMult or 1)
         self.wrapInvulnDuration = build.wrapInvulnDuration or 0
     end
@@ -315,12 +324,24 @@ function Ship:update(dt, input, options)
     end
 
     local rechargeTime = math.max(0, dt - self.boostRemaining)
-    self.battery = math.min(self.maxBattery, self.battery + rechargeTime * self.batteryRecharge)
+    local thrustDrain = self.thrustBatteryCost or 0
+    local canThrust = input.thrust and not input.brake
+    if canThrust and thrustDrain > 0 and rechargeTime > 0 then
+        local netBattery = self.battery + (self.batteryRecharge - thrustDrain) * rechargeTime
+        if netBattery >= 0 then
+            self.battery = math.min(self.maxBattery, netBattery)
+        else
+            canThrust = false
+            self.battery = math.min(self.maxBattery, self.battery + rechargeTime * self.batteryRecharge)
+        end
+    else
+        self.battery = math.min(self.maxBattery, self.battery + rechargeTime * self.batteryRecharge)
+    end
     self.boostRemaining = math.max(0, self.boostRemaining - dt)
     local falloff = math.min(1, self.boostRemaining / self.boostFalloff)
     self.boostLevel = falloff * falloff * (3 - 2 * falloff)
     local cap = self.maxSpeed + (self.boostSpeed - self.maxSpeed) * self.boostLevel
-    local oldVx, oldVy = self:updateVelocity(dt, input.thrust, input.brake, cap, rechargeTime)
+    local oldVx, oldVy = self:updateVelocity(dt, canThrust, input.brake, cap, rechargeTime)
 
     if (self.invulnTimer or 0) > 0 then
         self.invulnTimer = math.max(0, self.invulnTimer - dt)

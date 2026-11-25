@@ -93,7 +93,7 @@ function InventoryUI.new()
         dragging = nil,
         mouseX = 0,
         mouseY = 0,
-        message = "아이템을 클릭·드래그해 격자에 배치하세요. (R: 회전, 무기 우클릭: 활성/비활성)",
+        message = "아이템을 클릭·드래그해 격자에 배치하세요. (무기 우클릭: 활성/비활성)",
         hitRegions = {},
         hoveredIndex = nil,
         hoveredItem = nil,
@@ -510,8 +510,9 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
     g.setFont(fonts.menuBody)
     g.setColor(0.62, 0.84, 0.92, 1)
     local chassisName = (inv.chassis and inv.chassis.name) or "함선"
-    local cellInfo = string.format("%s  ·  슬롯 %d / %d  ·  드래그 배치 · 클릭 유지+R 회전",
-        chassisName, inv:unlockedCellCount(), inv:maxCellCount())
+    local rotHint = inv.rotationUnlocked and " · 클릭 유지+R 회전" or ""
+    local cellInfo = string.format("%s  ·  슬롯 %d / %d  ·  드래그 배치%s",
+        chassisName, inv:unlockedCellCount(), inv:maxCellCount(), rotHint)
     g.print(cellInfo, px + 26, py + 56)
 
     -- Close / Proceed button
@@ -777,26 +778,29 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
 
         if self.selectedModule and self.selectedModule.row and not self.dragging then
             local btnY = curY + 92
-            local btns = {
-                { label = "회전 (R)", action = { type = "rotateSelected" } },
-            }
+            local btns = {}
+            if inv.rotationUnlocked then
+                btns[#btns + 1] = { label = "회전 (R)", action = { type = "rotateSelected" } }
+            end
             if Inventory.isWeaponModule(self.selectedModule) then
                 btns[#btns + 1] = {
                     label = self.selectedModule.disabled and "활성화 (우클릭)" or "비활성화 (우클릭)",
                     action = { type = "toggleSelectedWeapon" },
                 }
             end
-            local bw = math.floor((rw - 24 - (#btns - 1) * 8) / #btns)
-            for i, b in ipairs(btns) do
-                local bx = rx + 12 + (i - 1) * (bw + 8)
-                g.setColor(0.12, 0.22, 0.30, 0.95)
-                g.rectangle("fill", bx, btnY, bw, 30, 5, 5)
-                g.setColor(0.42, 0.80, 0.92, 0.78)
-                g.rectangle("line", bx, btnY, bw, 30, 5, 5)
-                g.setFont(fonts.menuBody)
-                g.setColor(0.92, 0.97, 1, 1)
-                g.printf(b.label, bx, btnY + 6, bw, "center")
-                self:addRegion(bx, btnY, bw, 30, b.action)
+            if #btns > 0 then
+                local bw = math.floor((rw - 24 - (#btns - 1) * 8) / #btns)
+                for i, b in ipairs(btns) do
+                    local bx = rx + 12 + (i - 1) * (bw + 8)
+                    g.setColor(0.12, 0.22, 0.30, 0.95)
+                    g.rectangle("fill", bx, btnY, bw, 30, 5, 5)
+                    g.setColor(0.42, 0.80, 0.92, 0.78)
+                    g.rectangle("line", bx, btnY, bw, 30, 5, 5)
+                    g.setFont(fonts.menuBody)
+                    g.setColor(0.92, 0.97, 1, 1)
+                    g.printf(b.label, bx, btnY + 6, bw, "center")
+                    self:addRegion(bx, btnY, bw, 30, b.action)
+                end
             end
         end
     else
@@ -913,8 +917,12 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
         if helpY + 70 < curY + middleH then
             g.print("조작 안내", rx + 14, helpY)
             g.print("· 좌클릭 드래그: 모듈·칩 이동 및 소켓 장착", rx + 14, helpY + 24)
-            g.print("· 클릭 유지 + R: 아이템 90도 회전", rx + 14, helpY + 46)
-            g.print("· 무기 우클릭: 활성/비활성 전환  /  +OPEN: 격자 확장", rx + 14, helpY + 68)
+            if inv.rotationUnlocked then
+                g.print("· 클릭 유지 + R: 아이템 90도 회전", rx + 14, helpY + 46)
+                g.print("· 무기 우클릭: 활성/비활성 전환  /  +OPEN: 격자 확장", rx + 14, helpY + 68)
+            else
+                g.print("· 무기 우클릭: 활성/비활성 전환  /  모듈 회전: 추후 해금", rx + 14, helpY + 46)
+            end
         end
     end
 
@@ -956,17 +964,19 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
             disabled = (d.item.disabled == true),
             alpha = 0.92,
         })
-        g.setFont(fonts.small)
-        local tipW = 86
-        local tipX = self.mouseX - tipW * 0.5
-        local tipY = drawY + itemH + 6
-        g.setColor(0.04, 0.08, 0.14, 0.92)
-        g.rectangle("fill", tipX, tipY, tipW, 18, 4, 4)
-        g.setColor(0.50, 0.92, 1.0, 0.85)
-        g.setLineWidth(1)
-        g.rectangle("line", tipX, tipY, tipW, 18, 4, 4)
-        g.setColor(0.92, 0.98, 1.0, 1)
-        g.printf("R: ROTATE", tipX, tipY + 3, tipW, "center")
+        if inv.rotationUnlocked then
+            g.setFont(fonts.small)
+            local tipW = 86
+            local tipX = self.mouseX - tipW * 0.5
+            local tipY = drawY + itemH + 6
+            g.setColor(0.04, 0.08, 0.14, 0.92)
+            g.rectangle("fill", tipX, tipY, tipW, 18, 4, 4)
+            g.setColor(0.50, 0.92, 1.0, 0.85)
+            g.setLineWidth(1)
+            g.rectangle("line", tipX, tipY, tipW, 18, 4, 4)
+            g.setColor(0.92, 0.98, 1.0, 1)
+            g.printf("R: ROTATE", tipX, tipY + 3, tipW, "center")
+        end
     end
 
     -- 5. Modal Warning Popup (blocks underlying interaction until dismissed)
@@ -1245,7 +1255,9 @@ function InventoryUI:mousepressed(inv, x, y, button, opts)
                 return nil
             elseif a.type == "placedModule" then
                 self:startDrag(inv, a.mod, "grid", x, y)
-                self.message = a.mod.def.name .. " 드래그 중 — 원하는 위치에 놓으세요. (R: 회전)"
+                self.message = inv.rotationUnlocked
+                    and (a.mod.def.name .. " 드래그 중 — 원하는 위치에 놓으세요. (R: 회전)")
+                    or (a.mod.def.name .. " 드래그 중 — 원하는 위치에 놓으세요.")
                 return nil
             elseif a.type == "placedChip" then
                 self:startDrag(inv, a.chip, "grid", x, y)
@@ -1253,10 +1265,15 @@ function InventoryUI:mousepressed(inv, x, y, button, opts)
                 return nil
             elseif a.type == "pendingItem" then
                 self:startDrag(inv, a.item, "tray", x, y)
-                self.message = a.item.def.name .. " 획득 배치 중 — 격자에 놓으세요. (R: 회전)"
+                self.message = inv.rotationUnlocked
+                    and (a.item.def.name .. " 획득 배치 중 — 격자에 놓으세요. (R: 회전)")
+                    or (a.item.def.name .. " 획득 배치 중 — 격자에 놓으세요.")
                 return nil
             elseif a.type == "rotateSelected" and self.selectedModule then
-                if inv:rotateModule(self.selectedModule) then
+                if not inv.rotationUnlocked then
+                    Sfx.play("ui_error")
+                    self.message = "모듈 회전 기능은 추후 업그레이드로 해금됩니다."
+                elseif inv:rotateModule(self.selectedModule) then
                     Sfx.play("ui_equip")
                     self.message = self.selectedModule.def.name .. " 회전 완료"
                     return "changed"
@@ -1287,13 +1304,17 @@ function InventoryUI:mousereleased(inv, x, y, button, opts)
     -- For tray items, enter sticky pickup mode so click -> move -> R -> click works too!
     if d.origin == "tray" then
         d.sticky = true
-        self.message = d.item.def.name .. " 집어듦 — 격자 위치를 클릭해 배치하세요. (R: 회전, 우클릭: 취소)"
+        self.message = inv.rotationUnlocked
+            and (d.item.def.name .. " 집어듦 — 격자 위치를 클릭해 배치하세요. (R: 회전, 우클릭: 취소)")
+            or (d.item.def.name .. " 집어듦 — 격자 위치를 클릭해 배치하세요. (우클릭: 취소)")
         return nil
     end
 
     -- Quick tap on an already placed item: restore cleanly and keep it selected in inspector
     self:cancelDrag(inv)
-    self.message = d.item.def.name .. " 선택됨 (드래그해 이동하거나 R로 회전)"
+    self.message = inv.rotationUnlocked
+        and (d.item.def.name .. " 선택됨 (드래그해 이동하거나 R로 회전)")
+        or (d.item.def.name .. " 선택됨 (드래그해 이동)")
     return nil
 end
 
@@ -1306,6 +1327,9 @@ function InventoryUI:keypressed(inv, key)
         return nil
     end
     if key == "r" then
+        if not inv.rotationUnlocked then
+            return nil
+        end
         if self.dragging then
             self.dragging.rotation = (self.dragging.rotation + 1) % 4
             self.dragging.rotated = true

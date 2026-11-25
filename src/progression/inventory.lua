@@ -10,6 +10,7 @@ local Rarity = require("src.data.rarity")
 
 local Inventory = {}
 Inventory.__index = Inventory
+Inventory.DEFAULT_ROTATION_UNLOCKED = false
 
 local function cellKey(r, c)
     return r .. "," .. c
@@ -118,10 +119,17 @@ end
 function Inventory.new(opts)
     opts = opts or {}
     local chassis = ChassisData.get(opts.chassisId or ChassisData.DEFAULT_ID)
+    local rotationUnlocked
+    if opts.rotationUnlocked ~= nil then
+        rotationUnlocked = opts.rotationUnlocked == true
+    else
+        rotationUnlocked = Inventory.DEFAULT_ROTATION_UNLOCKED
+    end
     local self = setmetatable({
         nextId = 1,
         metaPoints = opts.metaPoints or 0,
         expandCost = opts.expandCost or 100,
+        rotationUnlocked = rotationUnlocked,
     }, Inventory)
 
     initGridForChassis(self, chassis)
@@ -340,7 +348,11 @@ end
 function Inventory:canPlace(item, row, col, rotation)
     if not item or not row or not col then return false, "invalid_item" end
     if self.chassis and self.chassis.locked then return false, "locked_chassis" end
-    local shapeCells = Inventory.getShapeCells(item, rotation)
+    local rot = rotation ~= nil and Inventory.normalizeRotation(rotation) or (item.rotation or 0)
+    if not self.rotationUnlocked and rot ~= 0 then
+        return false, "rotation_locked"
+    end
+    local shapeCells = Inventory.getShapeCells(item, rot)
     if #shapeCells == 0 then return false, "invalid_shape" end
     for _, coord in ipairs(shapeCells) do
         local r, c = row + coord[1], col + coord[2]
@@ -420,6 +432,7 @@ end
 
 function Inventory:rotateItem(item, steps)
     if not item then return false, "invalid_item" end
+    if not self.rotationUnlocked then return false, "rotation_locked" end
     local nextRot = Inventory.normalizeRotation((item.rotation or 0) + (steps or 1))
     if not item.row then
         local _, w, h = Inventory.getShapeCells(item, nextRot)
@@ -580,9 +593,8 @@ end
 function Inventory:getPartPeakBatteryCost(mod, feverActive)
     if not mod or not mod.def then return 0 end
     local def = mod.def
-    local baseLoad = def.batteryLoad or 0
     local fireCost = def.baseBatteryCost or 0
-    local activationCost = def.activationBatteryCost or (def.stats and def.stats.boostCost) or 0
+    local activationCost = (def.stats and def.stats.boostCost) or 0
 
     local activeChips = self:getActiveChips(mod)
     local nonFeverBatteryMult = 1.0
@@ -613,13 +625,14 @@ function Inventory:getPartPeakBatteryCost(mod, feverActive)
     if activationCost > 0 then
         activationCost = activationCost + boostCostAdd
     end
-    return math.max(baseLoad, fireCost, activationCost, triggerCost)
+    return math.max(fireCost, activationCost, triggerCost)
 end
 
 local function newWeaponConfig(def, mod)
     return {
         moduleId = mod and mod.id or nil,
         defId = def and def.id or nil,
+        name = def and def.name or nil,
         weaponIndex = def and def.weaponIndex or nil,
         fireInterval = def and def.fireInterval or nil,
         installed = mod ~= nil,
@@ -630,7 +643,6 @@ local function newWeaponConfig(def, mod)
         cooldownMult = 1.0,
         manualCooldownMult = 1.0,
         batteryCost = (def and def.baseBatteryCost) or 0,
-        batteryLoad = (def and def.batteryLoad) or 0,
         bounces = 0,
         homing = false,
         homingTurnRate = 0,
@@ -700,12 +712,12 @@ function Inventory:computeBuild(feverActive)
     local baseArmor = base.maxArmor or 0
     local baseHull = base.maxHull or 0
     local baseBattery = base.maxBattery or 0
-    local baseBatteryOutput = base.batteryOutput or 0
     local baseRecharge = base.batteryRecharge or 0
     local baseMaxSpeed = base.maxSpeed or 0
     local baseThrust = base.thrust or 0
     local baseBoostSpeed = base.boostSpeed or 0
     local baseBoostCost = base.boostCost or 0
+    local baseThrustBatteryCost = base.thrustBatteryCost or 0
     local baseWrapBonusSpeed = base.wrapBonusSpeed or 0
 
     local build = {
@@ -719,12 +731,12 @@ function Inventory:computeBuild(feverActive)
         maxArmor = baseArmor,
         maxHull = baseHull,
         maxBattery = baseBattery,
-        batteryOutput = baseBatteryOutput,
         batteryRecharge = baseRecharge,
         maxSpeed = baseMaxSpeed,
         thrust = baseThrust,
         boostSpeed = baseBoostSpeed,
         boostCost = baseBoostCost,
+        thrustBatteryCost = baseThrustBatteryCost,
         wrapBonusSpeed = baseWrapBonusSpeed,
         turnSpeed = base.turnSpeed or 4.5,
         brake = base.brake or 2.5,
@@ -733,18 +745,21 @@ function Inventory:computeBuild(feverActive)
         maxShieldBonus = 0,
         maxArmorBonus = 0,
         maxBatteryBonus = 0,
-        batteryOutputBonus = 0,
         batteryRechargeBonus = 0,
         batteryRechargeMult = 1.0,
         maxSpeedBonus = 0,
         thrustBonus = 0,
         boostSpeedBonus = 0,
+        boostCostBase = 0,
         boostCostBonus = 0,
+        thrustBatteryCostBonus = 0,
         wrapBonusSpeedAdd = 0,
         wrapSpeedMult = 1.0,
         wrapInvulnDuration = 0,
 
-        totalBatteryLoad = 0,
+        maxWeaponBatteryCost = 0,
+        maxWeaponBatteryName = nil,
+        maxSingleActionBatteryCost = 0,
         maxPartBatteryCost = 0,
         maxPartBatteryName = nil,
 
@@ -764,39 +779,22 @@ function Inventory:computeBuild(feverActive)
         build.weapons[w] = cfg
     end
 
-    local thrusterCount = 0
     for _, mod in ipairs(self.placed) do
         local def = mod.def
         local isDisabledWeapon = Inventory.isWeaponModule(mod) and mod.disabled == true
         if not isDisabledWeapon and def then
             local stats = def.stats
-            if def.category == "thruster" then
-                thrusterCount = thrusterCount + 1
-                if thrusterCount > 1 and def.stackStats then
-                    stats = def.stackStats
-                end
-            end
-
             if stats then
                 build.maxShieldBonus = build.maxShieldBonus + (stats.maxShield or 0)
                 build.maxArmorBonus = build.maxArmorBonus + (stats.maxArmor or 0)
                 build.maxBatteryBonus = build.maxBatteryBonus + (stats.maxBattery or 0)
-                build.batteryOutputBonus = build.batteryOutputBonus + (stats.batteryOutput or 0)
                 build.batteryRechargeBonus = build.batteryRechargeBonus + (stats.batteryRecharge or 0)
                 build.maxSpeedBonus = build.maxSpeedBonus + (stats.maxSpeed or 0)
                 build.thrustBonus = build.thrustBonus + (stats.thrust or 0)
                 build.boostSpeedBonus = build.boostSpeedBonus + (stats.boostSpeed or 0)
+                build.boostCostBase = build.boostCostBase + (stats.boostCost or 0)
+                build.thrustBatteryCostBonus = build.thrustBatteryCostBonus + (stats.thrustBatteryCost or 0)
                 build.wrapBonusSpeedAdd = build.wrapBonusSpeedAdd + (stats.wrapBonusSpeed or 0)
-                if stats.boostCost and build.boostCost == 0 then
-                    build.boostCost = stats.boostCost
-                end
-            end
-
-            build.totalBatteryLoad = build.totalBatteryLoad + (def.batteryLoad or 0)
-            local partPeak = self:getPartPeakBatteryCost(mod, feverActive)
-            if partPeak > build.maxPartBatteryCost then
-                build.maxPartBatteryCost = partPeak
-                build.maxPartBatteryName = def.name
             end
 
             local activeChips = self:getActiveChips(mod)
@@ -818,7 +816,6 @@ function Inventory:computeBuild(feverActive)
                 wCfg.installed = true
                 wCfg.fireInterval = wCfg.fireInterval or def.fireInterval
                 wCfg.batteryCost = wCfg.batteryCost + (def.baseBatteryCost or 0)
-                wCfg.batteryLoad = wCfg.batteryLoad + (def.batteryLoad or 0)
                 mCfg = newWeaponConfig(def, mod)
                 build.weaponModules[#build.weaponModules + 1] = mCfg
             end
@@ -867,21 +864,38 @@ function Inventory:computeBuild(feverActive)
                 wCfg.batteryCost = wCfg.batteryCost + scaledBatteryAdd
                 mCfg.batteryCost = mCfg.batteryCost + scaledBatteryAdd
             end
+
+            if mCfg then
+                local shotCost = math.max(mCfg.batteryCost or 0, mCfg.triggerOnHit and (mCfg.hitTriggerBattery or 0) or 0)
+                if shotCost > build.maxWeaponBatteryCost then
+                    build.maxWeaponBatteryCost = shotCost
+                    build.maxWeaponBatteryName = def.name
+                end
+            end
         end
     end
 
     build.maxShield = build.noShield and 0 or (baseShield + build.maxShieldBonus)
     build.maxArmor = baseArmor + build.maxArmorBonus
     build.maxBattery = baseBattery + build.maxBatteryBonus
-    build.batteryOutput = baseBatteryOutput + build.batteryOutputBonus
     build.batteryRecharge = (baseRecharge + build.batteryRechargeBonus) * build.batteryRechargeMult
     build.maxSpeed = baseMaxSpeed + build.maxSpeedBonus
     build.thrust = baseThrust + build.thrustBonus
     build.boostSpeed = baseBoostSpeed + build.boostSpeedBonus
+    build.boostCost = baseBoostCost + build.boostCostBase
     if build.boostCost > 0 then
         build.boostCost = math.max(5, build.boostCost + build.boostCostBonus)
     end
+    build.thrustBatteryCost = baseThrustBatteryCost + build.thrustBatteryCostBonus
     build.wrapBonusSpeed = (baseWrapBonusSpeed + build.wrapBonusSpeedAdd) * build.wrapSpeedMult
+    build.maxSingleActionBatteryCost = math.max(build.maxWeaponBatteryCost, build.boostCost or 0)
+    if build.boostCost > build.maxWeaponBatteryCost then
+        build.maxPartBatteryCost = build.boostCost
+        build.maxPartBatteryName = "부스터"
+    else
+        build.maxPartBatteryCost = build.maxWeaponBatteryCost
+        build.maxPartBatteryName = build.maxWeaponBatteryName
+    end
 
     if chassis and chassis.applySpecialEffect then
         chassis.applySpecialEffect(build, self)
@@ -921,18 +935,19 @@ function Inventory:validateLoadout(feverActive)
             message = "제너레이터 모듈을 최소 1개 이상 장착해야 합니다.",
         }
     end
-    if build.totalBatteryLoad > build.batteryOutput then
+
+    if (build.maxWeaponBatteryCost or 0) > build.maxBattery then
         warnings[#warnings + 1] = {
-            code = "output_exceeded",
-            message = string.format("부품 배터리 소모 합계(%d)가 제너레이터 출력(%d)을 초과했습니다.",
-                build.totalBatteryLoad, build.batteryOutput),
+            code = "weapon_battery_exceeded",
+            message = string.format("%s의 1회 발사 배터리(%d)가 배터리 총량(%d)을 초과했습니다.",
+                build.maxWeaponBatteryName or "무기", build.maxWeaponBatteryCost, build.maxBattery),
         }
     end
-    if build.maxPartBatteryCost > build.maxBattery then
+    if (build.boostCost or 0) > build.maxBattery then
         warnings[#warnings + 1] = {
-            code = "capacity_exceeded",
-            message = string.format("%s의 배터리 소모량(%d)이 배터리 총량(%d)을 초과했습니다.",
-                build.maxPartBatteryName or "부품", build.maxPartBatteryCost, build.maxBattery),
+            code = "boost_battery_exceeded",
+            message = string.format("부스트 1회 소모(%d)가 배터리 총량(%d)을 초과했습니다.",
+                build.boostCost, build.maxBattery),
         }
     end
 
@@ -941,9 +956,13 @@ function Inventory:validateLoadout(feverActive)
         weaponCount = weaponCount,
         thrusterCount = thrusterCount,
         generatorCount = generatorCount,
-        totalBatteryLoad = build.totalBatteryLoad,
-        batteryOutput = build.batteryOutput,
         maxBattery = build.maxBattery,
+        batteryRecharge = build.batteryRecharge,
+        boostCost = build.boostCost,
+        thrustBatteryCost = build.thrustBatteryCost,
+        maxWeaponBatteryCost = build.maxWeaponBatteryCost,
+        maxWeaponBatteryName = build.maxWeaponBatteryName,
+        maxSingleActionBatteryCost = build.maxSingleActionBatteryCost,
         maxPartBatteryCost = build.maxPartBatteryCost,
         maxPartBatteryName = build.maxPartBatteryName,
     }
@@ -951,7 +970,10 @@ function Inventory:validateLoadout(feverActive)
 end
 
 function Inventory:clone()
-    local copy = Inventory.new({ chassisId = self.chassisId })
+    local copy = Inventory.new({
+        chassisId = self.chassisId,
+        rotationUnlocked = self.rotationUnlocked,
+    })
     for r = 1, self.rows do
         for c = 1, self.cols do
             copy.unlocked[r][c] = self.unlocked[r][c] == true

@@ -70,10 +70,21 @@ local function isPointOverShape(item, originX, originY, cellSize, gap, mx, my, r
     local step = cellSize + gap
     local rot = Inventory.normalizeRotation(rotation ~= nil and rotation or item.rotation)
     local shapeCells = Inventory.getShapeCells(item, rot)
+    local occupied = {}
     for _, coord in ipairs(shapeCells) do
-        local cx = originX + coord[2] * step
-        local cy = originY + coord[1] * step
+        occupied[coord[1] .. "," .. coord[2]] = true
+    end
+    for _, coord in ipairs(shapeCells) do
+        local dr, dc = coord[1], coord[2]
+        local cx = originX + dc * step
+        local cy = originY + dr * step
         if pointInRect(mx, my, cx, cy, cellSize, cellSize) then
+            return true
+        end
+        if occupied[dr .. "," .. (dc + 1)] and pointInRect(mx, my, cx + cellSize, cy, gap, cellSize) then
+            return true
+        end
+        if occupied[(dr + 1) .. "," .. dc] and pointInRect(mx, my, cx, cy + cellSize, cellSize, gap) then
             return true
         end
     end
@@ -85,30 +96,31 @@ local function formatModuleStatLines(def)
     local lines = {}
     local cat = def.category
     if cat == "weapon" then
-        lines[#lines + 1] = string.format("출력 소모 %d  ·  발사 배터리 %d  ·  발사 간격 %.2f초",
-            def.batteryLoad or 0, def.baseBatteryCost or 0, def.fireInterval or 0)
+        lines[#lines + 1] = string.format("발사 배터리 %d  ·  발사 간격 %.2f초",
+            def.baseBatteryCost or 0, def.fireInterval or 0)
         lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개",
             def.w or 1, def.h or 1, def.maxSockets or 0)
     elseif cat == "defense" then
         local s = def.stats or {}
-        local parts = { string.format("출력 소모 %d", def.batteryLoad or 0) }
+        local parts = {}
         if (s.maxShield or 0) > 0 then parts[#parts + 1] = string.format("실드 +%d", s.maxShield) end
-        if (s.maxArmor or 0) > 0 then parts[#parts + 1] = string.format("장갑 +%d", s.maxArmor) end
-        lines[#lines + 1] = table.concat(parts, "  ·  ")
+        if (s.maxArmor or 0) > 0 then parts[#parts + 1] = string.format("아머 +%d", s.maxArmor) end
+        if #parts == 0 then parts[1] = "방호 모듈" end
+        lines[#lines + 1] = table.concat(parts, "  ·  ") .. "  ·  중복 장착 시 합산"
         lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개",
             def.w or 1, def.h or 1, def.maxSockets or 0)
     elseif cat == "thruster" then
         local s = def.stats or {}
-        lines[#lines + 1] = string.format("출력 소모 %d  ·  부스트 소모 %d  ·  최고 속도 %d",
-            def.batteryLoad or 0, def.activationBatteryCost or s.boostCost or 0, s.maxSpeed or 0)
-        lines[#lines + 1] = string.format("추진력 %d  ·  부스트 속도 %d  ·  추가 장착 시 +35 속도",
+        lines[#lines + 1] = string.format("가속 소모 %d/s  ·  부스트 소모 %d  ·  최고속도 +%d",
+            s.thrustBatteryCost or 0, s.boostCost or 0, s.maxSpeed or 0)
+        lines[#lines + 1] = string.format("추진력 +%d  ·  부스트속도 +%d  ·  중복 장착 시 합산",
             s.thrust or 0, s.boostSpeed or 0)
     elseif cat == "generator" or cat == "battery" then
         local s = def.stats or {}
-        lines[#lines + 1] = string.format("출력 공급 +%d  ·  배터리 총량 +%d  ·  초당 충전 +%d",
-            s.batteryOutput or 0, s.maxBattery or 0, s.batteryRecharge or 0)
-        lines[#lines + 1] = string.format("출력 소모 %d  ·  점유 크기 %dx%d",
-            def.batteryLoad or 0, def.w or 1, def.h or 1)
+        lines[#lines + 1] = string.format("배터리 총량 +%d  ·  초당 충전 +%d/s  ·  중복 합산",
+            s.maxBattery or 0, s.batteryRecharge or 0)
+        lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개",
+            def.w or 1, def.h or 1, def.maxSockets or 0)
     end
     return lines
 end
@@ -117,19 +129,19 @@ local function formatBriefCatalogStats(def)
     if not def then return "" end
     local s = def.stats or {}
     if def.category == "weapon" then
-        return string.format("출력 소모 %d · 발사 %d · %.2fs",
-            def.batteryLoad or 0, def.baseBatteryCost or 0, def.fireInterval or 0)
+        return string.format("발사 %d · %.2fs · 소켓 %d",
+            def.baseBatteryCost or 0, def.fireInterval or 0, def.maxSockets or 0)
     elseif def.category == "defense" then
         if (s.maxShield or 0) > 0 then
-            return string.format("실드 +%d · 출력 소모 %d", s.maxShield, def.batteryLoad or 0)
+            return string.format("실드 +%d · 소켓 %d", s.maxShield, def.maxSockets or 0)
         end
-        return string.format("장갑 +%d · 출력 소모 %d", s.maxArmor or 0, def.batteryLoad or 0)
+        return string.format("아머 +%d · 소켓 %d", s.maxArmor or 0, def.maxSockets or 0)
     elseif def.category == "thruster" then
-        return string.format("속도 %d · 출력 소모 %d · 부스트 %d",
-            s.maxSpeed or 0, def.batteryLoad or 0, def.activationBatteryCost or s.boostCost or 0)
+        return string.format("속도 +%d · 가속 %d/s · 부스트 %d",
+            s.maxSpeed or 0, s.thrustBatteryCost or 0, s.boostCost or 0)
     elseif def.category == "generator" or def.category == "battery" then
-        return string.format("출력 +%d · 총량 +%d · 충전 +%d",
-            s.batteryOutput or 0, s.maxBattery or 0, s.batteryRecharge or 0)
+        return string.format("총량 +%d · 충전 +%d/s",
+            s.maxBattery or 0, s.batteryRecharge or 0)
     end
     return ""
 end
@@ -214,8 +226,15 @@ function ArmoryUI.new()
         gridRect = nil,
         catalogListRect = nil,
         exitModal = nil,
-        statusMessage = "좌측 부품을 우측 기체 그리드에 드래그해 조립하세요. (R: 회전, 우클릭: 해제)",
+        statusMessage = "좌측 부품을 우측 기체 그리드에 드래그해 조립하세요. (우클릭: 배치 해제)",
     }, ArmoryUI)
+end
+
+local function defaultStatusText(inv)
+    if inv and inv.rotationUnlocked then
+        return "좌측 부품을 우측 기체 그리드에 드래그해 조립하세요. (R: 회전, 우클릭: 배치 해제)"
+    end
+    return "좌측 부품을 우측 기체 그리드에 드래그해 조립하세요. (우클릭: 배치 해제)"
 end
 
 function ArmoryUI:open(sourceInventory)
@@ -233,8 +252,25 @@ function ArmoryUI:open(sourceInventory)
     self.hoveredGridItem = nil
     self.hoveredRegionIndex = nil
     self.exitModal = nil
-    self.statusMessage = "좌측 부품을 우측 기체 그리드에 드래그해 조립하세요. (R: 회전, 우클릭: 해제)"
+    self.statusMessage = defaultStatusText(base)
     return base
+end
+
+function ArmoryUI:findPlacedModuleAt(inv, x, y)
+    local gr = self.gridRect
+    if not (gr and inv and inv.placed) then return nil end
+    local step = gr.cellSize + gr.gap
+    for i = #inv.placed, 1, -1 do
+        local mod = inv.placed[i]
+        if mod.row and mod.col then
+            local ox = gr.x + (mod.col - 1) * step
+            local oy = gr.y + (mod.row - 1) * step
+            if isPointOverShape(mod, ox, oy, gr.cellSize, gr.gap, x, y) then
+                return mod
+            end
+        end
+    end
+    return nil
 end
 
 function ArmoryUI:activeInventory(inv)
@@ -639,9 +675,16 @@ function ArmoryUI:_drawInspectorPanel(inv, fonts, validationSummary)
 
         g.setFont(fonts.menuSmall or fonts.menuBody)
         Theme.setColor(c.textMuted, 0.85)
-        local hint = inspectItem and inspectItem.row
-            and "드래그해 이동 · R: 회전 · 우클릭: 장착 해제"
-            or "그리드로 드래그해 장착 · 드래그 중 R: 회전"
+        local hint
+        if inspectItem and inspectItem.row then
+            hint = inv.rotationUnlocked
+                and "드래그해 이동 · R: 회전 · 우클릭: 배치 해제"
+                or "드래그해 이동 · 우클릭: 배치 해제"
+        else
+            hint = inv.rotationUnlocked
+                and "그리드로 드래그해 장착 · 드래그 중 R: 회전"
+                or "그리드로 드래그해 장착"
+        end
         g.print(hint, tx, py + ph - 26)
         return
     end
@@ -670,19 +713,19 @@ function ArmoryUI:_drawInspectorPanel(inv, fonts, validationSummary)
     local rowY = py + 52
     g.setFont(fonts.menuBody)
     Theme.setColor(c.textPrimary, 0.96)
-    g.print(string.format("섀시: %s", ch and ch.name or ""), col1X, rowY)
-    g.print(string.format("선체(헐): %d", build.maxHull or 0), col1X, rowY + 28)
-    g.print(string.format("장갑: %d", build.maxArmor or 0), col1X, rowY + 56)
-    g.print(string.format("실드: %d", build.maxShield or 0), col1X, rowY + 84)
+    g.print(string.format("실드: %d", build.maxShield or 0), col1X, rowY)
+    g.print(string.format("아머: %d", build.maxArmor or 0), col1X, rowY + 28)
+    g.print(string.format("헐: %d", build.maxHull or 0), col1X, rowY + 56)
+    g.print(string.format("장착 무기: %d개", validationSummary.weaponCount or 0), col1X, rowY + 84)
 
     g.print(string.format("배터리 총량: %d", build.maxBattery or 0), col2X, rowY)
-    g.print(string.format("전력 부하: %d / %d", build.totalBatteryLoad or 0, build.batteryOutput or 0), col2X, rowY + 28)
-    g.print(string.format("초당 충전: +%.0f", build.batteryRecharge or 0), col2X, rowY + 56)
+    g.print(string.format("초당 충전: +%.0f/s", build.batteryRecharge or 0), col2X, rowY + 28)
+    g.print(string.format("가속 소모: %.0f/s", build.thrustBatteryCost or 0), col2X, rowY + 56)
     g.print(string.format("부스트 소모: %d", build.boostCost or 0), col2X, rowY + 84)
 
-    g.print(string.format("최고 속도: %d", build.maxSpeed or 0), col3X, rowY)
-    g.print(string.format("부스트 속도: %d", build.boostSpeed or 0), col3X, rowY + 28)
-    g.print(string.format("장착 무기: %d개", validationSummary.weaponCount or 0), col3X, rowY + 56)
+    g.print(string.format("최고속도: %d", build.maxSpeed or 0), col3X, rowY)
+    g.print(string.format("부스트속도: %d", build.boostSpeed or 0), col3X, rowY + 28)
+    g.print(string.format("추진력: %d", build.thrust or 0), col3X, rowY + 56)
     g.print("특수 효과: " .. (ch and ch.specialEffect or "없음"), col3X, rowY + 84)
 end
 
@@ -889,30 +932,29 @@ function ArmoryUI:_drawChassisAndGridPanel(inv, fonts, isValid, warnings, summar
         reqX = reqX + 92
     end
 
-    -- Power Load meter + Max Battery
-    local loadVal = summary.totalBatteryLoad or 0
-    local outVal = summary.batteryOutput or 0
+    -- Battery capacity check vs single-action peak consumption (weapon shot / boost)
+    local peakCost = summary.maxSingleActionBatteryCost or 0
     local maxBatVal = summary.maxBattery or 0
-    local overload = loadVal > outVal
-    local capOver = (summary.maxPartBatteryCost or 0) > maxBatVal
+    local rechargeVal = summary.batteryRecharge or 0
+    local capOver = peakCost > maxBatVal
 
-    local meterX = footX + 306
-    local meterW = 200
+    local meterX = footX + 298
+    local meterW = 240
     local meterY = footY + 12
     g.setColor(0.08, 0.14, 0.20, 0.95)
     g.rectangle("fill", meterX, meterY + 14, meterW, 6, 3, 3)
-    local ratio = outVal > 0 and math.min(1, loadVal / outVal) or (loadVal > 0 and 1 or 0)
-    g.setColor(overload and c.dangerBright[1] or c.accent[1],
-        overload and c.dangerBright[2] or c.accent[2],
-        overload and c.dangerBright[3] or c.accent[3], 0.95)
+    local ratio = maxBatVal > 0 and math.min(1, peakCost / maxBatVal) or (peakCost > 0 and 1 or 0)
+    g.setColor(capOver and c.dangerBright[1] or c.accent[1],
+        capOver and c.dangerBright[2] or c.accent[2],
+        capOver and c.dangerBright[3] or c.accent[3], 0.95)
     g.rectangle("fill", meterX, meterY + 14, meterW * ratio, 6, 3, 3)
 
     g.setFont(fonts.menuSmall or fonts.menuBody)
-    Theme.setColor(overload and c.dangerBright or c.textPrimary, 0.96)
-    g.print(string.format("배터리 소모/출력: %d / %d", loadVal, outVal), meterX, footY + 6)
-
     Theme.setColor(capOver and c.dangerBright or c.textPrimary, 0.96)
-    g.printf(string.format("배터리 총량: %d", maxBatVal), footX + 520, footY + 10, footW - 534, "right")
+    g.print(string.format("최대 1회 소모 / 배터리 총량: %d / %d", peakCost, maxBatVal), meterX, footY + 6)
+
+    Theme.setColor(c.textPrimary, 0.96)
+    g.printf(string.format("초당 충전: +%.0f/s", rechargeVal), footX + 550, footY + 10, footW - 564, "right")
 
     -- Bottom warning / status line
     local warnY = footY + 42
@@ -1025,17 +1067,19 @@ function ArmoryUI:draw(inv, fonts, width, height)
             dragging = true,
             alpha = 0.92,
         })
-        g.setFont(fonts.small)
-        local tipW = 86
-        local tipX = self.mouseX - tipW * 0.5
-        local tipY = drawY + itemH + 6
-        g.setColor(0.04, 0.08, 0.14, 0.92)
-        g.rectangle("fill", tipX, tipY, tipW, 18, 4, 4)
-        g.setColor(0.50, 0.92, 1.0, 0.85)
-        g.setLineWidth(1)
-        g.rectangle("line", tipX, tipY, tipW, 18, 4, 4)
-        g.setColor(0.92, 0.98, 1.0, 1)
-        g.printf("R: ROTATE", tipX, tipY + 3, tipW, "center")
+        if activeInv.rotationUnlocked then
+            g.setFont(fonts.small)
+            local tipW = 86
+            local tipX = self.mouseX - tipW * 0.5
+            local tipY = drawY + itemH + 6
+            g.setColor(0.04, 0.08, 0.14, 0.92)
+            g.rectangle("fill", tipX, tipY, tipW, 18, 4, 4)
+            g.setColor(0.50, 0.92, 1.0, 0.85)
+            g.setLineWidth(1)
+            g.rectangle("line", tipX, tipY, tipW, 18, 4, 4)
+            g.setColor(0.92, 0.98, 1.0, 1)
+            g.printf("R: ROTATE", tipX, tipY + 3, tipW, "center")
+        end
     elseif self.dragging then
         local d = self.dragging
         local cs, gp = 58, 6
@@ -1140,6 +1184,9 @@ function ArmoryUI:mousemoved(inv, x, y)
     if foundIdx and foundIdx ~= self.hoveredRegionIndex then
         Sfx.play("ui_hover")
     end
+    if not foundGridMod then
+        foundGridMod = self:findPlacedModuleAt(activeInv, x, y)
+    end
     self.hoveredRegionIndex = foundIdx
     self.hoveredCatalogDef = foundCatalogDef
     self.hoveredGridItem = foundGridMod
@@ -1180,16 +1227,23 @@ function ArmoryUI:mousepressed(inv, x, y, button)
             self.statusMessage = "이동을 취소했습니다."
             return activeInv, nil
         end
-        for i = #self.hitRegions, 1, -1 do
-            local r = self.hitRegions[i]
-            if pointInRect(x, y, r.x, r.y, r.w, r.h) and r.action and r.action.type == "gridModule" then
-                local mod = r.action.mod
-                activeInv:removeItem(mod, false)
-                self.hoveredGridItem = nil
-                Sfx.play("ui_click")
-                self.statusMessage = mod.def.name .. "을(를) 해제했습니다."
-                return activeInv, "changed"
+        local targetMod = self:findPlacedModuleAt(activeInv, x, y)
+        if not targetMod then
+            for i = #self.hitRegions, 1, -1 do
+                local r = self.hitRegions[i]
+                if pointInRect(x, y, r.x, r.y, r.w, r.h) and r.action and r.action.type == "gridModule" then
+                    targetMod = r.action.mod
+                    break
+                end
             end
+        end
+        if targetMod then
+            activeInv:removeItem(targetMod, false)
+            self.hoveredGridItem = nil
+            self.hoveredRegionIndex = nil
+            Sfx.play("ui_click")
+            self.statusMessage = targetMod.def.name .. "을(를) 배치 해제했습니다."
+            return activeInv, "changed"
         end
         return activeInv, nil
     end
@@ -1237,6 +1291,22 @@ function ArmoryUI:mousepressed(inv, x, y, button)
         end
     end
 
+    local gridHitMod = self:findPlacedModuleAt(activeInv, x, y)
+    if gridHitMod and not (self.exitModal) then
+        local hitUiControl = false
+        for i = #self.hitRegions, 1, -1 do
+            local r = self.hitRegions[i]
+            if pointInRect(x, y, r.x, r.y, r.w, r.h) and r.action and r.action.type ~= "gridModule" then
+                hitUiControl = true
+                break
+            end
+        end
+        if not hitUiControl then
+            self:startGridDrag(activeInv, gridHitMod, x, y)
+            return activeInv, nil
+        end
+    end
+
     return activeInv, nil
 end
 
@@ -1251,7 +1321,9 @@ function ArmoryUI:mousereleased(inv, x, y, button)
         return self:finishDrop(activeInv, x, y)
     end
     if d.origin == "catalog" then
-        self.statusMessage = d.item.def.name .. " 선택됨 — 그리드 위치를 클릭해 배치하세요. (R: 회전)"
+        self.statusMessage = activeInv.rotationUnlocked
+            and (d.item.def.name .. " 선택됨 — 그리드 위치를 클릭해 배치하세요. (R: 회전)")
+            or (d.item.def.name .. " 선택됨 — 그리드 위치를 클릭해 배치하세요.")
         return activeInv, nil
     end
     self:cancelDrag(activeInv)
@@ -1278,9 +1350,11 @@ function ArmoryUI:keypressed(inv, key)
     end
 
     if key == "r" and self.dragging then
-        self.dragging.rotation = (self.dragging.rotation + 1) % 4
-        self.dragging.rotated = true
-        Sfx.play("ui_hover")
+        if activeInv.rotationUnlocked then
+            self.dragging.rotation = (self.dragging.rotation + 1) % 4
+            self.dragging.rotated = true
+            Sfx.play("ui_hover")
+        end
         return activeInv, nil
     elseif key == "escape" then
         if self.dragging then
