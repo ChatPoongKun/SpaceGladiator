@@ -15,18 +15,16 @@ local Bgm = require("src.audio.bgm")
 local Inventory = require("src.progression.inventory")
 local InventoryUI = require("src.ui.inventory_ui")
 local Stage = require("src.progression.stage")
-local Plinko = require("src.progression.plinko")
-local PlinkoUI = require("src.ui.plinko_ui")
 local StageTransition = require("src.progression.stage_transition")
 local Replay = require("src.replay.replay")
 local ReplayExport = require("src.replay.replay_export")
 
 local ship, stars, stageBackground, fonts, camera, turret, enemies, hud, gladiator, titleScreen
 local inventory, inventoryUI, currentBuild
-local stage, plinko, plinkoUI
-local stageClearState, plinkoShutter, warpGates, warpState
+local stage
+local stageClearState, warpShutter, warpGates, warpState
 local replay, activeExporter
-local coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
+local coinWallet, lastGladiatorTotal = 0, 0
 local inventoryReturnScreen = "playing"
 local inventoryStageEndMode = false
 local pauseReturnScreen = "playing"
@@ -50,13 +48,13 @@ local focused = true
 local gameOverHold = 1.25
 local input = { turn = 0, thrust = false, brake = false, boost = false }
 local testMode = false
-local testCompact, testDamaged, testFlow, testGladiator, testInventory, testPlinko, testReplay, testFullscreen, testBackground, testTitle, testCombat = false, false, false, false, false, false, false, false, false, false, false
+local testCompact, testDamaged, testFlow, testGladiator, testInventory, testReplay, testFullscreen, testBackground, testTitle, testCombat = false, false, false, false, false, false, false, false, false, false
 local captureRequested = false
 local mouseX, mouseY, firing = 0, 0, false
 local defaultErrorHandler = love.errorhandler
 
 function love.errorhandler(message)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground or testTitle or testCombat) then return defaultErrorHandler(message) end
+    if not (testMode or testFlow or testGladiator or testInventory or testReplay or testFullscreen or testBackground or testTitle or testCombat) then return defaultErrorHandler(message) end
     print(debug.traceback("FAIL: " .. tostring(message), 2))
     return function() return 1 end
 end
@@ -66,7 +64,7 @@ local function setScreen(nextScreen)
     screen, selectedButton = nextScreen, 1
     confirmDialog = nil
     input.boost, firing = false, false
-    local preserveSfx = (screen == "gameOver" or screen == "stageClear" or screen == "plinko"
+    local preserveSfx = (screen == "gameOver" or screen == "stageClear"
         or screen == "warpSelect" or screen == "warping" or screen == "playing")
     if not preserveSfx then Sfx.stop() end
     if screen == "playing" and replay then
@@ -98,9 +96,9 @@ local function setScreen(nextScreen)
     end
     if screen == "title" or screen == "results" then
         ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
-        currentBuild, stage, plinko = nil, nil, nil
-        stageClearState, plinkoShutter, warpGates, warpState = nil, nil, nil, nil
-        coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
+        currentBuild, stage = nil, nil
+        stageClearState, warpShutter, warpGates, warpState = nil, nil, nil, nil
+        coinWallet, lastGladiatorTotal = 0, 0
         lastFeedbackDamageCount, lastHullDamageCount = 0, 0
         hitstopTimer, hullFlashTimer = 0, 0
         pauseReturnScreen = "playing"
@@ -120,7 +118,7 @@ local function syncInventoryBuild()
 end
 
 local function savePermanentUnlocks()
-    if not inventory or testMode or testFlow or testGladiator or testInventory or testPlinko then return end
+    if not inventory or testMode or testFlow or testGladiator or testInventory then return end
     pcall(love.filesystem.write, permanentUnlocksFile, inventory:serializeUnlockedCells())
 end
 
@@ -140,17 +138,15 @@ local function startRun(opts)
     end
     enemies = Enemies.new(nil, gladiator)
     inventory = Inventory.newStarter()
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testCombat)
+    if not (testMode or testFlow or testGladiator or testInventory or testCombat)
         and love.filesystem.getInfo(permanentUnlocksFile) then
         inventory:loadUnlockedCells(love.filesystem.read(permanentUnlocksFile))
     end
     Sfx.stop()
     Bgm.stop()
     inventoryUI = InventoryUI.new()
-    plinkoUI = PlinkoUI.new()
-    plinko = nil
-    stageClearState, plinkoShutter, warpGates, warpState = nil, nil, nil, nil
-    coinWallet, lastGladiatorTotal, carriedPlinkoSlots = 0, 0, {}
+    stageClearState, warpShutter, warpGates, warpState = nil, nil, nil, nil
+    coinWallet, lastGladiatorTotal = 0, 0
     inventoryReturnScreen = "playing"
     inventoryStageEndMode = false
     pauseReturnScreen = "playing"
@@ -162,7 +158,7 @@ local function startRun(opts)
             stageBackground:setLevel(stage.level, true)
         end
     end
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testCombat) then
+    if not (testMode or testFlow or testGladiator or testInventory or testCombat) then
         stage:configureEnemies(enemies)
     end
     lastEvasionCount, lastWrapEvents, lastDamageCount = 0, 0, 0
@@ -210,44 +206,6 @@ local function beginStageClear()
     Sfx.play("stage_clear")
 end
 
-local function enterPlinkoStageEnd()
-    local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
-    lastGladiatorTotal = gladiator.total or 0
-    coinWallet = coinWallet + delta
-    if gladiator then
-        gladiator:clearFever()
-        gladiator.popups = {}
-        gladiator.lastEvent = nil
-    end
-    syncInventoryBuild()
-    if enemies then
-        if enemies.fire then enemies.fire:clear() end
-        if enemies.clearEffects then enemies:clearEffects() end
-    end
-    hitstopTimer, hullFlashTimer = 0, 0
-    if turret then turret:clearEffects() end
-    plinko = Plinko.new({
-        stageNumber = stage and stage.number or 1,
-        coins = coinWallet,
-        carriedSlots = carriedPlinkoSlots,
-        carryoverEnabled = false,
-        featuredReward = stage and stage.featuredReward or nil,
-    })
-    stageClearState = nil
-    plinkoShutter = StageTransition.newShutterOpen()
-    setScreen("plinko")
-end
-
-local function finalizePlinko()
-    if plinko then
-        plinko:resolveAll(inventory, ship)
-        coinWallet = plinko.coins
-        carriedPlinkoSlots = plinko:exportCarryoverSlots()
-        plinko = nil
-    end
-    plinkoShutter = nil
-end
-
 local function enterWarpSelect(keepExistingGates)
     if inventoryUI and inventory then
         inventoryUI:cancelDrag(inventory)
@@ -279,6 +237,27 @@ local function enterWarpSelect(keepExistingGates)
     syncInventoryBuild()
     savePermanentUnlocks()
     setScreen("warpSelect")
+end
+
+local function enterWarpSelectFromStageClear()
+    local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
+    lastGladiatorTotal = gladiator.total or 0
+    coinWallet = coinWallet + delta
+    if gladiator then
+        gladiator:clearFever()
+        gladiator.popups = {}
+        gladiator.lastEvent = nil
+    end
+    syncInventoryBuild()
+    if enemies then
+        if enemies.fire then enemies.fire:clear() end
+        if enemies.clearEffects then enemies:clearEffects() end
+    end
+    hitstopTimer, hullFlashTimer = 0, 0
+    if turret then turret:clearEffects() end
+    stageClearState = nil
+    warpShutter = StageTransition.newShutterOpen()
+    enterWarpSelect(false)
 end
 
 local function beginWarpToNextStage(gate)
@@ -358,24 +337,6 @@ local function completeWarpAndStartStage(gate)
     syncInventoryBuild()
     savePermanentUnlocks()
     setScreen("playing")
-end
-
-local function openInventoryFromPlinko()
-    finalizePlinko()
-    inventoryReturnScreen = "warpSelect"
-    inventoryStageEndMode = true
-    setScreen("inventory")
-end
-
-local function leavePlinkoToBattlefield()
-    finalizePlinko()
-    if inventory and inventory:pendingCount() > 0 then
-        inventoryReturnScreen = "warpSelect"
-        inventoryStageEndMode = true
-        setScreen("inventory")
-        return
-    end
-    enterWarpSelect(false)
 end
 
 local function closeInventoryScreen()
@@ -649,7 +610,6 @@ function love.load(args)
         if arg == "--test-flow" then testFlow = true end
         if arg == "--test-gladiator" then testGladiator = true end
         if arg == "--test-inventory" then testInventory = true end
-        if arg == "--test-plinko" then testPlinko = true end
         if arg == "--test-replay" then testReplay = true end
         if arg == "--test-fullscreen" then testFullscreen = true end
         if arg == "--test-background" then testBackground = true end
@@ -660,7 +620,7 @@ function love.load(args)
     end
     love.graphics.setBackgroundColor(0, 0, 0)
     love.graphics.setLineStyle("smooth")
-    local anyTest = testMode or testFlow or testGladiator or testInventory or testPlinko or testReplay or testFullscreen or testBackground or testTitle or testCombat
+    local anyTest = testMode or testFlow or testGladiator or testInventory or testReplay or testFullscreen or testBackground or testTitle or testCombat
     if not anyTest then
         local saved = Display.loadSettings()
         Display.applyMode(saved.mode, saved.width, saved.height)
@@ -674,7 +634,7 @@ function love.load(args)
     local _, _, vpW, vpH = Display.viewportRect()
     stars = Starfield.new(vpW, vpH)
     stageBackground = StageBackground.new(vpW, vpH)
-    if not (testMode or testFlow or testGladiator or testInventory or testPlinko or testBackground or testTitle or testCombat) then
+    if not (testMode or testFlow or testGladiator or testInventory or testBackground or testTitle or testCombat) then
         Sfx.load()
         Bgm.load()
     end
@@ -686,11 +646,6 @@ function love.load(args)
     end
     if testInventory then
         require("tests.inventory")(Inventory, Ship, Turret, Gladiator)
-        love.event.quit(0)
-        return
-    end
-    if testPlinko then
-        require("tests.plinko_stage")(Stage, Plinko, Inventory, Ship, Enemies, StageTransition)
         love.event.quit(0)
         return
     end
@@ -810,15 +765,6 @@ function love.update(dt)
         end
         return
     end
-    if screen == "plinko" then
-        if plinkoShutter and StageTransition.updateShutterOpen(plinkoShutter, dt) then
-            plinkoShutter = nil
-        end
-        if plinko then plinko:update(dt, inventory, ship) end
-        if stageBackground then stageBackground:update(dt, 0, 0, bgW, bgH) end
-        stars:update(dt, 18 * bgScale, -24 * bgScale, 0, bgW, bgH, 0)
-        return
-    end
     if screen == "pause" or screen == "settings" or screen == "inventory" then return end
     time = time + dt
     if screen == "stageClear" then
@@ -839,7 +785,7 @@ function love.update(dt)
         if stageBackground then stageBackground:update(dt, vx * bgScale, vy * bgScale, bgW, bgH) end
         stars:update(dt, (90 + vx * 1.8) * bgScale, (-210 + vy * 1.8) * bgScale, 0, bgW, bgH, 0)
         if StageTransition.updateStageClear(stageClearState, dt) then
-            enterPlinkoStageEnd()
+            enterWarpSelectFromStageClear()
         end
         return
     end
@@ -891,6 +837,9 @@ function love.update(dt)
     end
 
     if screen == "warpSelect" then
+        if warpShutter and StageTransition.updateShutterOpen(warpShutter, dt) then
+            warpShutter = nil
+        end
         StageTransition.updateWarpGates(warpGates, dt)
         local preGate = StageTransition.checkGateTrigger(warpGates, ship)
         if preGate then
@@ -965,7 +914,7 @@ function love.update(dt)
         coinWallet = coinWallet + (gladiator.total - lastGladiatorTotal)
         lastGladiatorTotal = gladiator.total
     end
-    if stage and not (testMode or testFlow or testGladiator or testInventory or testPlinko) then
+    if stage and not (testMode or testFlow or testGladiator or testInventory) then
         if stage:update(dt, enemies) then
             beginStageClear()
             return
@@ -1286,11 +1235,8 @@ function love.draw()
     end
     if screen == "stageClear" and stageClearState then
         StageTransition.drawStageClearOverlay(stageClearState, width, height, fonts)
-    elseif screen == "plinko" and plinko and plinkoUI then
-        plinkoUI:draw(plinko, stage, fonts, width, height, inventory and inventory:pendingCount() or 0)
-        if plinkoShutter then
-            StageTransition.drawShutterOpen(plinkoShutter, width, height)
-        end
+    elseif screen == "warpSelect" and warpShutter then
+        StageTransition.drawShutterOpen(warpShutter, width, height)
     elseif screen == "inventory" and inventory and inventoryUI then
         inventoryUI:draw(inventory, fonts, width, height, gladiator and gladiator.feverActive, {
             stageEndMode = inventoryStageEndMode,
@@ -1360,11 +1306,6 @@ function love.keypressed(key, _, isRepeat)
             inventoryStageEndMode = false
             setScreen("inventory")
             return
-        elseif screen == "plinko" then
-            if not plinkoShutter or plinkoShutter.elapsed >= 0.25 then
-                openInventoryFromPlinko()
-            end
-            return
         elseif screen == "inventory" then
             if inventoryUI and inventoryUI:hasWarningPopup() then
                 inventoryUI:dismissWarningPopup()
@@ -1374,15 +1315,6 @@ function love.keypressed(key, _, isRepeat)
             end
             return
         end
-    end
-    if screen == "plinko" then
-        if plinkoShutter and plinkoShutter.elapsed < 0.25 then return end
-        if key == "space" and plinko then
-            plinko:invest(10)
-        elseif key == "return" or key == "kpenter" then
-            leavePlinkoToBattlefield()
-        end
-        return
     end
     if screen == "inventory" then
         if inventoryUI and inventoryUI:hasWarningPopup() then
@@ -1466,9 +1398,6 @@ function love.mousemoved(x, y)
     if screen == "inventory" and inventoryUI then
         inventoryUI:mousemoved(x, y)
         return
-    elseif screen == "plinko" and plinkoUI then
-        plinkoUI:mousemoved(x, y)
-        return
     end
     local menu = menus[screen]
     if menu then
@@ -1521,16 +1450,6 @@ function love.mousepressed(x, y, button)
             startReplayExport()
         elseif action == "back" then
             closeReplay()
-        end
-        return
-    end
-    if screen == "plinko" and plinko and plinkoUI then
-        if plinkoShutter and plinkoShutter.elapsed < 0.25 then return end
-        local action = plinkoUI:mousepressed(plinko, x, y, button)
-        if action == "openInventory" then
-            openInventoryFromPlinko()
-        elseif action == "nextStage" then
-            leavePlinkoToBattlefield()
         end
         return
     end

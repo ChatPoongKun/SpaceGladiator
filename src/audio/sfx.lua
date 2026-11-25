@@ -32,12 +32,6 @@ local cues = {
     ui_click        = { "ui_click",     0.54, 1.00, 2, 0.03, 0.02 },
     ui_equip        = { "ui_equip",     0.60, 1.00, 2, 0.04, 0.03 },
     ui_error        = { "ui_error",     0.54, 1.00, 1, 0.06, 0.00 },
-
-    -- Plinko machine
-    plinko_drop     = { "plinko_drop",  0.58, 1.00, 2, 0.06, 0.04 },
-    plinko_peg      = { "plinko_peg",   0.34, 1.00, 6, 0.025, 0.09 },
-    plinko_slot     = { "plinko_slot",  0.52, 1.00, 4, 0.03, 0.03 },
-    plinko_claim    = { "plinko_claim", 0.78, 1.00, 2, 0.08, 0.00 },
 }
 
 Sfx.cues = cues

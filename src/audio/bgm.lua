@@ -1,6 +1,6 @@
 -- Level background music (BGM) controller.
 -- Starts the matching level track on combat entry and loops continuously across
--- stage transitions (including Plinko, inventory, and warp selection) until
+-- stage transitions (including inventory and warp selection) until
 -- the run ends or the level changes.
 
 local Bgm = {}
@@ -140,7 +140,6 @@ end
 
 local CONTINUE_SCREENS = {
     stageClear = true,
-    plinko = true,
     warpSelect = true,
     warping = true,
     inventory = true,
@@ -148,8 +147,8 @@ local CONTINUE_SCREENS = {
 
 -- Synchronizes BGM state to the active game screen and stage level.
 -- Active combat ("playing") ensures the level's BGM is looping; run-flow screens
--- ("stageClear", "plinko", "warpSelect", "warping", "inventory") keep the active
--- level's BGM looping continuously; pause/settings pause it; title/gameOver/results/replay stop it.
+-- ("stageClear", "warpSelect", "warping", "inventory") keep the active
+-- level's BGM looping continuously; pause/settings pause it; title/armory/gameOver/results/replay stop it.
 function Bgm.syncScreen(screen, stageLevel, opts)
     opts = opts or {}
     local isFocused = (opts.focused ~= false)

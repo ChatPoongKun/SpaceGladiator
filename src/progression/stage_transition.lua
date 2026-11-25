@@ -1,6 +1,6 @@
 -- Stage-end visual transitions & inter-stage warp gate selection for SpaceGladiator.
 -- 1. 2.0-second Stage Clear celebration with "STAGE CLEAR" banner + left/right blast
---    shutters closing over the battlefield and reopening to reveal Plinko.
+--    shutters closing over the battlefield and reopening to reveal Warp Gates.
 -- 2. Three random boundary warp gates on the cleared battlefield displaying major
 --    next-stage rewards.
 -- 3. Hyperspace starlight warp animation accelerating out of the arena through
@@ -30,21 +30,21 @@ StageTransition.WARP_REWARDS = {
         id = "weapon_module",
         title = "희귀 무기 모듈",
         short = "WEAPON+",
-        subtitle = "플링코 무기 슬롯 · 코인 +30",
+        subtitle = "추가 무기 보급 · 코인 +30",
         color = { 0.98, 0.56, 0.24 },
     },
     {
         id = "support_chip",
         title = "희귀 서포트 칩",
         short = "CHIP+",
-        subtitle = "플링코 희귀 칩 · 코인 +30",
+        subtitle = "추가 칩 보급 · 코인 +30",
         color = { 0.44, 0.94, 1.00 },
     },
     {
         id = "defense_module",
         title = "방어·추진 모듈",
         short = "DEFENSE+",
-        subtitle = "플링코 방어 슬롯 · 실드 +35",
+        subtitle = "실드 +35 즉시 회복",
         color = { 0.36, 0.78, 1.00 },
     },
     {
@@ -293,8 +293,8 @@ function StageTransition.drawStageClearOverlay(state, width, height, fonts)
     g.setFont(fonts.menuButton or fonts.menuBody)
     g.setColor(0.84, 0.96, 1.0, enter)
     local reasonKo = state.clearReason == "ALL HOSTILES CLEARED"
-        and "모든 적 섬멸 완료 · 스폰서 플링코로 이동합니다"
-        or "스테이지 클리어 · 스폰서 플링코로 이동합니다"
+        and "모든 적 섬멸 완료 · 워프 게이트로 이동합니다"
+        or "스테이지 클리어 · 워프 게이트로 이동합니다"
     g.printf(string.format("STAGE %02d  ·  %s", state.stageNumber, reasonKo), bx + 16, by + 70, bannerW - 32, "center")
 
     -- Subtle countdown bar along bottom of banner
