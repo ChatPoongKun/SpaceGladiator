@@ -1043,12 +1043,6 @@ function Replay:updatePlayback(dt, width, height)
     end
 end
 
-local function wrapOffsets(position, extent, reach)
-    if position < reach then return { 0, extent } end
-    if position > extent - reach then return { 0, -extent } end
-    return { 0 }
-end
-
 local function drawEnemyFireSnapshot(shots, impacts)
     local g = love.graphics
     g.push("all")
@@ -1280,21 +1274,24 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
     g.pop()
     drawEnemyFireSnapshot(f0.shots, f0.impacts)
 
-    gladProxy:drawFeverWorld(shipProxy, srcTime)
+    gladProxy:drawFeverWorld(shipProxy, srcTime, { skipShipAura = true })
 
-    -- Draw player with arena wrap scissor
+    -- Draw player across torus wrap offsets without arena-boundary clipping
     g.push("all")
-    if forExport then
-        g.intersectScissor(originX, originY, Arena.width * cam.zoom, Arena.height * cam.zoom)
-    else
-        local sx, sy, sw, sh = Display.virtualRectToWindow(originX, originY, Arena.width * cam.zoom, Arena.height * cam.zoom)
-        g.intersectScissor(sx, sy, sw, sh)
-    end
     local destroyed = shipProxy:isDestroyed()
-    if not destroyed then shipProxy:drawBoostPulse() end
-    local reach = destroyed and 90 or 75 + 70 * shipProxy.boostLevel
-    local xOffsets = wrapOffsets(shipProxy.x, Arena.width, reach)
-    local yOffsets = wrapOffsets(shipProxy.y, Arena.height, reach)
+    local xOffsets, yOffsets, viewLeft, viewTop, viewRight, viewBottom = Arena.playerWrapOffsets(shipProxy, turretProxy, cam, width, height)
+    if not destroyed and shipProxy.boostOriginX and shipProxy.boostOriginY then
+        local pulseXOffsets = Arena.wrapOffsets(shipProxy.boostOriginX, Arena.width, 80, 80, viewLeft, viewRight)
+        local pulseYOffsets = Arena.wrapOffsets(shipProxy.boostOriginY, Arena.height, 80, 80, viewTop, viewBottom)
+        for _, pdx in ipairs(pulseXOffsets) do
+            for _, pdy in ipairs(pulseYOffsets) do
+                g.push()
+                g.translate(pdx, pdy)
+                shipProxy:drawBoostPulse()
+                g.pop()
+            end
+        end
+    end
     for _, dx in ipairs(xOffsets) do
         for _, dy in ipairs(yOffsets) do
             g.push()
@@ -1302,6 +1299,7 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
             if destroyed then
                 shipProxy:drawDestruction()
             else
+                gladProxy:drawFeverShipAura(shipProxy, srcTime)
                 turretProxy:drawMount(shipProxy, srcTime, width)
                 shipProxy:draw(srcTime)
             end

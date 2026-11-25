@@ -25,12 +25,6 @@ local function shortestAngleDiff(from, to)
     return (to - from + math.pi) % tau - math.pi
 end
 
-local function wrapOffsets(position, extent, reach)
-    if position < reach then return { 0, extent } end
-    if position > extent - reach then return { 0, -extent } end
-    return { 0 }
-end
-
 function TitleDemo.new(armoryInventory)
     local ship = Ship.new(Arena.width, Arena.height)
     ship.x = Arena.width * 0.67
@@ -240,12 +234,19 @@ function TitleDemo:draw(time, width, height)
     enemies:draw(t)
 
     g.push("all")
-    local sx, sy, sw, sh = Display.virtualRectToWindow(originX, originY, Arena.width * camera.zoom, Arena.height * camera.zoom)
-    g.intersectScissor(sx, sy, sw, sh)
-    ship:drawBoostPulse()
-    local reach = 75 + 70 * (ship.boostLevel or 0)
-    local xOffsets = wrapOffsets(ship.x, Arena.width, reach)
-    local yOffsets = wrapOffsets(ship.y, Arena.height, reach)
+    local xOffsets, yOffsets, viewLeft, viewTop, viewRight, viewBottom = Arena.playerWrapOffsets(ship, turret, camera, width, height)
+    if ship.boostOriginX and ship.boostOriginY then
+        local pulseXOffsets = Arena.wrapOffsets(ship.boostOriginX, Arena.width, 80, 80, viewLeft, viewRight)
+        local pulseYOffsets = Arena.wrapOffsets(ship.boostOriginY, Arena.height, 80, 80, viewTop, viewBottom)
+        for _, pdx in ipairs(pulseXOffsets) do
+            for _, pdy in ipairs(pulseYOffsets) do
+                g.push()
+                g.translate(pdx, pdy)
+                ship:drawBoostPulse()
+                g.pop()
+            end
+        end
+    end
     for _, dx in ipairs(xOffsets) do
         for _, dy in ipairs(yOffsets) do
             g.push()
