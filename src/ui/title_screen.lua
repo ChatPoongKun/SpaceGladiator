@@ -1059,14 +1059,10 @@ function TitleScreen:_drawLeftMenu(menu, fonts, selected, width, height, launchP
         Theme.setColor(p.railLine, 0.14 * railAlpha)
         g.line(fa.outerX, 65 + py, frameSpineX, upperSpineTop)
 
-        -- Upper fading spine segment + telemetry dashed ticks between arc top and menu top
+        -- Upper fading spine segment
         Theme.drawGradientRect(m.menuSpineFadeTop, frameSpineX - 0.5, upperSpineTop, 1, railTop - upperSpineTop, railAlpha)
-        Theme.setColor(p.iceBright, 0.28 * railAlpha)
-        g.setLineWidth(1)
-        for tickY = upperArcTop + 14, railTop - 12, 16 do
-            g.line(frameSpineX, tickY, frameSpineX, tickY + 5)
-        end
         Theme.setColor(p.railLine, 0.24 * railAlpha)
+        g.setLineWidth(1)
         g.line(frameSpineX - 3, upperArcTop, frameSpineX + 3, upperArcTop)
 
         -- Main solid vertical spine through menu rows down to bottom shelf
