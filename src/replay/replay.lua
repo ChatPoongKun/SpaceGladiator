@@ -125,7 +125,7 @@ local enemyShotProfiles = {
     [5] = { speed = 210, lifetime = 4.2, radius = 5.0, trail = 10, color = { 0.82, 0.34, 1.0 }, isOrb = true },
 }
 
-local explosionColors = { glow = { 1, 0.38, 0.10 }, ring = { 1, 0.76, 0.32 }, core = { 1, 0.94, 0.66 } }
+local explosionColors = { glow = { 0.141, 0.549, 1.0 }, ring = { 0.220, 0.863, 1.0 }, core = { 0.933, 0.984, 1.0 } }
 local beamImpactColors = { glow = { 0.12, 0.68, 1 }, ring = { 0.30, 0.92, 1 }, core = { 0.83, 0.98, 1 } }
 local tau = math.pi * 2
 
@@ -1227,6 +1227,7 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
             x = ex.x, y = ex.y, radius = ex.radius,
             age = ex.age, lifetime = ex.lifetime,
             colors = ex.isBeamImpact and beamImpactColors or explosionColors,
+            isHex = not ex.isBeamImpact,
         }
     end
 
