@@ -39,7 +39,6 @@ Enemies.laserLockDuration = 0.25
 Enemies.laserRecoilDuration = 0.30
 Enemies.laserRecoilSpeed = 95
 Enemies.obtuseCurtainTelegraph = 0.38
-Enemies.obtuseMissileTelegraph = 0.42
 Enemies.spinnerSpiralTelegraph = 0.45
 Enemies.spinnerRingTelegraph = 0.50
 Enemies.maxConcurrentLasers = 2
@@ -740,12 +739,12 @@ local function patrolObtuse(group, enemy, dt, ship)
         if ai.timer <= 0 and isInsideBounds(group, enemy) and group:canStartAttack(enemy) then
             group:notifyAttackStarted(enemy)
             ai.attackIndex = ai.attackIndex + 1
-            ai.nextPattern = (ai.attackIndex % 2 == 1) and "curtain" or "missile_stagger"
-            ai.telegraphDuration = (ai.nextPattern == "curtain") and Enemies.obtuseCurtainTelegraph or Enemies.obtuseMissileTelegraph
+            ai.nextPattern = "curtain"
+            ai.telegraphDuration = Enemies.obtuseCurtainTelegraph
             ai.state = "telegraph"
             ai.timer = ai.telegraphDuration
             enemy.telegraph = {
-                kind = (ai.nextPattern == "curtain") and "curtain" or "missile",
+                kind = "curtain",
                 progress = 0,
                 angle = math.atan2(ship.y - enemy.y, ship.x - enemy.x),
             }
@@ -756,7 +755,7 @@ local function patrolObtuse(group, enemy, dt, ship)
         flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.34, enemy.sepX, enemy.sepY, false)
         local progress = clamp(1 - ai.timer / ai.telegraphDuration, 0, 1)
         enemy.telegraph = {
-            kind = (ai.nextPattern == "curtain") and "curtain" or "missile",
+            kind = "curtain",
             progress = progress,
             angle = math.atan2(ship.y - enemy.y, ship.x - enemy.x),
         }
@@ -1638,7 +1637,98 @@ end
 
 -- Opaque vertex-colored gradient meshes for enemy hulls (cached lazily on first draw).
 local hullMeshes
+local enemyAimGlowMesh, enemyAimCoreMesh, enemyAimMeshesTried
 local spearScale = 0.28
+
+local function addAimQuad(verts, v1, v2, v3, v4)
+    verts[#verts + 1] = v1
+    verts[#verts + 1] = v2
+    verts[#verts + 1] = v3
+    verts[#verts + 1] = v1
+    verts[#verts + 1] = v3
+    verts[#verts + 1] = v4
+end
+
+local function buildFeatheredAimLineMesh(coreHalfFrac, taper, fadePower, segments)
+    if not (love and love.graphics and love.graphics.newMesh) then return nil end
+    local verts = {}
+    for i = 0, segments - 1 do
+        local t0 = i / segments
+        local t1 = (i + 1) / segments
+        local w0 = 1 - taper * t0
+        local w1 = 1 - taper * t1
+        local a0 = (1 - t0) ^ fadePower
+        local a1 = (1 - t1) ^ fadePower
+
+        if coreHalfFrac <= 0 then
+            local t0Top = { t0, -w0, t0, 0, 1, 1, 1, 0 }
+            local t0Mid = { t0, 0, t0, 0.5, 1, 1, 1, a0 }
+            local t0Bot = { t0, w0, t0, 1, 1, 1, 1, 0 }
+            local t1Top = { t1, -w1, t1, 0, 1, 1, 1, 0 }
+            local t1Mid = { t1, 0, t1, 0.5, 1, 1, 1, a1 }
+            local t1Bot = { t1, w1, t1, 1, 1, 1, 1, 0 }
+            addAimQuad(verts, t0Top, t0Mid, t1Mid, t1Top)
+            addAimQuad(verts, t0Mid, t0Bot, t1Bot, t1Mid)
+        else
+            local cw0, cw1 = w0 * coreHalfFrac, w1 * coreHalfFrac
+            local ot0 = { t0, -w0, t0, 0, 1, 1, 1, 0 }
+            local it0 = { t0, -cw0, t0, 0.35, 1, 1, 1, a0 }
+            local ib0 = { t0, cw0, t0, 0.65, 1, 1, 1, a0 }
+            local ob0 = { t0, w0, t0, 1, 1, 1, 1, 0 }
+            local ot1 = { t1, -w1, t1, 0, 1, 1, 1, 0 }
+            local it1 = { t1, -cw1, t1, 0.35, 1, 1, 1, a1 }
+            local ib1 = { t1, cw1, t1, 0.65, 1, 1, 1, a1 }
+            local ob1 = { t1, w1, t1, 1, 1, 1, 1, 0 }
+            addAimQuad(verts, ot0, it0, it1, ot1)
+            addAimQuad(verts, it0, ib0, ib1, it1)
+            addAimQuad(verts, ib0, ob0, ob1, ib1)
+        end
+    end
+    local ok, mesh = pcall(love.graphics.newMesh, verts, "triangles", "static")
+    if ok then return mesh end
+    return nil
+end
+
+local function getEnemyAimMeshes()
+    if not enemyAimMeshesTried then
+        enemyAimMeshesTried = true
+        enemyAimGlowMesh = buildFeatheredAimLineMesh(0, 0.35, 1.45, 16)
+        enemyAimCoreMesh = buildFeatheredAimLineMesh(0.45, 0.45, 1.35, 16)
+    end
+    return enemyAimGlowMesh, enemyAimCoreMesh
+end
+
+local function drawGradientAimLine(g, sx, sy, angle, length, glowWidth, coreWidth, glowColor, coreColor, glowAlpha, coreAlpha)
+    local glowMesh, coreMesh = getEnemyAimMeshes()
+    g.push("all")
+    g.translate(sx, sy)
+    g.rotate(angle)
+    if glowMesh and coreMesh then
+        g.setBlendMode("add")
+        g.setColor(glowColor[1], glowColor[2], glowColor[3], glowAlpha)
+        g.draw(glowMesh, 0, 0, 0, length, glowWidth)
+        g.setBlendMode("alpha")
+        g.setColor(coreColor[1], coreColor[2], coreColor[3], coreAlpha)
+        g.draw(coreMesh, 0, 0, 0, length, coreWidth)
+    else
+        local segments = 16
+        for i = 0, segments - 1 do
+            local t0 = i / segments
+            local t1 = (i + 1) / segments
+            local fade = (1 - (t0 + t1) * 0.5) ^ 1.4
+            local x0, x1 = length * t0, length * t1
+            g.setBlendMode("add")
+            g.setLineWidth(glowWidth)
+            g.setColor(glowColor[1], glowColor[2], glowColor[3], glowAlpha * fade)
+            g.line(x0, 0, x1, 0)
+            g.setBlendMode("alpha")
+            g.setLineWidth(coreWidth)
+            g.setColor(coreColor[1], coreColor[2], coreColor[3], coreAlpha * fade)
+            g.line(x0, 0, x1, 0)
+        end
+    end
+    g.pop()
+end
 
 local function vtx(x, y, c)
     return { x, y, 0, 0, c[1], c[2], c[3], 1 }
@@ -2268,50 +2358,25 @@ local function drawTelegraph(g, enemy, time)
         local dx, dy = math.cos(angle), math.sin(angle)
         local muzzle = (enemy.radius or 24) * 0.72
         local sx, sy = enemy.x + dx * muzzle, enemy.y + dy * muzzle
-        local ex, ey = sx + dx * 1600, sy + dy * 1600
-        if tel.kind == "laser_track" then
-            local alpha = 0.28 + 0.30 * p
-            local segLen, gapLen = 18, 12
-            local step = segLen + gapLen
-            g.setLineWidth(1.3)
-            g.setColor(1.0, 0.28, 0.58, alpha)
-            for d = 0, 1550, step do
-                local d2 = math.min(1600, d + segLen)
-                g.line(sx + dx * d, sy + dy * d, sx + dx * d2, sy + dy * d2)
-            end
-            local chargeR = 14 - 8 * p
-            g.setLineWidth(1.4)
-            g.setColor(1.0, 0.32, 0.68, 0.38 + 0.42 * p)
-            g.circle("line", sx, sy, chargeR)
-        else
-            local pulse = 0.72 + 0.28 * math.sin(t * 32 * tau * 0.5)
-            g.setLineWidth(4.5 * pulse)
-            g.setColor(1.0, 0.22, 0.65, 0.28 * pulse)
-            g.line(sx, sy, ex, ey)
-            g.setLineWidth(1.6)
-            g.setColor(1.0, 0.90, 0.96, 0.92 * pulse)
-            g.line(sx, sy, ex, ey)
-            local px, py = -dy, dx
-            local tipX, tipY = sx + dx * 24, sy + dy * 24
-            g.setLineWidth(1.5)
-            g.setColor(1.0, 0.45, 0.78, 0.9)
-            g.line(tipX - dx * 8 + px * 7, tipY - dy * 8 + py * 7, tipX, tipY, tipX - dx * 8 - px * 7, tipY - dy * 8 - py * 7)
-        end
+        local charge = tel.kind == "laser_track"
+            and clamp(p, 0, 1) * 0.65
+            or (0.65 + clamp(p, 0, 1) * 0.35)
+        local strength = charge ^ 1.25
+        drawGradientAimLine(g, sx, sy, angle, 720,
+            3.2 + 3.6 * charge, 1.0 + 0.75 * charge,
+            { 1.0, 0.24, 0.62 },
+            { 1.0, 0.54 + 0.42 * charge, 0.78 + 0.20 * charge },
+            0.06 + 0.40 * strength,
+            0.10 + 0.85 * strength)
     elseif tel.kind == "dive" then
         local dx, dy = tel.dirX or math.sin(enemy.angle), tel.dirY or -math.cos(enemy.angle)
-        local sx, sy = enemy.x + dx * (enemy.radius + 4), enemy.y + dy * (enemy.radius + 4)
-        local ex, ey = enemy.x + dx * (150 + 60 * p), enemy.y + dy * (150 + 60 * p)
-        g.setLineWidth(1.5)
-        g.setColor(1.0, 0.44, 0.24, 0.28 + 0.36 * p)
-        g.line(sx, sy, ex, ey)
-        local px, py = -dy, dx
-        local chevronDist = 55 + 40 * p
-        local cx, cy = enemy.x + dx * chevronDist, enemy.y + dy * chevronDist
-        g.setLineWidth(2.0)
-        g.setColor(1.0, 0.68, 0.36, 0.75 + 0.25 * p)
-        g.line(cx - dx * 9 + px * 8, cy - dy * 9 + py * 8, cx, cy, cx - dx * 9 - px * 8, cy - dy * 9 - py * 8)
-        g.setColor(1.0, 0.55, 0.30, 0.55 + 0.35 * p)
-        g.circle("fill", sx, sy, 3.5 + 2.0 * p)
+        local offset = (enemy.radius or 16) + 2
+        local sx, sy = enemy.x + dx * offset, enemy.y + dy * offset
+        local intensity = 0.25 + 0.75 * clamp(p, 0, 1)
+        drawGradientAimLine(g, sx, sy, math.atan2(dy, dx), 260,
+            3.2, 1.1,
+            { 1.0, 0.44, 0.24 }, { 1.0, 0.72, 0.48 },
+            0.24 * intensity, 0.58 * intensity)
     elseif tel.kind == "curtain" then
         local ringR = 26 - 16 * p
         g.setLineWidth(1.8)
@@ -2468,17 +2533,6 @@ function Enemies:draw(time)
             if enemy.kind == 2 and enemy.telegraph
                 and (enemy.telegraph.kind == "laser_track" or enemy.telegraph.kind == "laser_lock") then
                 drawBoltthrowerLaserCharge(g, enemy.telegraph, time, idx)
-            end
-            if enemy.telegraph and enemy.telegraph.kind == "missile" then
-                local mp = enemy.telegraph.progress or 0
-                local alpha = 0.45 + 0.50 * mp
-                local glowR = 4.5 + 3.5 * mp
-                for _, sx in ipairs({ -17, 17 }) do
-                    g.setColor(1.0, 0.24, 0.26, alpha * 0.45)
-                    g.circle("fill", sx, 3.5, glowR)
-                    g.setColor(1.0, 0.72, 0.45, alpha)
-                    g.circle("fill", sx, 3.5, 2.5)
-                end
             end
             if (enemy.hitFlash or 0) > 0 then
                 local flashAlpha = math.min(1, enemy.hitFlash / 0.09)

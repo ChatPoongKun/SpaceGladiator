@@ -4,27 +4,18 @@ local Sfx = require("src.audio.sfx")
 local EnemyFire = {}
 EnemyFire.__index = EnemyFire
 
-local burstInterval = 0.12
 local impactLifetime = 0.24
-local missileAngles = {-60, -36, -12, 12, 36, 60}
-local missileTurnRate = 3.35
-local missileTurnRamp = 0.42
 local tau = 2 * math.pi
 local bullet = {speed = 440, lifetime = 1.65, radius = 3.5, damage = 6, trail = 15, color = {1, 0.45, 0.23}, replayKind = 1}
 local laser = {speed = 1150, lifetime = 0.95, radius = 4.5, damage = 14, trail = 56, color = {1, 0.24, 0.65}, isLaser = true, grazable = true, replayKind = 2}
-local missile = {radius = 5, damage = 8, trail = 24, color = {1, 0.28, 0.28}, isMissile = true, grazable = true, replayKind = 3}
 local curtain = {speed = 255, lifetime = 3.8, radius = 5.0, damage = 7, trail = 10, color = {1.0, 0.78, 0.24}, isOrb = true, grazable = true, replayKind = 4}
 local spiral = {speed = 210, lifetime = 4.2, radius = 5.0, damage = 6, trail = 10, color = {0.82, 0.34, 1.0}, isOrb = true, grazable = true, replayKind = 5}
 
-EnemyFire.wedgeSpread = math.rad(16)
 EnemyFire.railCount = 3
 EnemyFire.railInterval = 0.055
 EnemyFire.curtainWaveInterval = 0.34
 EnemyFire.curtainOddAngles = {0, -18, 18, -36, 36}
 EnemyFire.curtainEvenAngles = {-9, 9, -27, 27, -45, 45}
-EnemyFire.missileStaggerInterval = 0.11
-EnemyFire.missileStaggerOrder = {-58, 58, -34, 34, -12, 12}
-EnemyFire.missileFlankOffsets = {-48, 48, -26, 26, -10, 10}
 EnemyFire.spiralArms = 4
 EnemyFire.spiralWaves = 5
 EnemyFire.spiralInterval = 0.15
@@ -33,8 +24,6 @@ EnemyFire.ringCount = 10
 EnemyFire.ringWaves = 2
 EnemyFire.ringInterval = 0.32
 EnemyFire.ringSpeed = 225
-
-local wedgeFanOffsets = {0, -EnemyFire.wedgeSpread, EnemyFire.wedgeSpread}
 
 function EnemyFire.new()
     return setmetatable({shots = {}, bursts = {}, impacts = {}}, EnemyFire)
@@ -72,33 +61,13 @@ local function launchAngle(fire, enemy, angle, profile, delay, sfxName, pitchSca
     return shot
 end
 
-local function launchMissile(fire, enemy, targetX, targetY, baseAngle, distance, angleOffsetDeg, flankOffset, delay)
-    local reach = math.max(34, math.min(135, distance * 0.46))
-    local lifetime = math.max(0.6, distance / 375 + 0.15)
-    local tx, ty = targetX, targetY
-    if flankOffset and flankOffset ~= 0 then
-        local perpX, perpY = -math.sin(baseAngle), math.cos(baseAngle)
-        tx = math.max(20, math.min(Arena.width - 20, tx + perpX * flankOffset))
-        ty = math.max(20, math.min(Arena.height - 20, ty + perpY * flankOffset))
-    end
-    local shot = launch(fire, enemy, baseAngle + math.rad(angleOffsetDeg), missile, delay)
-    shot.startX, shot.startY = shot.x, shot.y
-    shot.controlX, shot.controlY = shot.x + shot.vx * reach, shot.y + shot.vy * reach
-    shot.targetX, shot.targetY = tx, ty
-    shot.lifetime = lifetime
-    shot.vx, shot.vy = shot.vx * 2 * reach / lifetime, shot.vy * 2 * reach / lifetime
-    return shot
-end
-
 function EnemyFire:shoot(enemy, ship, opts)
     if not ship or ship:isDestroyed() then return nil end
     opts = opts or {}
     local targetX, targetY = ship.x, ship.y
     if enemy.kind == 1 then
         local baseAngle = opts.angle or bearing(enemy, targetX, targetY)
-        for _, offset in ipairs(wedgeFanOffsets) do
-            launchAngle(self, enemy, baseAngle + offset, bullet, 0)
-        end
+        launchAngle(self, enemy, baseAngle, bullet, 0)
         Sfx.play("enemyProjectile")
         return nil
     elseif enemy.kind == 2 then
@@ -115,45 +84,23 @@ function EnemyFire:shoot(enemy, ship, opts)
         self.bursts[#self.bursts + 1] = burst
         return burst
     elseif enemy.kind == 3 then
-        local baseAngle, distance = bearing(enemy, targetX, targetY)
-        if opts.pattern == "curtain" then
-            local aimAngle = opts.angle or baseAngle
-            for _, offsetDeg in ipairs(EnemyFire.curtainOddAngles) do
-                launchAngle(self, enemy, aimAngle + math.rad(offsetDeg), curtain, 0)
-            end
-            Sfx.play("enemyProjectile", 0.72)
-            local burst = {
-                kind = "curtain",
-                enemy = enemy,
-                baseAngle = aimAngle,
-                wave = 2,
-                maxWaves = 3,
-                remaining = 2,
-                delay = EnemyFire.curtainWaveInterval,
-            }
-            self.bursts[#self.bursts + 1] = burst
-            return burst
-        elseif opts.pattern == "missile_stagger" then
-            launchMissile(self, enemy, targetX, targetY, baseAngle, distance,
-                EnemyFire.missileStaggerOrder[1], EnemyFire.missileFlankOffsets[1], 0)
-            Sfx.play("enemyMissile")
-            local burst = {
-                kind = "missile_stagger",
-                enemy = enemy,
-                index = 2,
-                count = #EnemyFire.missileStaggerOrder,
-                remaining = #EnemyFire.missileStaggerOrder - 1,
-                delay = EnemyFire.missileStaggerInterval,
-            }
-            self.bursts[#self.bursts + 1] = burst
-            return burst
-        else
-            for _, offsetDeg in ipairs(missileAngles) do
-                launchMissile(self, enemy, targetX, targetY, baseAngle, distance, offsetDeg, 0, 0)
-            end
-            Sfx.play("enemyMissile")
-            return nil
+        local baseAngle = bearing(enemy, targetX, targetY)
+        local aimAngle = opts.angle or baseAngle
+        for _, offsetDeg in ipairs(EnemyFire.curtainOddAngles) do
+            launchAngle(self, enemy, aimAngle + math.rad(offsetDeg), curtain, 0)
         end
+        Sfx.play("enemyProjectile", 0.72)
+        local burst = {
+            kind = "curtain",
+            enemy = enemy,
+            baseAngle = aimAngle,
+            wave = 2,
+            maxWaves = 3,
+            remaining = 2,
+            delay = EnemyFire.curtainWaveInterval,
+        }
+        self.bursts[#self.bursts + 1] = burst
+        return burst
     else
         local baseAngle = opts.angle or (enemy.angle - math.pi / 2)
         if opts.pattern == "ring" then
@@ -218,123 +165,9 @@ local function playerHit(shot, motion, x, y, elapsed, step, radius)
     if t then return px + dx * span * t, py + dy * span * t, start + step * span * t end
 end
 
-local function offsetPoint(x, y, heading, forward, sideways)
-    local dx, dy = math.cos(heading), math.sin(heading)
-    return x + dx * forward - dy * sideways, y + dy * forward + dx * sideways
-end
-
--- Distance is in turn radii. This integrates a constant-speed ramp with a linearly rising turn rate.
-local function rampPose(distance, ramp)
-    if ramp == 0 then return 0, 0, 0 end
-    local angle = distance * distance / (2 * ramp)
-    local square = angle * angle
-    local forward = distance * (1 - square / 10 + square * square / 216)
-    local sideways = distance * angle * (1 / 3 - square / 42 + square * square / 1320)
-    return forward, sideways, angle
-end
-
-local function planBank(x, y, heading, radius, targetX, targetY, ramp)
-    local forward, sideways, entryAngle = rampPose(ramp, ramp)
-    local tangentRadius = math.cos(entryAngle) + sideways
-    local exitAdvance = forward - math.sin(entryAngle)
-    local samePoint = (targetX - x) ^ 2 + (targetY - y) ^ 2 < 1e-12
-    if samePoint and ramp > 0 then return end
-    local best
-    for direction = -1, 1, 2 do
-        local entryHeading = heading + direction * entryAngle
-        local px, py = offsetPoint(x, y, heading, radius * forward, direction * radius * sideways)
-        local cx, cy = offsetPoint(px, py, entryHeading, 0, direction * radius)
-        local dx, dy = (targetX - cx) / radius, (targetY - cy) / radius
-        local distanceSquared = dx * dx + dy * dy
-        if distanceSquared >= tangentRadius ^ 2 or samePoint then
-            local sweep, straight = tau, 0
-            if not samePoint then
-                straight = math.sqrt(math.max(0, distanceSquared - tangentRadius ^ 2)) - exitAdvance
-                local finalHeading = math.atan2(dy, dx) + direction * math.asin(math.min(1, tangentRadius / math.sqrt(distanceSquared)))
-                sweep = ((finalHeading - entryHeading) * direction - entryAngle) % tau
-                if sweep > tau - 1e-9 then sweep = 0 end
-            end
-            if straight >= -1e-9 then
-                local length = 2 * ramp + sweep + math.max(0, straight)
-                if not best or length < best.length then
-                    local exitHeading = heading + direction * (sweep + ramp)
-                    local exitX, exitY = offsetPoint(cx, cy, exitHeading, radius * exitAdvance,
-                        -direction * radius * tangentRadius)
-                    best = {direction = direction, cx = cx, cy = cy, radial = entryHeading - direction * math.pi / 2,
-                        sweep = sweep, ramp = ramp, length = length, exitHeading = exitHeading, exitX = exitX, exitY = exitY}
-                end
-            end
-        end
-    end
-    return best
-end
-
-local function beginSecondLeg(shot, targetX, targetY)
-    local speed = math.sqrt(shot.vx ^ 2 + shot.vy ^ 2)
-    local heading = math.atan2(shot.vy, shot.vx)
-    local radius = speed / missileTurnRate
-    local direct = planBank(shot.x, shot.y, heading, radius, targetX, targetY, 0)
-    local leg = direct
-    local ramp = math.min(missileTurnRamp, direct.sweep * 0.5)
-    -- Shallow or very short approaches may need a shorter ramp to avoid another orbit.
-    while ramp >= 1e-4 do
-        local bank = planBank(shot.x, shot.y, heading, radius, targetX, targetY, ramp)
-        if bank and bank.length < direct.length + math.pi / 2 then
-            leg = bank
-            break
-        end
-        ramp = ramp * 0.5
-    end
-
-    leg.startX, leg.startY, leg.heading = shot.x, shot.y, heading
-    leg.radius, leg.speed, leg.started, leg.x, leg.y = radius, speed, shot.age, targetX, targetY
-    shot.secondLeg = leg
-    shot.lifetime = shot.age + leg.length / missileTurnRate
-end
-
-local function secondLegPose(leg, distance)
-    local direction, radius = leg.direction, leg.radius
-    local ramp = leg.ramp
-    if distance < ramp then
-        local forward, sideways, angle = rampPose(distance, ramp)
-        local x, y = offsetPoint(leg.startX, leg.startY, leg.heading, radius * forward, direction * radius * sideways)
-        return x, y, leg.heading + direction * angle
-    end
-    distance = distance - ramp
-    if distance < leg.sweep then
-        local radial = leg.radial + direction * distance
-        return leg.cx + math.cos(radial) * radius, leg.cy + math.sin(radial) * radius, radial + direction * math.pi / 2
-    end
-    distance = distance - leg.sweep
-    if distance < ramp then
-        local forward, sideways, angle = rampPose(ramp - distance, ramp)
-        local x, y = offsetPoint(leg.exitX, leg.exitY, leg.exitHeading, -radius * forward, direction * radius * sideways)
-        return x, y, leg.exitHeading - direction * angle
-    end
-    local x, y = offsetPoint(leg.exitX, leg.exitY, leg.exitHeading, radius * (distance - ramp), 0)
-    return x, y, leg.exitHeading
-end
-
 local function moveShot(shot, step)
     shot.age = shot.age + step
-    local leg = shot.secondLeg
-    if leg then
-        local distance = (shot.age - leg.started) * missileTurnRate
-        local x, y, heading = secondLegPose(leg, distance)
-        shot.x, shot.y = x, y
-        shot.vx, shot.vy = math.cos(heading) * leg.speed, math.sin(heading) * leg.speed
-        if shot.age >= shot.lifetime - 1e-9 then shot.x, shot.y = leg.x, leg.y end
-    elseif shot.profile == missile then
-        local t = math.min(1, shot.age / shot.lifetime)
-        local u = 1 - t
-        -- Each curve leaves along its own launch angle and ends at the locked aim point.
-        shot.x = u * u * shot.startX + 2 * u * t * shot.controlX + t * t * shot.targetX
-        shot.y = u * u * shot.startY + 2 * u * t * shot.controlY + t * t * shot.targetY
-        shot.vx = 2 * (u * (shot.controlX - shot.startX) + t * (shot.targetX - shot.controlX)) / shot.lifetime
-        shot.vy = 2 * (u * (shot.controlY - shot.startY) + t * (shot.targetY - shot.controlY)) / shot.lifetime
-    else
-        shot.x, shot.y = shot.x + shot.vx * step, shot.y + shot.vy * step
-    end
+    shot.x, shot.y = shot.x + shot.vx * step, shot.y + shot.vy * step
 end
 
 local function impact(fire, shot, x, y, shield)
@@ -412,8 +245,7 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
                         local py = (motion.y + motion.vy * at) % Arena.height
                         local grazeX = px + (rx + vx * minT) * 0.5
                         local grazeY = py + (ry + vy * minT) * 0.5
-                        local label = shot.profile.isMissile and "MISSILE DODGE" or "BULLET GRAZE"
-                        if gladiator:observeMissileThreat(clearance, relativeSpeed, grazeX, grazeY, label) then
+                        if gladiator:observeMissileThreat(clearance, relativeSpeed, grazeX, grazeY, "BULLET GRAZE") then
                             missileThreatened = true
                         end
                     end
@@ -424,17 +256,8 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
 
     for i = #fire.shots, 1, -1 do
         local shot = fire.shots[i]
-        if shot.spent then
+        if shot.spent or shot.age >= shot.lifetime - 1e-9 then
             table.remove(fire.shots, i)
-        elseif shot.age >= shot.lifetime - 1e-9 then
-            if shot.profile == missile and not shot.secondLeg then
-                local x = (motion.x + motion.vx * finish) % Arena.width
-                local y = (motion.y + motion.vy * finish) % Arena.height
-                beginSecondLeg(shot, x, y)
-            else
-                if shot.profile == missile then impact(fire, shot, shot.x, shot.y) end
-                table.remove(fire.shots, i)
-            end
         end
     end
     if gladiator then
@@ -468,15 +291,6 @@ function EnemyFire:update(dt, ship, gladiator)
                     burst.wave = burst.wave + 1
                     burst.remaining = burst.remaining - 1
                     burst.delay = burst.delay + EnemyFire.curtainWaveInterval
-                elseif burst.kind == "missile_stagger" then
-                    local baseAngle, distance = bearing(burst.enemy, ship.x, ship.y)
-                    launchMissile(self, burst.enemy, ship.x, ship.y, baseAngle, distance,
-                        EnemyFire.missileStaggerOrder[burst.index],
-                        EnemyFire.missileFlankOffsets[burst.index], shotDelay)
-                    Sfx.play("enemyMissile", 0.94 + (burst.index % 2) * 0.12)
-                    burst.index = burst.index + 1
-                    burst.remaining = burst.remaining - 1
-                    burst.delay = burst.delay + EnemyFire.missileStaggerInterval
                 elseif burst.kind == "spiral" then
                     for arm = 0, EnemyFire.spiralArms - 1 do
                         local a = burst.baseAngle + arm * (tau / EnemyFire.spiralArms)
@@ -510,13 +324,6 @@ function EnemyFire:update(dt, ship, gladiator)
     local elapsed = 0
     while elapsed < dt and #self.shots > 0 do
         local finish = math.min(dt, elapsed + 1 / 60)
-        for _, shot in ipairs(self.shots) do
-            if shot.profile == missile and not shot.secondLeg then
-                local arrival = math.max(elapsed, shot.delay) + (shot.lifetime - shot.age)
-                -- Sample the player at the waypoint event, then use the rest of the frame for the turn.
-                if arrival > elapsed then finish = math.min(finish, arrival) end
-            end
-        end
         stepShots(self, ship, motion, elapsed, finish, gladiator)
         elapsed = finish
     end
@@ -574,34 +381,6 @@ function EnemyFire:updateHarmless(dt)
             }
             table.remove(self.shots, i)
         end
-    end
-end
-
-local function drawMissileBurst(g, effect, progress)
-    local radius = 4 + progress * 20
-    local alpha = 1 - progress
-    local glowR, glowG, glowB = 1.0, 0.28, 0.24
-    local ringR, ringG, ringB = 1.0, 0.54, 0.32
-    local coreR, coreG, coreB = 1.0, 0.88, 0.72
-    if effect.shield then
-        glowR, glowG, glowB = 0.20, 0.58, 1.0
-        ringR, ringG, ringB = 0.35, 0.78, 1.0
-        coreR, coreG, coreB = 0.82, 0.95, 1.0
-    end
-    g.setColor(glowR, glowG, glowB, alpha * 0.28)
-    g.circle("fill", effect.x, effect.y, radius)
-    g.setLineWidth(1.8 * alpha + 0.5)
-    g.setColor(ringR, ringG, ringB, alpha * 0.9)
-    g.circle("line", effect.x, effect.y, radius)
-    g.setColor(coreR, coreG, coreB, alpha * 0.95)
-    g.circle("fill", effect.x, effect.y, 5.5 * alpha)
-    g.setLineWidth(1.2)
-    g.setColor(ringR, ringG, ringB, alpha * 0.85)
-    for i = 1, 6 do
-        local angle = i * tau / 6
-        local dx, dy = math.cos(angle), math.sin(angle)
-        g.line(effect.x + dx * radius * 0.65, effect.y + dy * radius * 0.65,
-            effect.x + dx * (radius + 4), effect.y + dy * (radius + 4))
     end
 end
 
@@ -703,19 +482,15 @@ function EnemyFire:draw()
     end
     for _, effect in ipairs(self.impacts) do
         local progress = effect.age / impactLifetime
-        if effect.profile == missile and not effect.dissipate then
-            drawMissileBurst(g, effect, progress)
-        else
-            local r, green, b = unpack(effect.profile.color)
-            if effect.shield then
-                r, green, b = 0.30, 0.70, 1
-            elseif effect.dissipate then
-                r, green, b = 0.68, 0.90, 1.0
-            end
-            g.setLineWidth(1.5)
-            g.setColor(r, green, b, 0.8 * (1 - progress))
-            g.circle("line", effect.x, effect.y, 4 + progress * effect.profile.radius * 4)
+        local r, green, b = unpack(effect.profile.color)
+        if effect.shield then
+            r, green, b = 0.30, 0.70, 1
+        elseif effect.dissipate then
+            r, green, b = 0.68, 0.90, 1.0
         end
+        g.setLineWidth(1.5)
+        g.setColor(r, green, b, 0.8 * (1 - progress))
+        g.circle("line", effect.x, effect.y, 4 + progress * effect.profile.radius * 4)
     end
     g.pop()
 end
