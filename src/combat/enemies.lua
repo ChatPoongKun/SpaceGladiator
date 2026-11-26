@@ -40,6 +40,13 @@ Enemies.laserRecoilDuration = 0.30
 Enemies.laserRecoilSpeed = 95
 Enemies.obtuseCurtainTelegraph = 0.38
 Enemies.obtuseMissileTelegraph = 0.42
+Enemies.spinnerSpiralTelegraph = 0.45
+Enemies.spinnerRingTelegraph = 0.50
+Enemies.maxConcurrentLasers = 2
+Enemies.maxConcurrentDives = 2
+Enemies.obtuseAttackGap = 1.2
+Enemies.spinnerAttackGap = 1.1
+Enemies.wrapGraceDuration = 0.35
 Enemies.types = {
     {
         name = "WEDGE", vertices = {0, -15, 10, 10, 0, 5, -10, 10},
@@ -60,6 +67,12 @@ Enemies.types = {
         radius = 28, mass = 3.0, evadeSpeed = 62, turnSpeed = 2.5, thrust = 218, brake = 4.0, maxSpeed = 200,
         patrolMin = 195, patrolMax = 290, arrivalRadius = 48,
         combatPower = 100, maxHp = 50,
+    },
+    {
+        name = "SPINNER", vertices = {0, -22, 16, -6, 22, 0, 16, 6, 0, 22, -16, 6, -22, 0, -16, -6},
+        radius = 22, mass = 2.0, evadeSpeed = 0, turnSpeed = 2.8, thrust = 180, brake = 3.0, maxSpeed = 160,
+        patrolMin = 170, patrolMax = 280, arrivalRadius = 40,
+        combatPower = 85, maxHp = 35,
     },
 }
 
@@ -100,11 +113,67 @@ function Enemies.new(rng, gladiator)
         deathBursts = {},
         waveIndex = 0,
         stageNumber = 1,
+        director = {
+            obtuseCooldown = 0,
+            spinnerCooldown = 0,
+            wrapGrace = 0,
+            lastWrapEvents = nil,
+        },
     }, Enemies)
 end
 
 function Enemies.isIntangible(enemy)
     return enemy ~= nil and (enemy.phase == "warping" or enemy.phase == "edge_warning")
+end
+
+function Enemies:countActiveLasers()
+    local n = 0
+    for _, enemy in ipairs(self.items) do
+        if enemy.kind == 2 and not enemy.dead and enemy.ai
+            and (enemy.ai.state == "track" or enemy.ai.state == "lock") then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+function Enemies:countActiveDives()
+    local n = 0
+    for _, enemy in ipairs(self.items) do
+        if enemy.kind == 1 and not enemy.dead and enemy.ai
+            and (enemy.ai.state == "telegraph" or enemy.ai.state == "dive") then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+function Enemies:canStartAttack(enemy)
+    local d = self.director
+    if d and (d.wrapGrace or 0) > 0 then
+        return false
+    end
+    if not enemy then return true end
+    if enemy.kind == 1 then
+        return self:countActiveDives() < self.maxConcurrentDives
+    elseif enemy.kind == 2 then
+        return self:countActiveLasers() < self.maxConcurrentLasers
+    elseif enemy.kind == 3 then
+        return not d or (d.obtuseCooldown or 0) <= 0
+    elseif enemy.kind == 4 then
+        return not d or (d.spinnerCooldown or 0) <= 0
+    end
+    return true
+end
+
+function Enemies:notifyAttackStarted(enemy)
+    local d = self.director
+    if not d or not enemy then return end
+    if enemy.kind == 3 then
+        d.obtuseCooldown = math.max(d.obtuseCooldown or 0, self.obtuseAttackGap)
+    elseif enemy.kind == 4 then
+        d.spinnerCooldown = math.max(d.spinnerCooldown or 0, self.spinnerAttackGap)
+    end
 end
 
 local function formationPosition(x, y, angle, right, forward)
@@ -342,14 +411,14 @@ function Enemies:spawnSquad(ship, themeName)
         addEdge(1, primaryEdge, 0.32, 260, 0, -1, 0.15)
         addEdge(1, oppEdge, 0.68, 260, 0, 1, 0.50)
     elseif theme == "spiral_siege" then
-        addWarp(2, Arena.width * 0.26, Arena.height * 0.30, -1, 0)
-        addWarp(2, Arena.width * 0.74, Arena.height * 0.70, 1, 0.35)
-        addWarp(3, Arena.width * 0.50, Arena.height * 0.26, 1, 0.50)
+        addWarp(4, Arena.width * 0.26, Arena.height * 0.30, -1, 0)
+        addWarp(4, Arena.width * 0.74, Arena.height * 0.70, 1, 0.45)
+        addWarp(2, Arena.width * 0.50, Arena.height * 0.26, 1, 0.35)
         addEdge(1, primaryEdge, 0.35, 260, 0, -1, 0.15)
         addEdge(1, oppEdge, 0.65, 260, 0, 1, 0.55)
     elseif theme == "pincer_assault" then
         addWarp(3, Arena.width * 0.25, Arena.height * 0.50, -1, 0)
-        addWarp(2, Arena.width * 0.75, Arena.height * 0.30, 1, 0.30)
+        addWarp(4, Arena.width * 0.75, Arena.height * 0.30, 1, 0.35)
         addWarp(2, Arena.width * 0.72, Arena.height * 0.72, -1, 0.60)
         addEdge(1, 3, 0.38, 260, 0, -1, 0.20)
         addEdge(1, 4, 0.62, 260, 0, 1, 0.55)
@@ -480,7 +549,7 @@ local function patrolWedge(group, enemy, dt, ship, aimAngle, definition)
             ship.x + math.cos(orbitAngle) * ai.orbitRadius,
             ship.y + math.sin(orbitAngle) * ai.orbitRadius)
         flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.64, steerX, steerY, false)
-        if ai.timer <= 0 and isInsideBounds(group, enemy) and distSq <= 540 * 540 then
+        if ai.timer <= 0 and isInsideBounds(group, enemy) and distSq <= 540 * 540 and group:canStartAttack(enemy) then
             ai.state = "telegraph"
             ai.timer = Enemies.wedgeTelegraphDuration
             local len = math.sqrt(distSq)
@@ -590,7 +659,7 @@ local function patrolEquilateral(group, enemy, dt, ship)
         ai.timer = ai.timer - dt
         local tx, ty = equilateralStrafeTarget(group, enemy, ship, ai)
         flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.62, enemy.sepX, enemy.sepY, false)
-        if ai.timer <= 0 and isInsideBounds(group, enemy) then
+        if ai.timer <= 0 and isInsideBounds(group, enemy) and group:canStartAttack(enemy) then
             ai.state = "track"
             ai.timer = Enemies.laserTrackDuration
             ai.lockGrace = 0.35
@@ -668,7 +737,8 @@ local function patrolObtuse(group, enemy, dt, ship)
         ai.timer = ai.timer - dt
         local tx, ty = obtuseVantage(group, enemy, ship, ai)
         flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.58, enemy.sepX, enemy.sepY, false)
-        if ai.timer <= 0 and isInsideBounds(group, enemy) then
+        if ai.timer <= 0 and isInsideBounds(group, enemy) and group:canStartAttack(enemy) then
+            group:notifyAttackStarted(enemy)
             ai.attackIndex = ai.attackIndex + 1
             ai.nextPattern = (ai.attackIndex % 2 == 1) and "curtain" or "missile_stagger"
             ai.telegraphDuration = (ai.nextPattern == "curtain") and Enemies.obtuseCurtainTelegraph or Enemies.obtuseMissileTelegraph
@@ -710,13 +780,103 @@ local function patrolObtuse(group, enemy, dt, ship)
     end
 end
 
+local function spinnerAnchor(group, enemy, ship, ai)
+    local left, right, top, bottom = patrolBounds(group, enemy)
+    local minX = math.max(left, math.min(right, 175))
+    local maxX = math.max(minX, math.min(right, Arena.width - 175))
+    local minY = math.max(top, math.min(bottom, 150))
+    local maxY = math.max(minY, math.min(bottom, Arena.height - 150))
+    local ax = clamp(ai.anchorX or enemy.x, minX, maxX)
+    local ay = clamp(ai.anchorY or enemy.y, minY, maxY)
+    local dx, dy = ax - ship.x, ay - ship.y
+    local distSq = dx * dx + dy * dy
+    if distSq < 160 * 160 then
+        local oppX = ship.x < Arena.width * 0.5 and (Arena.width * 0.72) or (Arena.width * 0.28)
+        local oppY = ship.y < Arena.height * 0.5 and (Arena.height * 0.72) or (Arena.height * 0.28)
+        ax = clamp(oppX + ai.spinDir * 45, minX, maxX)
+        ay = clamp(oppY - ai.spinDir * 35, minY, maxY)
+        ai.anchorX, ai.anchorY = ax, ay
+    end
+    return ax, ay
+end
+
+local function patrolSpinner(group, enemy, dt, ship)
+    enemy.aimed = false
+    enemy.diving = false
+    local ai = enemy.ai
+    if not ai then
+        local ax = clamp(enemy.x, 175, Arena.width - 175)
+        local ay = clamp(enemy.y, 150, Arena.height - 150)
+        ai = {
+            state = "drift",
+            timer = 0.8 + group.rng() * 0.6 + (enemy.aiDelay or 0),
+            attackIndex = 0,
+            spinDir = enemy.slot or 1,
+            anchorX = ax,
+            anchorY = ay,
+        }
+        enemy.ai = ai
+    end
+
+    if ai.state == "drift" then
+        enemy.telegraph = nil
+        ai.timer = ai.timer - dt
+        local tx, ty = spinnerAnchor(group, enemy, ship, ai)
+        flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.62, enemy.sepX, enemy.sepY, false)
+        if ai.timer <= 0 and isInsideBounds(group, enemy) and group:canStartAttack(enemy) then
+            group:notifyAttackStarted(enemy)
+            ai.attackIndex = ai.attackIndex + 1
+            ai.nextPattern = (ai.attackIndex % 2 == 1) and "spiral" or "ring"
+            ai.telegraphDuration = (ai.nextPattern == "spiral")
+                and Enemies.spinnerSpiralTelegraph or Enemies.spinnerRingTelegraph
+            ai.state = "telegraph"
+            ai.timer = ai.telegraphDuration
+            enemy.telegraph = {
+                kind = ai.nextPattern,
+                progress = 0,
+                angle = enemy.angle - math.pi / 2,
+            }
+        end
+    elseif ai.state == "telegraph" then
+        ai.timer = ai.timer - dt
+        pilot(enemy, dt, 0, 0, enemy.angle + ai.spinDir * 0.45, false)
+        local progress = clamp(1 - ai.timer / ai.telegraphDuration, 0, 1)
+        enemy.telegraph = {
+            kind = ai.nextPattern,
+            progress = progress,
+            angle = enemy.angle - math.pi / 2,
+        }
+        if ai.timer <= 0 then
+            ai.burst = group.fire:shoot(enemy, ship, {
+                pattern = ai.nextPattern,
+                angle = enemy.angle - math.pi / 2,
+            })
+            enemy.telegraph = nil
+            ai.state = "firing"
+            ai.timer = 1.05
+        end
+    else
+        enemy.telegraph = nil
+        ai.timer = ai.timer - dt
+        pilot(enemy, dt, 0, 0, enemy.angle + ai.spinDir * 0.45, false)
+        if not ai.burst or (ai.burst.remaining or 0) <= 0 or ai.timer <= 0 then
+            ai.burst = nil
+            if group.rng() < 0.4 then ai.spinDir = -ai.spinDir end
+            ai.state = "drift"
+            ai.timer = 1.35 + group.rng() * 0.65
+        end
+    end
+end
+
 local function patrol(group, enemy, dt, ship, aimAngle, definition)
     if enemy.kind == 1 then
         patrolWedge(group, enemy, dt, ship, aimAngle, definition)
     elseif enemy.kind == 2 then
         patrolEquilateral(group, enemy, dt, ship)
-    else
+    elseif enemy.kind == 3 then
         patrolObtuse(group, enemy, dt, ship)
+    else
+        patrolSpinner(group, enemy, dt, ship)
     end
 end
 
@@ -1067,6 +1227,7 @@ local deathPalettes = {
     [1] = { { 1.0, 0.588, 0.471 }, { 1.0, 0.910, 0.820 }, { 0.729, 0.176, 0.275 } },
     [2] = { { 1.0, 0.24, 0.62 }, { 1.0, 0.78, 0.92 }, { 0.68, 0.22, 0.36 } },
     [3] = { { 1.0, 0.78, 0.28 }, { 1.0, 0.96, 0.74 }, { 1.0, 0.36, 0.22 } },
+    [4] = { { 0.84, 0.36, 1.0 }, { 0.96, 0.88, 1.0 }, { 0.48, 0.14, 0.68 } },
 }
 
 local function moveEnemyStep(group, enemy, enemyIndex, dt, ship, aimAngle, motion, elapsed)
@@ -1212,6 +1373,19 @@ end
 function Enemies:update(dt, ship, aimAngle, camera, width, height)
     if dt <= 0 then return end
     self:updateEffects(dt)
+    if self.director then
+        local d = self.director
+        d.obtuseCooldown = math.max(0, (d.obtuseCooldown or 0) - dt)
+        d.spinnerCooldown = math.max(0, (d.spinnerCooldown or 0) - dt)
+        d.wrapGrace = math.max(0, (d.wrapGrace or 0) - dt)
+        local wrapCount = (ship and ship.wrapEvents) or 0
+        if d.lastWrapEvents == nil then
+            d.lastWrapEvents = wrapCount
+        elseif wrapCount > d.lastWrapEvents then
+            d.lastWrapEvents = wrapCount
+            d.wrapGrace = math.max(d.wrapGrace, self.wrapGraceDuration)
+        end
+    end
     if camera then
         self.view.left, self.view.top = camera:screenToWorld(0, 0, width, height)
         self.view.right, self.view.bottom = camera:screenToWorld(width, height, width, height)
@@ -1279,7 +1453,7 @@ function Enemies:spawnDeathEffect(enemy)
         color = palette[1],
     }
 
-    local count = enemy.kind == 3 and 30 or (enemy.kind == 2 and 20 or 14)
+    local count = enemy.kind == 3 and 30 or (enemy.kind == 4 and 24 or (enemy.kind == 2 and 20 or 14))
     local speedScale = enemy.kind == 3 and 1.2 or 1.0
     local evx, evy = (enemy.vx or 0) * 0.3, (enemy.vy or 0) * 0.3
     local ex, ey = enemy.x or 0, enemy.y or 0
@@ -1349,7 +1523,7 @@ function Enemies:destroy(index)
     enemy.telegraph = nil
     enemy.diving = false
     self:spawnDeathEffect(enemy)
-    local pitchScale = enemy.kind == 1 and 1.14 or (enemy.kind == 3 and 0.80 or 1.0)
+    local pitchScale = enemy.kind == 1 and 1.14 or (enemy.kind == 3 and 0.80 or (enemy.kind == 4 and 0.92 or 1.0))
     Sfx.play("enemy_destroy", pitchScale)
     table.remove(self.items, index)
     self.kills = self.kills + 1
@@ -1648,6 +1822,9 @@ local function getHullMeshes(g)
         [3] = {
             bloom = radialGlowMesh(g, 0, 0, 38, 28, { 1.0, 0.169, 0.227, 0.26 }, { 1.0, 0.169, 0.227, 0.0 }),
         },
+        [4] = {
+            bloom = radialGlowMesh(g, 0, 0, 34, 24, { 0.82, 0.34, 1.0, 0.24 }, { 0.82, 0.34, 1.0, 0.0 }),
+        },
     }
     return hullMeshes
 end
@@ -1870,7 +2047,7 @@ function Enemies.drawHull(kind, aimed, time, opts)
 
         g.pop()
 
-    else
+    elseif kind == 3 then
         -- OBTUSE: RAZOR SPECTRE (flat sleek crimson Spectre Lance in Nova Drift tone)
         g.push("all")
 
@@ -1933,6 +2110,65 @@ function Enemies.drawHull(kind, aimed, time, opts)
         g.setLineWidth(0.8)
         g.setColor(1.0, 0.910, 0.902, aimed and 0.96 or 0.84)
         drawObtuseSpectrePlates(g, "line")
+
+        g.pop()
+    else
+        -- SPINNER: VIOLET GYRE (dark amethyst octagon + 4 rotating crimson-violet diamond petals + bright core)
+        local bloomPulse = 0.86 + 0.14 * pulse
+        if meshes and meshes[4] then
+            g.setColor(1, 1, 1, bloomPulse)
+            g.draw(meshes[4].bloom)
+        else
+            g.setColor(0.82, 0.34, 1.0, 0.16 * bloomPulse)
+            g.circle("fill", 0, 0, 28)
+        end
+
+        g.push("all")
+        g.setLineJoin("bevel")
+        local spin = t * 1.6
+        g.rotate(spin)
+
+        g.setBlendMode("add")
+        for _, layer in ipairs({
+            { width = 6.5, alpha = 0.10 },
+            { width = 3.2, alpha = 0.22 },
+        }) do
+            g.setColor(0.86, 0.34, 1.0, layer.alpha * bloomPulse)
+            g.setLineWidth(layer.width)
+            for petal = 0, 3 do
+                g.push()
+                g.rotate(petal * math.pi * 0.5)
+                g.polygon("line", 0, -22, 6.2, -9.5, 0, -5.2, -6.2, -9.5)
+                g.pop()
+            end
+        end
+        g.setBlendMode("alpha")
+
+        -- Dark amethyst octagonal core chassis
+        g.setColor(0.20, 0.08, 0.30, 1)
+        g.polygon("fill", 0, -13, 9.2, -9.2, 13, 0, 9.2, 9.2, 0, 13, -9.2, 9.2, -13, 0, -9.2, -9.2)
+        g.setLineWidth(1.0)
+        g.setColor(0.92, 0.56, 1.0, 0.9)
+        g.polygon("line", 0, -13, 9.2, -9.2, 13, 0, 9.2, 9.2, 0, 13, -9.2, 9.2, -13, 0, -9.2, -9.2)
+
+        -- 4 crimson-violet petals
+        for petal = 0, 3 do
+            g.push()
+            g.rotate(petal * math.pi * 0.5)
+            g.setColor(0.86, 0.32, 0.92, 1)
+            g.polygon("fill", 0, -22, 6.2, -9.5, 0, -5.2, -6.2, -9.5)
+            g.setLineWidth(0.9)
+            g.setColor(1.0, 0.84, 0.98, 0.92)
+            g.polygon("line", 0, -22, 6.2, -9.5, 0, -5.2, -6.2, -9.5)
+            g.pop()
+        end
+
+        -- Inner coral-magenta emitter ring and white-lavender core
+        g.setLineWidth(1.4)
+        g.setColor(1.0, 0.44, 0.86, 0.92 * pulse)
+        g.circle("line", 0, 0, 7.2)
+        g.setColor(0.98, 0.92, 1.0, 1)
+        g.circle("fill", 0, 0, 3.6)
 
         g.pop()
     end
@@ -2085,6 +2321,24 @@ local function drawTelegraph(g, enemy, time)
         g.setLineWidth(1.4)
         g.setColor(1.0, 0.78, 0.24, 0.28 + 0.32 * p)
         g.arc("line", "open", enemy.x, enemy.y, (enemy.radius or 28) + 14, aim - math.rad(36), aim + math.rad(36))
+    elseif tel.kind == "spiral" then
+        local baseA = (tel.angle or 0) + (time or 0) * 4.5
+        local r1, r2 = (enemy.radius or 22) * 0.6, (enemy.radius or 22) + 16 - 6 * p
+        g.setLineWidth(1.6)
+        g.setColor(0.86, 0.42, 1.0, 0.48 + 0.42 * p)
+        for arm = 0, 3 do
+            local a = baseA + arm * (math.pi * 0.5)
+            g.line(enemy.x + math.cos(a) * r1, enemy.y + math.sin(a) * r1,
+                enemy.x + math.cos(a) * r2, enemy.y + math.sin(a) * r2)
+        end
+    elseif tel.kind == "ring" then
+        local r = (enemy.radius or 22) + 18 - 10 * p
+        g.setLineWidth(1.5)
+        g.setColor(0.86, 0.42, 1.0, 0.45 + 0.45 * p)
+        for seg = 0, 7 do
+            local a0 = (time or 0) * 2.5 + seg * (tau / 8)
+            g.arc("line", "open", enemy.x, enemy.y, r, a0, a0 + tau / 14)
+        end
     end
 end
 
@@ -2238,15 +2492,19 @@ function Enemies:draw(time)
             g.pop()
             if enemy.hp and enemy.maxHp and enemy.hp > 0 and enemy.hp < enemy.maxHp then
                 local ratio = math.max(0, math.min(1, enemy.hp / enemy.maxHp))
-                local bw = enemy.kind == 3 and 44 or (enemy.kind == 2 and 32 or 24)
+                local bw = enemy.kind == 3 and 44 or ((enemy.kind == 2 or enemy.kind == 4) and 32 or 24)
                 local bh = 3.5
                 local bx = enemy.x - bw * 0.5
                 local by = enemy.y - (enemy.radius or 20) - 10
                 g.setColor(0.03, 0.04, 0.08, 0.82)
                 g.rectangle("fill", bx - 1, by - 1, bw + 2, bh + 2, 1.5, 1.5)
-                local fillG = enemy.kind == 3 and (0.45 + 0.35 * ratio) or (0.24 + 0.36 * ratio)
-                local fillB = enemy.kind == 3 and 0.20 or 0.28
-                g.setColor(1.0, fillG, fillB, 0.95)
+                if enemy.kind == 4 then
+                    g.setColor(0.84, 0.34 + 0.30 * ratio, 1.0, 0.95)
+                else
+                    local fillG = enemy.kind == 3 and (0.45 + 0.35 * ratio) or (0.24 + 0.36 * ratio)
+                    local fillB = enemy.kind == 3 and 0.20 or 0.28
+                    g.setColor(1.0, fillG, fillB, 0.95)
+                end
                 g.rectangle("fill", bx, by, math.max(2, bw * ratio), bh, 1, 1)
                 g.setColor(1, 1, 1, 0.25)
                 g.setLineWidth(0.7)

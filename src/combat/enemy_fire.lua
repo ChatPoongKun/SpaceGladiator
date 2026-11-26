@@ -11,9 +11,10 @@ local missileTurnRate = 3.35
 local missileTurnRamp = 0.42
 local tau = 2 * math.pi
 local bullet = {speed = 440, lifetime = 1.65, radius = 3.5, damage = 6, trail = 15, color = {1, 0.45, 0.23}, replayKind = 1}
-local laser = {speed = 1150, lifetime = 0.95, radius = 4.5, damage = 14, trail = 56, color = {1, 0.24, 0.65}, isLaser = true, replayKind = 2}
-local missile = {radius = 5, damage = 8, trail = 24, color = {1, 0.28, 0.28}, isMissile = true, replayKind = 3}
-local curtain = {speed = 255, lifetime = 3.8, radius = 5.0, damage = 7, trail = 10, color = {1.0, 0.78, 0.24}, isOrb = true, replayKind = 4}
+local laser = {speed = 1150, lifetime = 0.95, radius = 4.5, damage = 14, trail = 56, color = {1, 0.24, 0.65}, isLaser = true, grazable = true, replayKind = 2}
+local missile = {radius = 5, damage = 8, trail = 24, color = {1, 0.28, 0.28}, isMissile = true, grazable = true, replayKind = 3}
+local curtain = {speed = 255, lifetime = 3.8, radius = 5.0, damage = 7, trail = 10, color = {1.0, 0.78, 0.24}, isOrb = true, grazable = true, replayKind = 4}
+local spiral = {speed = 210, lifetime = 4.2, radius = 5.0, damage = 6, trail = 10, color = {0.82, 0.34, 1.0}, isOrb = true, grazable = true, replayKind = 5}
 
 EnemyFire.wedgeSpread = math.rad(16)
 EnemyFire.railCount = 3
@@ -24,6 +25,14 @@ EnemyFire.curtainEvenAngles = {-9, 9, -27, 27, -45, 45}
 EnemyFire.missileStaggerInterval = 0.11
 EnemyFire.missileStaggerOrder = {-58, 58, -34, 34, -12, 12}
 EnemyFire.missileFlankOffsets = {-48, 48, -26, 26, -10, 10}
+EnemyFire.spiralArms = 4
+EnemyFire.spiralWaves = 5
+EnemyFire.spiralInterval = 0.15
+EnemyFire.spiralStepRad = math.rad(18)
+EnemyFire.ringCount = 10
+EnemyFire.ringWaves = 2
+EnemyFire.ringInterval = 0.32
+EnemyFire.ringSpeed = 225
 
 local wedgeFanOffsets = {0, -EnemyFire.wedgeSpread, EnemyFire.wedgeSpread}
 
@@ -52,9 +61,10 @@ local function launch(fire, enemy, angle, profile, delay)
     return shot
 end
 
-local function launchAngle(fire, enemy, angle, profile, delay, sfxName, pitchScale)
+local function launchAngle(fire, enemy, angle, profile, delay, sfxName, pitchScale, speedOverride)
     local shot = launch(fire, enemy, angle, profile, delay)
-    shot.vx, shot.vy = shot.vx * profile.speed, shot.vy * profile.speed
+    local spd = speedOverride or profile.speed
+    shot.vx, shot.vy = shot.vx * spd, shot.vy * spd
     shot.lifetime = profile.lifetime
     if sfxName then
         Sfx.play(sfxName, pitchScale)
@@ -104,7 +114,7 @@ function EnemyFire:shoot(enemy, ship, opts)
         }
         self.bursts[#self.bursts + 1] = burst
         return burst
-    else
+    elseif enemy.kind == 3 then
         local baseAngle, distance = bearing(enemy, targetX, targetY)
         if opts.pattern == "curtain" then
             local aimAngle = opts.angle or baseAngle
@@ -143,6 +153,39 @@ function EnemyFire:shoot(enemy, ship, opts)
             end
             Sfx.play("enemyMissile")
             return nil
+        end
+    else
+        local baseAngle = opts.angle or (enemy.angle - math.pi / 2)
+        if opts.pattern == "ring" then
+            for k = 0, EnemyFire.ringCount - 1 do
+                local a = baseAngle + k * (tau / EnemyFire.ringCount)
+                launchAngle(self, enemy, a, spiral, 0, nil, nil, EnemyFire.ringSpeed)
+            end
+            Sfx.play("enemyProjectile", 0.76)
+            local burst = {
+                kind = "ring",
+                enemy = enemy,
+                baseAngle = baseAngle + math.pi / EnemyFire.ringCount,
+                remaining = EnemyFire.ringWaves - 1,
+                delay = EnemyFire.ringInterval,
+            }
+            self.bursts[#self.bursts + 1] = burst
+            return burst
+        else
+            for arm = 0, EnemyFire.spiralArms - 1 do
+                local a = baseAngle + arm * (tau / EnemyFire.spiralArms)
+                launchAngle(self, enemy, a, spiral, 0)
+            end
+            Sfx.play("enemyProjectile", 0.88)
+            local burst = {
+                kind = "spiral",
+                enemy = enemy,
+                baseAngle = baseAngle + EnemyFire.spiralStepRad,
+                remaining = EnemyFire.spiralWaves - 1,
+                delay = EnemyFire.spiralInterval,
+            }
+            self.bursts[#self.bursts + 1] = burst
+            return burst
         end
     end
 end
@@ -308,7 +351,7 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
         if step > 0 then
             local oldX, oldY = shot.x, shot.y
             moveShot(shot, step)
-            if missileSteps and shot.profile == missile then
+            if missileSteps and shot.profile.grazable then
                 missileSteps[#missileSteps + 1] = {shot = shot, oldX = oldX, oldY = oldY, start = start, step = step}
             end
             if not ship:isDestroyed() and not ship:isInvulnerable() then
@@ -369,7 +412,8 @@ local function stepShots(fire, ship, motion, elapsed, finish, gladiator)
                         local py = (motion.y + motion.vy * at) % Arena.height
                         local grazeX = px + (rx + vx * minT) * 0.5
                         local grazeY = py + (ry + vy * minT) * 0.5
-                        if gladiator:observeMissileThreat(clearance, relativeSpeed, grazeX, grazeY) then
+                        local label = shot.profile.isMissile and "MISSILE DODGE" or "BULLET GRAZE"
+                        if gladiator:observeMissileThreat(clearance, relativeSpeed, grazeX, grazeY, label) then
                             missileThreatened = true
                         end
                     end
@@ -433,6 +477,24 @@ function EnemyFire:update(dt, ship, gladiator)
                     burst.index = burst.index + 1
                     burst.remaining = burst.remaining - 1
                     burst.delay = burst.delay + EnemyFire.missileStaggerInterval
+                elseif burst.kind == "spiral" then
+                    for arm = 0, EnemyFire.spiralArms - 1 do
+                        local a = burst.baseAngle + arm * (tau / EnemyFire.spiralArms)
+                        launchAngle(self, burst.enemy, a, spiral, shotDelay)
+                    end
+                    Sfx.play("enemyProjectile", 0.88)
+                    burst.baseAngle = burst.baseAngle + EnemyFire.spiralStepRad
+                    burst.remaining = burst.remaining - 1
+                    burst.delay = burst.delay + EnemyFire.spiralInterval
+                elseif burst.kind == "ring" then
+                    for k = 0, EnemyFire.ringCount - 1 do
+                        local a = burst.baseAngle + k * (tau / EnemyFire.ringCount)
+                        launchAngle(self, burst.enemy, a, spiral, shotDelay, nil, nil, EnemyFire.ringSpeed)
+                    end
+                    Sfx.play("enemyProjectile", 0.80)
+                    burst.baseAngle = burst.baseAngle + math.pi / EnemyFire.ringCount
+                    burst.remaining = burst.remaining - 1
+                    burst.delay = burst.delay + EnemyFire.ringInterval
                 else
                     burst.remaining = 0
                 end

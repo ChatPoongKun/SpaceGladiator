@@ -122,6 +122,7 @@ local enemyShotProfiles = {
     [2] = { speed = 1150, lifetime = 0.95, radius = 4.5, trail = 56, color = { 1, 0.24, 0.65 }, isLaser = true },
     [3] = { radius = 5, trail = 24, color = { 1, 0.28, 0.28 } },
     [4] = { speed = 255, lifetime = 3.8, radius = 5.0, trail = 10, color = { 1.0, 0.78, 0.24 }, isOrb = true },
+    [5] = { speed = 210, lifetime = 4.2, radius = 5.0, trail = 10, color = { 0.82, 0.34, 1.0 }, isOrb = true },
 }
 
 local explosionColors = { glow = { 1, 0.38, 0.10 }, ring = { 1, 0.76, 0.32 }, core = { 1, 0.94, 0.66 } }
@@ -132,6 +133,7 @@ local function classifyEnemyShotProfile(profile)
     if not profile then return 1 end
     if profile.replayKind then return profile.replayKind end
     if profile.isLaser or profile.speed == 1400 or profile.speed == 1150 or profile.radius == 4 then return 2 end
+    if profile.isOrb and profile.color and profile.color[3] and profile.color[3] > 0.6 then return 5 end
     if profile.isOrb or profile.trail == 10 then return 4 end
     if profile.isMissile or profile.radius == 5 or profile.trail == 24 then return 3 end
     return 1

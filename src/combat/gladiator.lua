@@ -210,10 +210,10 @@ function Gladiator:recordDestroy(enemyPower, playerPower, x, y)
     return self:award("destroy", points, "DESTROY", x, y)
 end
 
-function Gladiator:recordMissileDodge(clearance, relativeSpeed, x, y)
+function Gladiator:recordMissileDodge(clearance, relativeSpeed, x, y, label)
     if (relativeSpeed or 0) < self.minRelativeSpeed then return 0 end
     local points = Gladiator.evasionPoints(clearance, self.missileMargin, relativeSpeed)
-    local awarded = self:award("missileDodge", points, "MISSILE DODGE", x, y)
+    local awarded = self:award("missileDodge", points, label or "MISSILE DODGE", x, y)
     if awarded > 0 then self.evasionCount = (self.evasionCount or 0) + 1; Sfx.play("evasion") end
     return awarded
 end
@@ -246,7 +246,7 @@ function Gladiator:syncPlayerDamage(ship)
     end
 end
 
-function Gladiator:observeMissileThreat(clearance, relativeSpeed, x, y)
+function Gladiator:observeMissileThreat(clearance, relativeSpeed, x, y, label)
     if self.evasionLockout > 0 then
         self.missileSituation = nil
         return false
@@ -255,6 +255,7 @@ function Gladiator:observeMissileThreat(clearance, relativeSpeed, x, y)
         return false
     end
     local speed = relativeSpeed or 0
+    local threatLabel = label or "MISSILE DODGE"
     if speed < self.minRelativeSpeed then
         if self.missileSituation then self.missileSituation.quietTime = 0 end
         return true
@@ -268,9 +269,13 @@ function Gladiator:observeMissileThreat(clearance, relativeSpeed, x, y)
             y = y,
             epoch = self.damageEpoch,
             quietTime = 0,
+            label = threatLabel,
         }
     else
         sit.quietTime = 0
+        if threatLabel == "MISSILE DODGE" then
+            sit.label = "MISSILE DODGE"
+        end
         if clearance < sit.minClearance
             or (clearance == sit.minClearance and speed > sit.relativeSpeed) then
             sit.minClearance = clearance
@@ -305,10 +310,11 @@ function Gladiator:advanceMissileSituation(dt, ship, threatened)
             relativeSpeed = sit.relativeSpeed,
             x = sit.x,
             y = sit.y,
+            label = sit.label,
         }
         return 0
     end
-    return self:recordMissileDodge(sit.minClearance, sit.relativeSpeed, sit.x, sit.y)
+    return self:recordMissileDodge(sit.minClearance, sit.relativeSpeed, sit.x, sit.y, sit.label)
 end
 
 function Gladiator:beginEvasionBatch(ship)
@@ -329,7 +335,7 @@ function Gladiator:endEvasionBatch(ship)
     end
     for _, item in ipairs(pending) do
         if item.category == "missileDodge" then
-            self:recordMissileDodge(item.clearance, item.relativeSpeed, item.x, item.y)
+            self:recordMissileDodge(item.clearance, item.relativeSpeed, item.x, item.y, item.label)
         else
             self:recordAerobatics(item.clearance, item.relativeSpeed, item.x, item.y)
         end
