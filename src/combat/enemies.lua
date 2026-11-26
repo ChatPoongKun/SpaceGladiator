@@ -9,7 +9,6 @@ local tau = 2 * math.pi
 local exitMargin = 155
 local wingAlignment = math.rad(6)
 local attackAlignment = math.rad(6)
-local contactDamage = 20
 local collisionIterations = 4
 local enemyPushBase = 80
 local playerPushBase = 110
@@ -20,6 +19,16 @@ local playerMaxPushSpeed = 260
 Enemies.spawnRate = 1 / 4
 Enemies.maxCount = 15
 Enemies.patrolDuration = 10
+Enemies.collisionMinSpeed = 60
+Enemies.collisionRefSpeed = 300
+Enemies.collisionSpeedExponent = 1.25
+Enemies.collisionMaxSpeedFactor = 2.6
+Enemies.collisionMomentumBaseSpeed = 120
+Enemies.collisionRefMass = 100 / 60
+Enemies.collisionEnemyDamageScale = 14
+Enemies.collisionPlayerDamageScale = 18
+Enemies.collisionCooldown = 0.30
+Enemies.collisionRamKillKnockMult = 0.40
 Enemies.types = {
     {
         name = "WEDGE", vertices = {0, -15, 10, 10, 0, 5, -10, 10},
@@ -131,6 +140,7 @@ function Enemies:spawn(ship, kindIndex, options)
     enemy.evadeTime, enemy.evadeCooldown = 0, 0
     enemy.sepX, enemy.sepY = 0, 0
     enemy.aimed = false
+    enemy.collisionCooldown = 0
     local entryTime = options and options.entryTime
     enemy.phase = entryTime and "entering" or "patrol"
     enemy.phaseRemaining = entryTime or self.patrolDuration
@@ -422,12 +432,45 @@ local function wrappedDelta(distance, extent)
     return (distance + extent / 2) % extent - extent / 2
 end
 
-local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
-    if ship:isDestroyed() then return end
+function Enemies.computeCollisionDamage(ship, enemy, shipVx, shipVy, enemyVx, enemyVy, nx, ny)
+    local nLenSq = (nx or 0) * (nx or 0) + (ny or 0) * (ny or 0)
+    if nLenSq <= 1e-8 then return 0, 0, 0 end
+    if math.abs(nLenSq - 1) > 1e-6 then
+        local nLen = math.sqrt(nLenSq)
+        nx, ny = nx / nLen, ny / nLen
+    end
+    local svx, svy = shipVx or 0, shipVy or 0
+    local evx, evy = enemyVx or 0, enemyVy or 0
+    local closingSpeed = math.max(0, -((svx - evx) * nx + (svy - evy) * ny))
+    if closingSpeed < Enemies.collisionMinSpeed then
+        return 0, 0, closingSpeed
+    end
+    local speedFactor = math.min(Enemies.collisionMaxSpeedFactor,
+        ((closingSpeed - Enemies.collisionMinSpeed) / Enemies.collisionRefSpeed) ^ Enemies.collisionSpeedExponent)
+    local playerIn = math.max(0, -(svx * nx + svy * ny))
+    local enemyIn = math.max(0, evx * nx + evy * ny)
+    local playerMass = math.max(Ship.minMass or 0.5, (ship and ship.mass) or Ship.mass)
+    local enemyMass = math.max(0.1, (enemy and enemy.mass) or 1.0)
+    local v0 = Enemies.collisionMomentumBaseSpeed
+    local pPlayer = playerMass * (v0 + playerIn)
+    local pEnemy = enemyMass * (v0 + enemyIn)
+    local pSum = pPlayer + pEnemy
+    local ratioToEnemy = pSum > 0 and (2 * pPlayer / pSum) or 1
+    local ratioToPlayer = pSum > 0 and (2 * pEnemy / pSum) or 1
+    local mRef = Enemies.collisionRefMass
+    local rawEnemyDmg = Enemies.collisionEnemyDamageScale * speedFactor * math.sqrt(playerMass / mRef) * ratioToEnemy
+    local rawPlayerDmg = Enemies.collisionPlayerDamageScale * speedFactor * math.sqrt(enemyMass / mRef) * ratioToPlayer
+    local enemyDmg = rawEnemyDmg > 0 and math.max(1, math.floor(rawEnemyDmg + 0.5)) or 0
+    local playerDmg = rawPlayerDmg > 0 and math.max(1, math.floor(rawPlayerDmg + 0.5)) or 0
+    return playerDmg, enemyDmg, closingSpeed
+end
+
+local function checkContact(group, enemy, enemyIndex, ship, x, y, motion, elapsed, step, gladiator)
+    if ship:isDestroyed() then return false end
     if ship:isInvulnerable() then
         enemy.contactRadius = nil
         enemy.nearMiss = nil
-        return
+        return false
     end
     local dx, dy = enemy.x - x, enemy.y - y
     local margin = enemy.radius
@@ -438,7 +481,7 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     if first > last then
         enemy.contactRadius = nil
         if gladiator then gladiator:finishNearMiss(enemy, "aerobatics", ship.x, ship.y - ship:hitRadius() - 8) end
-        return
+        return false
     end
 
     local shipX, shipY = motion.x + motion.vx * elapsed, motion.y + motion.vy * elapsed
@@ -453,11 +496,66 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
     local collided = enemy.contactRadius ~= nil
     local contactT = not enemy.contactRadius and Collision.circleEntry(startRx, startRy, segVx, segVy, radius)
     if contactT then
-        local knockX = -(startRx + segVx * contactT)
-        local knockY = -(startRy + segVy * contactT)
-        ship:takeDamage(contactDamage, knockX, knockY)
-        if gladiator then gladiator:syncPlayerDamage(ship) end
         collided = true
+        if not ship:hasShield() and not ship:isInvulnerable() and (enemy.collisionCooldown or 0) <= 0 then
+            local svx, svy = motion.vx or 0, motion.vy or 0
+            if svx * svx + svy * svy < 1e-6 then
+                svx, svy = ship:worldVelocity()
+            end
+            local evx = step > 0 and (dx / step) or 0
+            local evy = step > 0 and (dy / step) or 0
+            if evx * evx + evy * evy < 1e-6 then
+                evx = (enemy.vx or 0) + (enemy.pushVx or 0)
+                evy = (enemy.vy or 0) + (enemy.pushVy or 0)
+            end
+            local knockX = -(startRx + segVx * contactT)
+            local knockY = -(startRy + segVy * contactT)
+            local nLenSq = knockX * knockX + knockY * knockY
+            local nx, ny
+            if nLenSq > 1e-8 then
+                local nLen = math.sqrt(nLenSq)
+                nx, ny = knockX / nLen, knockY / nLen
+            else
+                local rvx, rvy = -(svx - evx), -(svy - evy)
+                local rLenSq = rvx * rvx + rvy * rvy
+                if rLenSq > 1e-8 then
+                    local rLen = math.sqrt(rLenSq)
+                    nx, ny = rvx / rLen, rvy / rLen
+                else
+                    nx, ny = 1, 0
+                end
+            end
+            knockX, knockY = nx, ny
+
+            local playerDmg, enemyDmg = Enemies.computeCollisionDamage(ship, enemy, svx, svy, evx, evy, nx, ny)
+            if enemyDmg > 0 or playerDmg > 0 then
+                enemy.collisionCooldown = Enemies.collisionCooldown
+                local idx = (group.items[enemyIndex] == enemy) and enemyIndex or nil
+                if not idx then
+                    for k = 1, #group.items do
+                        if group.items[k] == enemy then
+                            idx = k
+                            break
+                        end
+                    end
+                end
+                local destroyed = false
+                if enemyDmg > 0 and idx then
+                    _, destroyed = group:damage(idx, enemyDmg)
+                    if not destroyed then
+                        Sfx.play("impact")
+                    end
+                end
+                if playerDmg > 0 then
+                    local knockMult = destroyed and Enemies.collisionRamKillKnockMult or 1
+                    ship:takeDamage(playerDmg, knockX, knockY, knockMult)
+                    if gladiator then gladiator:syncPlayerDamage(ship) end
+                end
+                if destroyed then
+                    return true
+                end
+            end
+        end
     end
 
     -- Keep the contact latched until separation, even if the shield broke on impact.
@@ -476,6 +574,7 @@ local function checkContact(enemy, ship, x, y, motion, elapsed, step, gladiator)
         gladiator:trackNearMiss(enemy, minDist, endDist, radius, relativeSpeed, "aerobatics", collided,
             grazeX, grazeY)
     end
+    return false
 end
 
 local function addEntityPush(entity, dvx, dvy, maxSpeed)
@@ -630,7 +729,7 @@ local function resolveCollisions(items, ship, includePlayer)
     end
 end
 
-local function moveEnemyStep(group, enemy, dt, ship, aimAngle, motion, elapsed)
+local function moveEnemyStep(group, enemy, enemyIndex, dt, ship, aimAngle, motion, elapsed)
     local definition = group.types[enemy.kind]
     local view = group.view
     local remaining = dt
@@ -664,7 +763,12 @@ local function moveEnemyStep(group, enemy, dt, ship, aimAngle, motion, elapsed)
                 end
             end
         end
-        if step > 0 then checkContact(enemy, ship, x, y, motion, localElapsed, step, group.gladiator) end
+        if step > 0 then
+            enemy.collisionCooldown = math.max(0, (enemy.collisionCooldown or 0) - step)
+            if checkContact(group, enemy, enemyIndex, ship, x, y, motion, localElapsed, step, group.gladiator) or enemy.dead then
+                return false
+            end
+        end
         localElapsed = localElapsed + step
         remaining = remaining - step
     end
@@ -682,7 +786,7 @@ local function advance(group, first, totalDt, ship, aimAngle, motion)
         local substep = math.min(remaining, 1 / 60)
         for i = #group.items, first, -1 do
             local enemy = group.items[i]
-            if moveEnemyStep(group, enemy, substep, ship, aimAngle, motion, elapsed) then
+            if moveEnemyStep(group, enemy, i, substep, ship, aimAngle, motion, elapsed) then
                 enemy.dead = true
                 table.remove(group.items, i)
             end

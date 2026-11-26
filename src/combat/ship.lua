@@ -30,8 +30,17 @@ Ship.hitKnockbackSpeed = 190
 Ship.hullKnockbackSpeed = 270
 Ship.knockbackDecay = 14
 Ship.mass = 1.6
+Ship.massWeightScale = 60
+Ship.minMass = 0.5
 Ship.pushDecay = 8
 Ship.maxPushSpeed = 260
+
+function Ship.massFromWeight(weight)
+    if not weight or weight <= 0 then
+        return Ship.mass
+    end
+    return math.max(Ship.minMass or 0.5, weight / (Ship.massWeightScale or 60))
+end
 
 function Ship.new(width, height)
     return setmetatable({
@@ -130,6 +139,7 @@ function Ship:applyBuild(build, opts)
         self.maxBattery = build.maxBattery or 0
         self.batteryRecharge = build.batteryRecharge or 0
         self.totalWeight = build.totalWeight or 0
+        self.mass = Ship.massFromWeight(self.totalWeight)
         self.maxSpeed = build.maxSpeed or 0
         self.thrust = build.thrust ~= nil and build.thrust or Ship.thrust
         self.boostSpeed = build.boostSpeed or 0
@@ -155,6 +165,10 @@ function Ship:applyBuild(build, opts)
         self.thrustBatteryCost = (self.baseThrustBatteryCost or 0) + (build.thrustBatteryCostBonus or 0)
         self.wrapBonusSpeed = (self.baseWrapBonusSpeed + (build.wrapBonusSpeedAdd or 0)) * (build.wrapSpeedMult or 1)
         self.wrapInvulnDuration = build.wrapInvulnDuration or 0
+        if build.totalWeight and build.totalWeight > 0 then
+            self.totalWeight = build.totalWeight
+            self.mass = Ship.massFromWeight(self.totalWeight)
+        end
     end
 
     if resetVitals then
@@ -194,8 +208,9 @@ function Ship:applyKnockback(dx, dy, speed)
     end
 end
 
-function Ship:takeDamage(amount, knockX, knockY)
+function Ship:takeDamage(amount, knockX, knockY, knockMult)
     if amount <= 0 or self:isDestroyed() or self:isInvulnerable() then return nil end
+    local kMult = knockMult ~= nil and math.max(0, knockMult) or 1
     self.shieldRegenTimer = self.shieldRegenDelay or Ship.shieldRegenDelay
     self.damageCount = (self.damageCount or 0) + 1
     local hitLayer = nil
@@ -208,7 +223,7 @@ function Ship:takeDamage(amount, knockX, knockY)
     end
     if amount <= 0 then
         Sfx.play("player_hit_shield")
-        self:applyKnockback(knockX, knockY, self.hitKnockbackSpeed or Ship.hitKnockbackSpeed)
+        self:applyKnockback(knockX, knockY, (self.hitKnockbackSpeed or Ship.hitKnockbackSpeed) * kMult)
         self.lastHitLayer = hitLayer
         return hitLayer
     end
@@ -240,7 +255,7 @@ function Ship:takeDamage(amount, knockX, knockY)
 
     local kbSpeed = hitLayer == "hull" and (self.hullKnockbackSpeed or Ship.hullKnockbackSpeed)
         or (self.hitKnockbackSpeed or Ship.hitKnockbackSpeed)
-    self:applyKnockback(knockX, knockY, kbSpeed)
+    self:applyKnockback(knockX, knockY, kbSpeed * kMult)
     self.lastHitLayer = hitLayer
     self:grantInvulnerability(self.hitInvulnDuration)
     return hitLayer
