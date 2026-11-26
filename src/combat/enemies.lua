@@ -7,8 +7,6 @@ local Enemies = {}
 Enemies.__index = Enemies
 local tau = 2 * math.pi
 local exitMargin = 155
-local wingAlignment = math.rad(6)
-local attackAlignment = math.rad(6)
 local collisionIterations = 4
 local enemyPushBase = 80
 local playerPushBase = 110
@@ -29,6 +27,15 @@ Enemies.collisionEnemyDamageScale = 14
 Enemies.collisionPlayerDamageScale = 18
 Enemies.collisionCooldown = 0.30
 Enemies.collisionRamKillKnockMult = 0.40
+Enemies.wedgeTelegraphDuration = 0.45
+Enemies.wedgeDiveDuration = 0.72
+Enemies.wedgeRecoverDuration = 0.75
+Enemies.laserTrackDuration = 0.65
+Enemies.laserLockDuration = 0.25
+Enemies.laserRecoilDuration = 0.30
+Enemies.laserRecoilSpeed = 95
+Enemies.obtuseCurtainTelegraph = 0.38
+Enemies.obtuseMissileTelegraph = 0.42
 Enemies.types = {
     {
         name = "WEDGE", vertices = {0, -15, 10, 10, 0, 5, -10, 10},
@@ -140,6 +147,10 @@ function Enemies:spawn(ship, kindIndex, options)
     enemy.evadeTime, enemy.evadeCooldown = 0, 0
     enemy.sepX, enemy.sepY = 0, 0
     enemy.aimed = false
+    enemy.diving = false
+    enemy.telegraph = nil
+    enemy.ai = nil
+    enemy.aiDelay = options and options.aiDelay or 0
     enemy.collisionCooldown = 0
     local entryTime = options and options.entryTime
     enemy.phase = entryTime and "entering" or "patrol"
@@ -170,16 +181,11 @@ function Enemies:spawnSquad(ship)
 
     for _, member in ipairs(formation) do
         local x, y = formationPosition(lx, ly, angle, member.right, member.forward)
+        local aiDelay = member.slot == 1 and (member.kind == 1 and 0.55 or 0.35) or 0
         local shipMember = self:spawn(ship, member.kind, {
-            x = x, y = y, vx = vx, vy = vy, angle = angle, entryTime = entryTime, wave = wave, slot = member.slot,
+            x = x, y = y, vx = vx, vy = vy, angle = angle, entryTime = entryTime, wave = wave,
+            slot = member.slot, aiDelay = aiDelay,
         })
-        if member.kind == 1 then
-            if wave.attacker then
-                shipMember.wingman, wave.attacker.wingman = wave.attacker, shipMember
-            else
-                wave.attacker = shipMember
-            end
-        end
         squad[#squad + 1] = shipMember
     end
     return squad
@@ -196,7 +202,7 @@ local function aimEvasion(enemy, ship, aimAngle, step)
         if enemy.evadeCooldown == 0 and along > 0 and along < 700 and math.abs(across) < 48 + enemy.radius then
             local side = math.abs(across) < 4 and enemy.slot or (across >= 0 and 1 or -1)
             enemy.evadeX, enemy.evadeY = -aimY * side, aimX * side
-            enemy.evadeTime, enemy.evadeCooldown = 0.55, 1.3
+            enemy.evadeTime, enemy.evadeCooldown = 0.45, 1.8
         end
     end
     enemy.aimed = enemy.evadeTime > 0
@@ -248,147 +254,294 @@ local function patrolBounds(group, enemy)
         math.max(0, view.top) + margin, math.min(Arena.height, view.bottom) - margin
 end
 
-local function chooseWaypoint(group, enemy, ship, definition, angle, radius)
+local addEntityPush
+
+local function clampToBounds(group, enemy, x, y)
     local left, right, top, bottom = patrolBounds(group, enemy)
-    local reference = enemy.goal or enemy
-    if not angle then
-        angle = group.rng() * tau
-        if not enemy.goal then
-            -- Favor the side this aircraft is approaching from on its first leg.
-            angle = math.atan2(reference.y - ship.y, reference.x - ship.x) + (angle - math.pi) * 0.45
-        end
-    end
-    radius = radius or definition.patrolMin + group.rng() * (definition.patrolMax - definition.patrolMin)
-    local minimumLeg = enemy.goal and math.max(definition.arrivalRadius * 2, radius * 0.65)
-        or definition.arrivalRadius + 1
-    local x, y, bestDistance
-    for attempt = 0, 11 do
-        local bearing = angle + attempt * tau / 12
-        local px, py = ship.x + math.cos(bearing) * radius, ship.y + math.sin(bearing) * radius
-        if px >= left and px <= right and py >= top and py <= bottom then
-            local distance = (px - reference.x) ^ 2 + (py - reference.y) ^ 2
-            if not bestDistance or distance > bestDistance then x, y, bestDistance = px, py, distance end
-            if distance >= minimumLeg ^ 2 then break end
-        end
-    end
-    if not bestDistance then
-        local cornerX = ship.x < (left + right) / 2 and right or left
-        local cornerY = ship.y < (top + bottom) / 2 and bottom or top
-        local dx, dy = limitVector(cornerX - ship.x, cornerY - ship.y, radius)
-        x, y = clamp(ship.x + dx, left, right), clamp(ship.y + dy, top, bottom)
-    end
-    return {x = x, y = y}
+    if left > right then left, right = right, left end
+    if top > bottom then top, bottom = bottom, top end
+    return clamp(x, left, right), clamp(y, top, bottom)
 end
 
-local function atWaypoint(enemy, definition)
-    return (enemy.goal.x - enemy.x) ^ 2 + (enemy.goal.y - enemy.y) ^ 2 <= definition.arrivalRadius ^ 2
-end
-
-local function wingWaypoint(group, enemy, ship, attacking)
-    local definition = group.types[enemy.kind]
-    local vx, vy = (ship.vx or 0) + (ship.wrapVx or 0), (ship.vy or 0) + (ship.wrapVy or 0)
-    local moving = vx * vx + vy * vy > 1
-    if attacking and moving then
-        local distance = math.sqrt((enemy.x - ship.x) ^ 2 + (enemy.y - ship.y) ^ 2)
-        local lead = math.min(2.5, 0.6 + math.sqrt(2 * distance / enemy.thrust))
-        local left, right, top, bottom = patrolBounds(group, enemy)
-        local _, edge = Collision.rectangleInterval(ship.x - left, ship.y - top, vx, vy, right - left, bottom - top)
-        lead = clamp(edge, 0, lead)
-        return {x = clamp(ship.x + vx * lead, left, right), y = clamp(ship.y + vy * lead, top, bottom)}
-    end
-    local heading = moving and math.atan2(vy, vx) or enemy.wave.entryAngle - math.pi / 2
-    return chooseWaypoint(group, enemy, ship, definition, heading + enemy.slot * math.pi / 2,
-        attacking and definition.patrolMin or wingSpread + wingTrail)
+local function isInsideBounds(group, enemy)
+    local left, right, top, bottom = patrolBounds(group, enemy)
+    return enemy.x >= left and enemy.x <= right and enemy.y >= top and enemy.y <= bottom
 end
 
 local function angleToShip(enemy, ship)
-    local dx, dy = ship.x - enemy.x, enemy.y - ship.y
+    local dx, dy = ship.x - enemy.x, ship.y - enemy.y
     if dx * dx + dy * dy < 1e-12 then return enemy.angle end
-    return math.atan2(dx, dy)
+    return math.atan2(dx, -dy) % tau
 end
 
-local function prepareWingPass(group, enemy, dt, ship, definition)
-    local wave = enemy.wave
-    local attacking = wave.attacker == enemy
-    if not enemy.goal then
-        enemy.goal = wingWaypoint(group, enemy, ship, attacking)
-    end
-    if enemy.goal.state == "holding" or (enemy.goal.state == "flying" and atWaypoint(enemy, definition)) then
-        local wingman = enemy.wingman
-        if attacking and wingman.goal and wingman.goal.state == "holding" then
-            wave.burst = group.fire:shoot(enemy, ship)
-            wave.attacker = wingman
-            -- The first round fixes the next intercept. The last round clears both ships to move.
-            wingman.goal = wingWaypoint(group, wingman, ship, true)
-            enemy.goal = wingWaypoint(group, enemy, ship, false)
-        else
-            enemy.goal.state = "holding"
-            local aim = attacking and angleToShip(enemy, ship) or enemy.angle
-            pilot(enemy, dt, 0, 0, aim, true)
-            return false
-        end
-    end
-    local goal = enemy.goal
-    if goal.state ~= "flying" then
-        local bearing = math.atan2(goal.x - enemy.x, enemy.y - goal.y)
-        if wave.burst or math.abs(turnError(enemy, bearing)) > wingAlignment then
-            pilot(enemy, dt, 0, 0, bearing, true)
-            return false
-        end
-        goal.state = "flying"
-    end
-    return true
-end
 
-local function patrol(group, enemy, dt, ship, aimAngle, definition)
+
+local function patrolWedge(group, enemy, dt, ship, aimAngle, definition)
     local evadeX, evadeY = aimEvasion(enemy, ship, aimAngle, dt)
-    if enemy.wingman then
-        if not prepareWingPass(group, enemy, dt, ship, definition) then return end
-    else
-        if not enemy.goal then
-            enemy.goal = chooseWaypoint(group, enemy, ship, definition)
-        elseif enemy.kind == 1 then
-            if atWaypoint(enemy, definition) then
-                group.fire:shoot(enemy, ship)
-                enemy.goal = chooseWaypoint(group, enemy, ship, definition)
-            end
-        else
-            if enemy.goal.state ~= "aiming" and enemy.goal.state ~= "firing" and atWaypoint(enemy, definition) then
-                enemy.goal.state = "aiming"
-            end
-
-            if enemy.goal.state == "aiming" then
-                local aim = angleToShip(enemy, ship)
-                local ready = math.abs(turnError(enemy, aim)) <= attackAlignment
-                    and (enemy.kind ~= 3 or enemy:speed() == 0)
-                if ready then
-                    local burst = group.fire:shoot(enemy, ship)
-                    if burst and burst.remaining > 0 then
-                        enemy.goal.state = "firing"
-                        enemy.goal.burst = burst
-                        enemy.goal.aimAngle = aim
-                        pilot(enemy, dt, 0, 0, aim, true)
-                        return
-                    end
-                    enemy.goal = chooseWaypoint(group, enemy, ship, definition)
-                else
-                    pilot(enemy, dt, 0, 0, aim, true)
-                    return
-                end
-            elseif enemy.goal.state == "firing" then
-                if enemy.goal.burst and enemy.goal.burst.remaining > 0 then
-                    pilot(enemy, dt, 0, 0, enemy.goal.aimAngle or angleToShip(enemy, ship), true)
-                    return
-                end
-                enemy.goal = chooseWaypoint(group, enemy, ship, definition)
-            end
-        end
+    local ai = enemy.ai
+    if not ai then
+        ai = {
+            state = "orbit",
+            timer = 0.7 + group.rng() * 0.75 + (enemy.aiDelay or 0),
+            orbitRadius = 210 + group.rng() * 55,
+            side = enemy.slot or 1,
+        }
+        enemy.ai = ai
     end
 
     local steerX = enemy.sepX + evadeX * definition.evadeSpeed
     local steerY = enemy.sepY + evadeY * definition.evadeSpeed
-    local speed = enemy.maxSpeed * 0.84
-    flyTo(enemy, dt, enemy.goal.x, enemy.goal.y, speed, steerX, steerY, false)
+
+    if ai.state == "orbit" then
+        enemy.diving = false
+        enemy.telegraph = nil
+        ai.timer = ai.timer - dt
+        local dx, dy = enemy.x - ship.x, enemy.y - ship.y
+        local distSq = dx * dx + dy * dy
+        local baseBearing = distSq > 1e-4 and math.atan2(dy, dx) or (enemy.angle - math.pi / 2)
+        local orbitAngle = baseBearing + ai.side * math.rad(42)
+        local tx, ty = clampToBounds(group, enemy,
+            ship.x + math.cos(orbitAngle) * ai.orbitRadius,
+            ship.y + math.sin(orbitAngle) * ai.orbitRadius)
+        flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.64, steerX, steerY, false)
+        if ai.timer <= 0 and isInsideBounds(group, enemy) and distSq <= 540 * 540 then
+            ai.state = "telegraph"
+            ai.timer = Enemies.wedgeTelegraphDuration
+            local len = math.sqrt(distSq)
+            if len > 1e-4 then
+                ai.diveDirX, ai.diveDirY = -dx / len, -dy / len
+            else
+                ai.diveDirX, ai.diveDirY = math.sin(enemy.angle), -math.cos(enemy.angle)
+            end
+            enemy.telegraph = { kind = "dive", progress = 0, dirX = ai.diveDirX, dirY = ai.diveDirY }
+        end
+    elseif ai.state == "telegraph" then
+        enemy.diving = false
+        ai.timer = ai.timer - dt
+        local svx = (ship.vx or 0) + (ship.wrapVx or 0)
+        local svy = (ship.vy or 0) + (ship.wrapVy or 0)
+        local dx, dy = (ship.x + svx * 0.22) - enemy.x, (ship.y + svy * 0.22) - enemy.y
+        local len = math.sqrt(dx * dx + dy * dy)
+        if len > 1e-4 then
+            ai.diveDirX, ai.diveDirY = dx / len, dy / len
+        else
+            ai.diveDirX, ai.diveDirY = math.sin(enemy.angle), -math.cos(enemy.angle)
+        end
+        local progress = clamp(1 - ai.timer / Enemies.wedgeTelegraphDuration, 0, 1)
+        enemy.telegraph = { kind = "dive", progress = progress, dirX = ai.diveDirX, dirY = ai.diveDirY }
+        if ai.timer <= 0 then
+            ai.state = "dive"
+            ai.timer = Enemies.wedgeDiveDuration
+            ai.fired = false
+            enemy.telegraph = nil
+            enemy.diving = true
+            flyTo(enemy, dt, enemy.x + ai.diveDirX * 400, enemy.y + ai.diveDirY * 400,
+                enemy.maxSpeed * 0.96, enemy.sepX, enemy.sepY, false)
+        else
+            flyTo(enemy, dt, enemy.x + ai.diveDirX * 260, enemy.y + ai.diveDirY * 260,
+                enemy.maxSpeed * 0.44, steerX, steerY, false)
+        end
+    elseif ai.state == "dive" then
+        enemy.diving = true
+        enemy.telegraph = nil
+        ai.timer = ai.timer - dt
+        local dirX, dirY = ai.diveDirX, ai.diveDirY
+        flyTo(enemy, dt, enemy.x + dirX * 400, enemy.y + dirY * 400,
+            enemy.maxSpeed * 0.96, enemy.sepX, enemy.sepY, false)
+        local along = (ship.x - enemy.x) * dirX + (ship.y - enemy.y) * dirY
+        if not ai.fired and (along <= 35 or ai.timer <= Enemies.wedgeDiveDuration * 0.5) then
+            group.fire:shoot(enemy, ship)
+            ai.fired = true
+        end
+        local left, right, top, bottom = patrolBounds(group, enemy)
+        local outFar = enemy.x < left - 30 or enemy.x > right + 30 or enemy.y < top - 30 or enemy.y > bottom + 30
+        if ai.timer <= 0 or (ai.fired and outFar) then
+            ai.state = "recover"
+            ai.timer = Enemies.wedgeRecoverDuration
+            enemy.diving = false
+        end
+    else
+        enemy.diving = false
+        enemy.telegraph = nil
+        ai.timer = ai.timer - dt
+        local dx, dy = enemy.x - ship.x, enemy.y - ship.y
+        local baseBearing = (dx * dx + dy * dy > 1e-4) and math.atan2(dy, dx) or (enemy.angle - math.pi / 2)
+        local recoverAngle = baseBearing + ai.side * math.rad(55)
+        local tx, ty = clampToBounds(group, enemy,
+            ship.x + math.cos(recoverAngle) * ai.orbitRadius,
+            ship.y + math.sin(recoverAngle) * ai.orbitRadius)
+        flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.68, steerX, steerY, false)
+        if ai.timer <= 0 then
+            if group.rng() < 0.4 then ai.side = -ai.side end
+            ai.state = "orbit"
+            ai.timer = 1.0 + group.rng() * 0.8
+        end
+    end
+end
+
+local function equilateralStrafeTarget(group, enemy, ship, ai)
+    local dx, dy = enemy.x - ship.x, enemy.y - ship.y
+    local baseAngle = (dx * dx + dy * dy > 1e-4) and math.atan2(dy, dx) or (enemy.angle - math.pi / 2)
+    local targetAngle = baseAngle + ai.strafeDir * math.rad(35)
+    local tx, ty = clampToBounds(group, enemy,
+        ship.x + math.cos(targetAngle) * ai.preferredDist,
+        ship.y + math.sin(targetAngle) * ai.preferredDist)
+    if (tx - ship.x) ^ 2 + (ty - ship.y) ^ 2 < 180 * 180 then
+        local inAngle = math.atan2(Arena.height * 0.5 - ship.y, Arena.width * 0.5 - ship.x) + ai.strafeDir * math.rad(25)
+        tx, ty = clampToBounds(group, enemy,
+            ship.x + math.cos(inAngle) * ai.preferredDist,
+            ship.y + math.sin(inAngle) * ai.preferredDist)
+    end
+    return tx, ty
+end
+
+local function patrolEquilateral(group, enemy, dt, ship)
+    enemy.aimed = false
+    enemy.diving = false
+    local ai = enemy.ai
+    if not ai then
+        ai = {
+            state = "reposition",
+            timer = 0.85 + group.rng() * 0.8 + (enemy.aiDelay or 0),
+            preferredDist = 285 + group.rng() * 115,
+            strafeDir = enemy.slot or 1,
+        }
+        enemy.ai = ai
+    end
+
+    if ai.state == "reposition" then
+        enemy.telegraph = nil
+        ai.timer = ai.timer - dt
+        local tx, ty = equilateralStrafeTarget(group, enemy, ship, ai)
+        flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.62, enemy.sepX, enemy.sepY, false)
+        if ai.timer <= 0 and isInsideBounds(group, enemy) then
+            ai.state = "track"
+            ai.timer = Enemies.laserTrackDuration
+            ai.lockGrace = 0.35
+            enemy.telegraph = { kind = "laser_track", progress = 0, angle = enemy.angle - math.pi / 2, locked = false }
+        end
+    elseif ai.state == "track" then
+        ai.timer = ai.timer - dt
+        local aimShipAngle = angleToShip(enemy, ship)
+        pilot(enemy, dt, 0, 0, aimShipAngle, true)
+        local progress = clamp(1 - ai.timer / Enemies.laserTrackDuration, 0, 1)
+        enemy.telegraph = { kind = "laser_track", progress = progress, angle = enemy.angle - math.pi / 2, locked = false }
+        if ai.timer <= 0 then
+            if math.abs(turnError(enemy, aimShipAngle)) <= math.rad(10) or ai.lockGrace <= 0 then
+                ai.lockAngle = enemy.angle - math.pi / 2
+                ai.state = "lock"
+                ai.timer = Enemies.laserLockDuration
+                enemy.telegraph = { kind = "laser_lock", progress = 0, angle = ai.lockAngle, locked = true }
+            else
+                ai.lockGrace = ai.lockGrace - dt
+            end
+        end
+    elseif ai.state == "lock" then
+        ai.timer = ai.timer - dt
+        pilot(enemy, dt, 0, 0, ai.lockAngle + math.pi / 2, true)
+        local progress = clamp(1 - ai.timer / Enemies.laserLockDuration, 0, 1)
+        enemy.telegraph = { kind = "laser_lock", progress = progress, angle = ai.lockAngle, locked = true }
+        if ai.timer <= 0 then
+            group.fire:shoot(enemy, ship, { angle = ai.lockAngle })
+            addEntityPush(enemy, -math.cos(ai.lockAngle) * Enemies.laserRecoilSpeed,
+                -math.sin(ai.lockAngle) * Enemies.laserRecoilSpeed, enemyMaxPushSpeed)
+            enemy.telegraph = nil
+            ai.state = "recoil"
+            ai.timer = Enemies.laserRecoilDuration
+        end
+    else
+        enemy.telegraph = nil
+        ai.timer = ai.timer - dt
+        pilot(enemy, dt, 0, 0, (ai.lockAngle or (enemy.angle - math.pi / 2)) + math.pi / 2, false)
+        if ai.timer <= 0 then
+            if group.rng() < 0.5 then ai.strafeDir = -ai.strafeDir end
+            ai.state = "reposition"
+            ai.timer = 1.2 + group.rng() * 0.8
+        end
+    end
+end
+
+local function obtuseVantage(group, enemy, ship, ai)
+    local dx, dy = enemy.x - ship.x, enemy.y - ship.y
+    local baseAngle = (dx * dx + dy * dy > 1e-4) and math.atan2(dy, dx) or (enemy.angle - math.pi / 2)
+    local targetAngle = baseAngle + ai.strafeDir * math.rad(28)
+    local ringDist = 285
+    local rx = ship.x + math.cos(targetAngle) * ringDist
+    local ry = ship.y + math.sin(targetAngle) * ringDist
+    local vx = rx * 0.70 + (Arena.width * 0.5) * 0.30
+    local vy = ry * 0.70 + (Arena.height * 0.5) * 0.30
+    return clampToBounds(group, enemy, vx, vy)
+end
+
+local function patrolObtuse(group, enemy, dt, ship)
+    enemy.aimed = false
+    enemy.diving = false
+    local ai = enemy.ai
+    if not ai then
+        ai = {
+            state = "advance",
+            timer = 1.0 + group.rng() * 0.5 + (enemy.aiDelay or 0),
+            attackIndex = 0,
+            strafeDir = enemy.slot or 1,
+        }
+        enemy.ai = ai
+    end
+
+    if ai.state == "advance" then
+        enemy.telegraph = nil
+        ai.timer = ai.timer - dt
+        local tx, ty = obtuseVantage(group, enemy, ship, ai)
+        flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.58, enemy.sepX, enemy.sepY, false)
+        if ai.timer <= 0 and isInsideBounds(group, enemy) then
+            ai.attackIndex = ai.attackIndex + 1
+            ai.nextPattern = (ai.attackIndex % 2 == 1) and "curtain" or "missile_stagger"
+            ai.telegraphDuration = (ai.nextPattern == "curtain") and Enemies.obtuseCurtainTelegraph or Enemies.obtuseMissileTelegraph
+            ai.state = "telegraph"
+            ai.timer = ai.telegraphDuration
+            enemy.telegraph = {
+                kind = (ai.nextPattern == "curtain") and "curtain" or "missile",
+                progress = 0,
+                angle = math.atan2(ship.y - enemy.y, ship.x - enemy.x),
+            }
+        end
+    elseif ai.state == "telegraph" then
+        ai.timer = ai.timer - dt
+        local tx, ty = obtuseVantage(group, enemy, ship, ai)
+        flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.34, enemy.sepX, enemy.sepY, false)
+        local progress = clamp(1 - ai.timer / ai.telegraphDuration, 0, 1)
+        enemy.telegraph = {
+            kind = (ai.nextPattern == "curtain") and "curtain" or "missile",
+            progress = progress,
+            angle = math.atan2(ship.y - enemy.y, ship.x - enemy.x),
+        }
+        if ai.timer <= 0 then
+            ai.burst = group.fire:shoot(enemy, ship, { pattern = ai.nextPattern })
+            enemy.telegraph = nil
+            ai.state = "firing"
+            ai.timer = 1.1
+        end
+    else
+        enemy.telegraph = nil
+        ai.timer = ai.timer - dt
+        local tx, ty = obtuseVantage(group, enemy, ship, ai)
+        flyTo(enemy, dt, tx, ty, enemy.maxSpeed * 0.40, enemy.sepX, enemy.sepY, false)
+        if not ai.burst or (ai.burst.remaining or 0) <= 0 or ai.timer <= 0 then
+            ai.burst = nil
+            if group.rng() < 0.4 then ai.strafeDir = -ai.strafeDir end
+            ai.state = "advance"
+            ai.timer = 1.55 + group.rng() * 0.65
+        end
+    end
+end
+
+local function patrol(group, enemy, dt, ship, aimAngle, definition)
+    if enemy.kind == 1 then
+        patrolWedge(group, enemy, dt, ship, aimAngle, definition)
+    elseif enemy.kind == 2 then
+        patrolEquilateral(group, enemy, dt, ship)
+    else
+        patrolObtuse(group, enemy, dt, ship)
+    end
 end
 
 local function departureGoal(enemy, view)
@@ -577,7 +730,7 @@ local function checkContact(group, enemy, enemyIndex, ship, x, y, motion, elapse
     return false
 end
 
-local function addEntityPush(entity, dvx, dvy, maxSpeed)
+function addEntityPush(entity, dvx, dvy, maxSpeed)
     if not dvx or not dvy then return end
     if entity.addPush then
         entity:addPush(dvx, dvy, maxSpeed)
@@ -759,6 +912,7 @@ local function moveEnemyStep(group, enemy, enemyIndex, dt, ship, aimAngle, motio
                     enemy.phase, enemy.phaseRemaining = "patrol", group.patrolDuration
                 else
                     enemy.phase, enemy.goal, enemy.aimed = "departing", nil, false
+                    enemy.telegraph, enemy.diving, enemy.ai = nil, false, nil
                     departureGoal(enemy, view)
                 end
             end
@@ -834,10 +988,7 @@ function Enemies:update(dt, ship, aimAngle, camera, width, height)
         self.view.left, self.view.top = camera:screenToWorld(0, 0, width, height)
         self.view.right, self.view.bottom = camera:screenToWorld(width, height, width, height)
     end
-    -- A final round partway through this frame clears the wings for the next movement frame.
     for _, enemy in ipairs(self.items) do
-        local wave = enemy.wave
-        if enemy.wingman and wave.burst and wave.burst.remaining == 0 then wave.burst = nil end
         if (enemy.hitFlash or 0) > 0 then
             enemy.hitFlash = math.max(0, enemy.hitFlash - dt)
         end
@@ -973,10 +1124,8 @@ function Enemies:destroy(index)
     if not enemy then return end
     enemy.dead = true
     enemy.nearMiss = nil
-    if enemy.wingman then
-        enemy.wingman.wingman, enemy.wingman.goal = nil, nil
-        enemy.wave.attacker, enemy.wave.burst = nil, nil
-    end
+    enemy.telegraph = nil
+    enemy.diving = false
     self:spawnDeathEffect(enemy)
     local pitchScale = enemy.kind == 1 and 1.14 or (enemy.kind == 3 and 0.80 or 1.0)
     Sfx.play("enemy_destroy", pitchScale)
@@ -1565,6 +1714,72 @@ function Enemies.drawHull(kind, aimed, time, opts)
     end
 end
 
+local function drawTelegraph(g, enemy, time)
+    local tel = enemy.telegraph
+    if not tel then return end
+    local p = tel.progress or 0
+    local t = time or 0
+    if tel.kind == "laser_track" or tel.kind == "laser_lock" then
+        local angle = tel.angle or (enemy.angle - math.pi / 2)
+        local dx, dy = math.cos(angle), math.sin(angle)
+        local muzzle = (enemy.radius or 24) * 0.72
+        local sx, sy = enemy.x + dx * muzzle, enemy.y + dy * muzzle
+        local ex, ey = sx + dx * 1600, sy + dy * 1600
+        if tel.kind == "laser_track" then
+            local alpha = 0.28 + 0.30 * p
+            local segLen, gapLen = 18, 12
+            local step = segLen + gapLen
+            g.setLineWidth(1.3)
+            g.setColor(1.0, 0.28, 0.58, alpha)
+            for d = 0, 1550, step do
+                local d2 = math.min(1600, d + segLen)
+                g.line(sx + dx * d, sy + dy * d, sx + dx * d2, sy + dy * d2)
+            end
+            local chargeR = 14 - 8 * p
+            g.setLineWidth(1.4)
+            g.setColor(1.0, 0.32, 0.68, 0.38 + 0.42 * p)
+            g.circle("line", sx, sy, chargeR)
+        else
+            local pulse = 0.72 + 0.28 * math.sin(t * 32 * tau * 0.5)
+            g.setLineWidth(4.5 * pulse)
+            g.setColor(1.0, 0.22, 0.65, 0.28 * pulse)
+            g.line(sx, sy, ex, ey)
+            g.setLineWidth(1.6)
+            g.setColor(1.0, 0.90, 0.96, 0.92 * pulse)
+            g.line(sx, sy, ex, ey)
+            local px, py = -dy, dx
+            local tipX, tipY = sx + dx * 24, sy + dy * 24
+            g.setLineWidth(1.5)
+            g.setColor(1.0, 0.45, 0.78, 0.9)
+            g.line(tipX - dx * 8 + px * 7, tipY - dy * 8 + py * 7, tipX, tipY, tipX - dx * 8 - px * 7, tipY - dy * 8 - py * 7)
+        end
+    elseif tel.kind == "dive" then
+        local dx, dy = tel.dirX or math.sin(enemy.angle), tel.dirY or -math.cos(enemy.angle)
+        local sx, sy = enemy.x + dx * (enemy.radius + 4), enemy.y + dy * (enemy.radius + 4)
+        local ex, ey = enemy.x + dx * (150 + 60 * p), enemy.y + dy * (150 + 60 * p)
+        g.setLineWidth(1.5)
+        g.setColor(1.0, 0.44, 0.24, 0.28 + 0.36 * p)
+        g.line(sx, sy, ex, ey)
+        local px, py = -dy, dx
+        local chevronDist = 55 + 40 * p
+        local cx, cy = enemy.x + dx * chevronDist, enemy.y + dy * chevronDist
+        g.setLineWidth(2.0)
+        g.setColor(1.0, 0.68, 0.36, 0.75 + 0.25 * p)
+        g.line(cx - dx * 9 + px * 8, cy - dy * 9 + py * 8, cx, cy, cx - dx * 9 - px * 8, cy - dy * 9 - py * 8)
+        g.setColor(1.0, 0.55, 0.30, 0.55 + 0.35 * p)
+        g.circle("fill", sx, sy, 3.5 + 2.0 * p)
+    elseif tel.kind == "curtain" then
+        local ringR = 26 - 16 * p
+        g.setLineWidth(1.8)
+        g.setColor(1.0, 0.80, 0.26, 0.55 + 0.35 * p)
+        g.circle("line", enemy.x, enemy.y, ringR)
+        local aim = tel.angle or (enemy.angle - math.pi / 2)
+        g.setLineWidth(1.4)
+        g.setColor(1.0, 0.78, 0.24, 0.28 + 0.32 * p)
+        g.arc("line", "open", enemy.x, enemy.y, (enemy.radius or 28) + 14, aim - math.rad(36), aim + math.rad(36))
+    end
+end
+
 function Enemies:draw(time)
     local g = love.graphics
     g.push("all")
@@ -1607,8 +1822,13 @@ function Enemies:draw(time)
         end
     end
     for _, enemy in ipairs(self.items) do
+        drawTelegraph(g, enemy, time)
+    end
+    for _, enemy in ipairs(self.items) do
         local thrust = 0
-        if enemy.accelerating then
+        if enemy.diving then
+            thrust = 1.45
+        elseif enemy.accelerating then
             thrust = 1
         elseif enemy.speed then
             local spd = enemy:speed()
@@ -1618,6 +1838,17 @@ function Enemies:draw(time)
         g.translate(enemy.x, enemy.y)
         g.rotate(enemy.angle)
         Enemies.drawHull(enemy.kind, enemy.aimed, time, { thrust = thrust })
+        if enemy.telegraph and enemy.telegraph.kind == "missile" then
+            local mp = enemy.telegraph.progress or 0
+            local alpha = 0.45 + 0.50 * mp
+            local glowR = 4.5 + 3.5 * mp
+            for _, sx in ipairs({ -17, 17 }) do
+                g.setColor(1.0, 0.24, 0.26, alpha * 0.45)
+                g.circle("fill", sx, 3.5, glowR)
+                g.setColor(1.0, 0.72, 0.45, alpha)
+                g.circle("fill", sx, 3.5, 2.5)
+            end
+        end
         if (enemy.hitFlash or 0) > 0 then
             local flashAlpha = math.min(1, enemy.hitFlash / 0.09)
             local r = (enemy.radius or 20) * 1.15

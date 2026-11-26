@@ -10,9 +10,22 @@ local missileAngles = {-60, -36, -12, 12, 36, 60}
 local missileTurnRate = 3.35
 local missileTurnRamp = 0.42
 local tau = 2 * math.pi
-local bullet = {speed = 540, lifetime = 1.4, radius = 3, damage = 6, trail = 13, color = {1, 0.45, 0.23}}
-local laser = {speed = 1400, lifetime = 0.7, radius = 4, damage = 14, trail = 48, color = {1, 0.24, 0.65}}
-local missile = {radius = 5, damage = 8, trail = 24, color = {1, 0.28, 0.28}}
+local bullet = {speed = 440, lifetime = 1.65, radius = 3.5, damage = 6, trail = 15, color = {1, 0.45, 0.23}, replayKind = 1}
+local laser = {speed = 1150, lifetime = 0.95, radius = 4.5, damage = 14, trail = 56, color = {1, 0.24, 0.65}, isLaser = true, replayKind = 2}
+local missile = {radius = 5, damage = 8, trail = 24, color = {1, 0.28, 0.28}, isMissile = true, replayKind = 3}
+local curtain = {speed = 255, lifetime = 3.8, radius = 5.0, damage = 7, trail = 10, color = {1.0, 0.78, 0.24}, isOrb = true, replayKind = 4}
+
+EnemyFire.wedgeSpread = math.rad(16)
+EnemyFire.railCount = 3
+EnemyFire.railInterval = 0.055
+EnemyFire.curtainWaveInterval = 0.34
+EnemyFire.curtainOddAngles = {0, -18, 18, -36, 36}
+EnemyFire.curtainEvenAngles = {-9, 9, -27, 27, -45, 45}
+EnemyFire.missileStaggerInterval = 0.11
+EnemyFire.missileStaggerOrder = {-58, 58, -34, 34, -12, 12}
+EnemyFire.missileFlankOffsets = {-48, 48, -26, 26, -10, 10}
+
+local wedgeFanOffsets = {0, -EnemyFire.wedgeSpread, EnemyFire.wedgeSpread}
 
 function EnemyFire.new()
     return setmetatable({shots = {}, bursts = {}, impacts = {}}, EnemyFire)
@@ -39,39 +52,98 @@ local function launch(fire, enemy, angle, profile, delay)
     return shot
 end
 
-local function launchLinear(fire, enemy, targetX, targetY, profile, delay)
-    local angle = bearing(enemy, targetX, targetY)
+local function launchAngle(fire, enemy, angle, profile, delay, sfxName, pitchScale)
     local shot = launch(fire, enemy, angle, profile, delay)
     shot.vx, shot.vy = shot.vx * profile.speed, shot.vy * profile.speed
     shot.lifetime = profile.lifetime
-    Sfx.play(profile == laser and "enemyLaser" or "enemyProjectile")
+    if sfxName then
+        Sfx.play(sfxName, pitchScale)
+    end
+    return shot
 end
 
-function EnemyFire:shoot(enemy, ship)
-    if ship:isDestroyed() then return end
+local function launchMissile(fire, enemy, targetX, targetY, baseAngle, distance, angleOffsetDeg, flankOffset, delay)
+    local reach = math.max(34, math.min(135, distance * 0.46))
+    local lifetime = math.max(0.6, distance / 375 + 0.15)
+    local tx, ty = targetX, targetY
+    if flankOffset and flankOffset ~= 0 then
+        local perpX, perpY = -math.sin(baseAngle), math.cos(baseAngle)
+        tx = math.max(20, math.min(Arena.width - 20, tx + perpX * flankOffset))
+        ty = math.max(20, math.min(Arena.height - 20, ty + perpY * flankOffset))
+    end
+    local shot = launch(fire, enemy, baseAngle + math.rad(angleOffsetDeg), missile, delay)
+    shot.startX, shot.startY = shot.x, shot.y
+    shot.controlX, shot.controlY = shot.x + shot.vx * reach, shot.y + shot.vy * reach
+    shot.targetX, shot.targetY = tx, ty
+    shot.lifetime = lifetime
+    shot.vx, shot.vy = shot.vx * 2 * reach / lifetime, shot.vy * 2 * reach / lifetime
+    return shot
+end
+
+function EnemyFire:shoot(enemy, ship, opts)
+    if not ship or ship:isDestroyed() then return nil end
+    opts = opts or {}
     local targetX, targetY = ship.x, ship.y
     if enemy.kind == 1 then
-        launchLinear(self, enemy, targetX, targetY, bullet, 0)
+        local baseAngle = opts.angle or bearing(enemy, targetX, targetY)
+        for _, offset in ipairs(wedgeFanOffsets) do
+            launchAngle(self, enemy, baseAngle + offset, bullet, 0)
+        end
+        Sfx.play("enemyProjectile")
+        return nil
+    elseif enemy.kind == 2 then
+        local fixedAngle = opts.angle or bearing(enemy, targetX, targetY)
+        launchAngle(self, enemy, fixedAngle, laser, 0, "enemyLaser")
+        if opts.single then return nil end
         local burst = {
-            enemy = enemy, targetX = targetX, targetY = targetY, remaining = 2, delay = burstInterval,
+            kind = "rail",
+            enemy = enemy,
+            angle = fixedAngle,
+            remaining = EnemyFire.railCount - 1,
+            delay = EnemyFire.railInterval,
         }
         self.bursts[#self.bursts + 1] = burst
         return burst
-    elseif enemy.kind == 2 then
-        launchLinear(self, enemy, targetX, targetY, laser, 0)
     else
-        local angle, distance = bearing(enemy, targetX, targetY)
-        local reach = math.max(34, math.min(135, distance * 0.46))
-        local lifetime = math.max(0.6, distance / 375 + 0.15)
-        for _, offset in ipairs(missileAngles) do
-            local shot = launch(self, enemy, angle + math.rad(offset), missile, 0)
-            shot.startX, shot.startY = shot.x, shot.y
-            shot.controlX, shot.controlY = shot.x + shot.vx * reach, shot.y + shot.vy * reach
-            shot.targetX, shot.targetY = targetX, targetY
-            shot.lifetime = lifetime
-            shot.vx, shot.vy = shot.vx * 2 * reach / lifetime, shot.vy * 2 * reach / lifetime
+        local baseAngle, distance = bearing(enemy, targetX, targetY)
+        if opts.pattern == "curtain" then
+            local aimAngle = opts.angle or baseAngle
+            for _, offsetDeg in ipairs(EnemyFire.curtainOddAngles) do
+                launchAngle(self, enemy, aimAngle + math.rad(offsetDeg), curtain, 0)
+            end
+            Sfx.play("enemyProjectile", 0.72)
+            local burst = {
+                kind = "curtain",
+                enemy = enemy,
+                baseAngle = aimAngle,
+                wave = 2,
+                maxWaves = 3,
+                remaining = 2,
+                delay = EnemyFire.curtainWaveInterval,
+            }
+            self.bursts[#self.bursts + 1] = burst
+            return burst
+        elseif opts.pattern == "missile_stagger" then
+            launchMissile(self, enemy, targetX, targetY, baseAngle, distance,
+                EnemyFire.missileStaggerOrder[1], EnemyFire.missileFlankOffsets[1], 0)
+            Sfx.play("enemyMissile")
+            local burst = {
+                kind = "missile_stagger",
+                enemy = enemy,
+                index = 2,
+                count = #EnemyFire.missileStaggerOrder,
+                remaining = #EnemyFire.missileStaggerOrder - 1,
+                delay = EnemyFire.missileStaggerInterval,
+            }
+            self.bursts[#self.bursts + 1] = burst
+            return burst
+        else
+            for _, offsetDeg in ipairs(missileAngles) do
+                launchMissile(self, enemy, targetX, targetY, baseAngle, distance, offsetDeg, 0, 0)
+            end
+            Sfx.play("enemyMissile")
+            return nil
         end
-        Sfx.play("enemyMissile")
     end
 end
 
@@ -335,14 +407,39 @@ function EnemyFire:update(dt, ship, gladiator)
     end
     for i = #self.bursts, 1, -1 do
         local burst = self.bursts[i]
-        if not burst.enemy.dead then
+        local cancelled = burst.enemy.dead or ship:isDestroyed()
+        if not cancelled then
             while burst.remaining > 0 and burst.delay <= dt + 1e-9 do
-                launchLinear(self, burst.enemy, burst.targetX, burst.targetY, bullet, math.min(dt, burst.delay))
-                burst.remaining, burst.delay = burst.remaining - 1, burst.delay + burstInterval
+                local shotDelay = math.min(dt, burst.delay)
+                if burst.kind == "rail" then
+                    launchAngle(self, burst.enemy, burst.angle, laser, shotDelay, "enemyLaser", 1.04)
+                    burst.remaining = burst.remaining - 1
+                    burst.delay = burst.delay + EnemyFire.railInterval
+                elseif burst.kind == "curtain" then
+                    local angles = (burst.wave % 2 == 0) and EnemyFire.curtainEvenAngles or EnemyFire.curtainOddAngles
+                    for _, offsetDeg in ipairs(angles) do
+                        launchAngle(self, burst.enemy, burst.baseAngle + math.rad(offsetDeg), curtain, shotDelay)
+                    end
+                    Sfx.play("enemyProjectile", burst.wave % 2 == 0 and 0.80 or 0.72)
+                    burst.wave = burst.wave + 1
+                    burst.remaining = burst.remaining - 1
+                    burst.delay = burst.delay + EnemyFire.curtainWaveInterval
+                elseif burst.kind == "missile_stagger" then
+                    local baseAngle, distance = bearing(burst.enemy, ship.x, ship.y)
+                    launchMissile(self, burst.enemy, ship.x, ship.y, baseAngle, distance,
+                        EnemyFire.missileStaggerOrder[burst.index],
+                        EnemyFire.missileFlankOffsets[burst.index], shotDelay)
+                    Sfx.play("enemyMissile", 0.94 + (burst.index % 2) * 0.12)
+                    burst.index = burst.index + 1
+                    burst.remaining = burst.remaining - 1
+                    burst.delay = burst.delay + EnemyFire.missileStaggerInterval
+                else
+                    burst.remaining = 0
+                end
             end
             burst.delay = burst.delay - dt
         end
-        if burst.enemy.dead or burst.remaining == 0 then table.remove(self.bursts, i) end
+        if cancelled or burst.remaining == 0 then table.remove(self.bursts, i) end
     end
 
     local x, y = ship.prevX or ship.x, ship.prevY or ship.y
@@ -467,14 +564,29 @@ function EnemyFire:draw()
         if length > 0 then dx, dy = shot.vx / length, shot.vy / length end
         local trail = math.min(profile.trail, profile.radius + length * shot.age)
         local tailX, tailY = shot.x - dx * trail, shot.y - dy * trail
-        g.setLineWidth(profile.radius * 1.8)
-        g.setColor(r, green, b, 0.25 * fade)
-        g.line(tailX, tailY, shot.x, shot.y)
-        g.setLineWidth(profile == laser and 3 or 1.5)
-        g.setColor(r, green, b, 0.9 * fade)
-        g.line(tailX, tailY, shot.x, shot.y)
-        g.setColor(1, 0.85, 0.75, fade)
-        g.circle("fill", shot.x, shot.y, profile.radius * 0.55)
+        if profile.isOrb then
+            g.setLineWidth(profile.radius * 1.1)
+            g.setColor(r, green, b, 0.20 * fade)
+            g.line(tailX, tailY, shot.x, shot.y)
+            g.setColor(r, green, b, 0.24 * fade)
+            g.circle("fill", shot.x, shot.y, profile.radius * 2.1)
+            g.setColor(r, green, b, 0.95 * fade)
+            g.circle("fill", shot.x, shot.y, profile.radius)
+            g.setLineWidth(1.0)
+            g.setColor(1, 0.94, 0.72, 0.85 * fade)
+            g.circle("line", shot.x, shot.y, profile.radius)
+            g.setColor(1, 0.97, 0.85, fade)
+            g.circle("fill", shot.x, shot.y, profile.radius * 0.56)
+        else
+            g.setLineWidth(profile.radius * 1.8)
+            g.setColor(r, green, b, 0.25 * fade)
+            g.line(tailX, tailY, shot.x, shot.y)
+            g.setLineWidth(profile == laser and 3 or 1.5)
+            g.setColor(r, green, b, 0.9 * fade)
+            g.line(tailX, tailY, shot.x, shot.y)
+            g.setColor(1, 0.85, 0.75, fade)
+            g.circle("fill", shot.x, shot.y, profile.radius * 0.55)
+        end
     end
     for _, effect in ipairs(self.impacts) do
         local progress = effect.age / impactLifetime

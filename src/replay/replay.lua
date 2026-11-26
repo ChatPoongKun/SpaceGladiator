@@ -118,9 +118,10 @@ local POOL_BURSTS = 4096
 local POOL_SPARKS = 65536
 
 local enemyShotProfiles = {
-    [1] = { speed = 540, lifetime = 1.4, radius = 3, trail = 13, color = { 1, 0.45, 0.23 } },
-    [2] = { speed = 1400, lifetime = 0.7, radius = 4, trail = 48, color = { 1, 0.24, 0.65 }, isLaser = true },
+    [1] = { speed = 440, lifetime = 1.65, radius = 3.5, trail = 15, color = { 1, 0.45, 0.23 } },
+    [2] = { speed = 1150, lifetime = 0.95, radius = 4.5, trail = 56, color = { 1, 0.24, 0.65 }, isLaser = true },
     [3] = { radius = 5, trail = 24, color = { 1, 0.28, 0.28 } },
+    [4] = { speed = 255, lifetime = 3.8, radius = 5.0, trail = 10, color = { 1.0, 0.78, 0.24 }, isOrb = true },
 }
 
 local explosionColors = { glow = { 1, 0.38, 0.10 }, ring = { 1, 0.76, 0.32 }, core = { 1, 0.94, 0.66 } }
@@ -129,8 +130,10 @@ local tau = math.pi * 2
 
 local function classifyEnemyShotProfile(profile)
     if not profile then return 1 end
-    if profile.speed == 1400 or profile.radius == 4 then return 2 end
-    if profile.radius == 5 or profile.trail == 24 then return 3 end
+    if profile.replayKind then return profile.replayKind end
+    if profile.isLaser or profile.speed == 1400 or profile.speed == 1150 or profile.radius == 4 then return 2 end
+    if profile.isOrb or profile.trail == 10 then return 4 end
+    if profile.isMissile or profile.radius == 5 or profile.trail == 24 then return 3 end
     return 1
 end
 
@@ -1055,14 +1058,29 @@ local function drawEnemyFireSnapshot(shots, impacts)
         if length > 0 then dx, dy = shot.vx / length, shot.vy / length end
         local trail = math.min(profile.trail, profile.radius + length * shot.age)
         local tailX, tailY = shot.x - dx * trail, shot.y - dy * trail
-        g.setLineWidth(profile.radius * 1.8)
-        g.setColor(r, green, b, 0.25)
-        g.line(tailX, tailY, shot.x, shot.y)
-        g.setLineWidth(profile.isLaser and 3 or 1.5)
-        g.setColor(r, green, b, 0.9)
-        g.line(tailX, tailY, shot.x, shot.y)
-        g.setColor(1, 0.85, 0.75, 1)
-        g.circle("fill", shot.x, shot.y, profile.radius * 0.55)
+        if profile.isOrb then
+            g.setLineWidth(profile.radius * 1.1)
+            g.setColor(r, green, b, 0.20)
+            g.line(tailX, tailY, shot.x, shot.y)
+            g.setColor(r, green, b, 0.24)
+            g.circle("fill", shot.x, shot.y, profile.radius * 2.1)
+            g.setColor(r, green, b, 0.95)
+            g.circle("fill", shot.x, shot.y, profile.radius)
+            g.setLineWidth(1.0)
+            g.setColor(1, 0.94, 0.72, 0.85)
+            g.circle("line", shot.x, shot.y, profile.radius)
+            g.setColor(1, 0.97, 0.85, 1)
+            g.circle("fill", shot.x, shot.y, profile.radius * 0.56)
+        else
+            g.setLineWidth(profile.radius * 1.8)
+            g.setColor(r, green, b, 0.25)
+            g.line(tailX, tailY, shot.x, shot.y)
+            g.setLineWidth(profile.isLaser and 3 or 1.5)
+            g.setColor(r, green, b, 0.9)
+            g.line(tailX, tailY, shot.x, shot.y)
+            g.setColor(1, 0.85, 0.75, 1)
+            g.circle("fill", shot.x, shot.y, profile.radius * 0.55)
+        end
     end
     for i = 1, #impacts do
         local effect = impacts[i]
