@@ -1,7 +1,10 @@
 local Replay = require("src.replay.replay")
+local Ship = require("src.combat.ship")
 local Starfield = require("src.visual.starfield")
 local StageBackground = require("src.visual.stage_background")
+local BattleScene = require("src.visual.battle_scene")
 local Sfx = require("src.audio.sfx")
+local Bgm = require("src.audio.bgm")
 
 local okFfi, ffi = pcall(require, "ffi")
 
@@ -13,8 +16,6 @@ ReplayExport.HEIGHT = 720
 ReplayExport.FPS = 60
 ReplayExport.SAMPLE_RATE = 44100
 ReplayExport.CHANNELS = 2
-ReplayExport.MAX_POLYPHONY = 24
-ReplayExport.MIN_RETRIGGER_DT = 0.025
 ReplayExport.FRAMES_PER_STEP = 6
 
 local function isWindows()
@@ -109,8 +110,8 @@ local function loadWavFallback(filepath)
     }
 end
 
-local function loadAudioAsset(assetName, baseDir)
-    local relPath = "assets/audio/" .. assetName .. ".wav"
+local function loadAudioAsset(relPath, baseDir)
+    if not relPath then return nil end
     if love and love.sound and love.sound.newSoundData then
         local ok, sd = pcall(love.sound.newSoundData, relPath)
         if ok and sd then
@@ -141,8 +142,65 @@ local function loadAudioAsset(assetName, baseDir)
     return loadWavFallback(path)
 end
 
--- Offline audio mixer: mixes clip.sfxEvents into a 44.1kHz stereo 16-bit PCM WAV file.
--- Respects per-cue single-voice cutoff, min retrigger interval, max polyphony, and soft limiting.
+local function decodeBgmSegment(bgmPath, startOffsetSec, neededSourceSec)
+    if not bgmPath or not (love and love.sound and love.sound.newDecoder) then
+        return nil
+    end
+    local ok, dec = pcall(love.sound.newDecoder, bgmPath, 4096)
+    if not ok or not dec then
+        return nil
+    end
+    local sr = dec:getSampleRate()
+    local ch = dec:getChannelCount()
+    local dur = dec:getDuration() or 0
+    if dur <= 0 or sr <= 0 then
+        if dec.release then dec:release() end
+        return nil
+    end
+
+    local pos = (startOffsetSec or 0) % dur
+    pcall(dec.seek, dec, pos)
+
+    local targetSamples = math.ceil((neededSourceSec + 0.25) * sr)
+    local samples = {}
+    local count = 0
+    local loops = 0
+    while count < targetSamples and loops < 4 do
+        local sd = dec:decode()
+        if not sd then
+            loops = loops + 1
+            pcall(dec.seek, dec, 0)
+        else
+            local n = sd:getSampleCount()
+            for i = 0, n - 1 do
+                if count >= targetSamples then break end
+                local v
+                if ch == 1 then
+                    v = sd:getSample(i)
+                else
+                    local sum = 0
+                    for c = 1, ch do
+                        sum = sum + sd:getSample(i, c)
+                    end
+                    v = sum / ch
+                end
+                samples[count] = v
+                count = count + 1
+            end
+            sd:release()
+        end
+    end
+    if dec.release then dec:release() end
+    if count <= 1 then return nil end
+    return {
+        sampleRate = sr,
+        sampleCount = count,
+        samples = samples,
+    }
+end
+
+-- Offline audio mixer: mixes clip.sfxEvents (via Sfx.getCueSpec) and clip BGM
+-- into a 44.1kHz stereo 16-bit PCM WAV file matching live in-game audio behavior.
 function ReplayExport.mixAudioToWav(clip, wavPath, baseDir)
     local sampleRate = ReplayExport.SAMPLE_RATE
     local duration = math.max(0.1, clip.playbackDuration or 7.0)
@@ -156,56 +214,65 @@ function ReplayExport.mixAudioToWav(clip, wavPath, baseDir)
         for i = 0, totalFrames - 1 do mixBuf[i] = 0 end
     end
 
-    local cues = Sfx.getCues and Sfx.getCues() or {}
     local assetCache = {}
     local events = clip.sfxEvents or {}
 
-    -- Group filtered events (enforcing per-cue minimum retrigger interval)
+    -- Group events enforcing exact per-cue minInterval and voice pool polyphony from Sfx
     local lastCueTime = {}
+    local voiceSlots = {}
+    local voiceCursor = {}
     local activeList = {}
+
     for i = 1, #events do
         local ev = events[i]
-        local cue = cues[ev.cue]
-        if cue and ev.playbackTime >= 0 and ev.playbackTime < duration then
+        local spec = Sfx.getCueSpec and Sfx.getCueSpec(ev.cue) or nil
+        if spec and ev.playbackTime >= 0 and ev.playbackTime < duration then
+            local minInterval = spec.minInterval or 0
             local prev = lastCueTime[ev.cue]
-            if not prev or (ev.playbackTime - prev) >= ReplayExport.MIN_RETRIGGER_DT then
+            if minInterval <= 0 or not prev or (ev.playbackTime - prev) >= minInterval then
                 lastCueTime[ev.cue] = ev.playbackTime
-                activeList[#activeList + 1] = {
+                local voices = math.max(1, spec.voices or 1)
+                local slots = voiceSlots[ev.cue]
+                if not slots then
+                    slots = {}
+                    voiceSlots[ev.cue] = slots
+                    voiceCursor[ev.cue] = 1
+                end
+                local cursor = voiceCursor[ev.cue]
+                local prevInSlot = slots[cursor]
+                if prevInSlot then
+                    prevInSlot.cutoffTime = ev.playbackTime
+                end
+                local basePitch = ev.pitch or (spec.basePitch * (ev.pitchScale or 1.0))
+                local item = {
                     cueName = ev.cue,
-                    asset = cue[1],
-                    volume = cue[2] or 0.6,
-                    pitch = cue[3] or 1.0,
+                    path = spec.path,
+                    volume = spec.volume,
+                    basePitch = basePitch,
                     startTime = ev.playbackTime,
                     speed = ev.speed or 1.0,
                 }
+                slots[cursor] = item
+                voiceCursor[ev.cue] = (cursor % voices) + 1
+                activeList[#activeList + 1] = item
             end
         end
     end
 
-    -- Enforce single-voice cutoff per cue (matching Sfx.play: source:stop(); source:play())
-    for i = 1, #activeList do
-        local item = activeList[i]
-        for j = i + 1, #activeList do
-            if activeList[j].cueName == item.cueName then
-                item.cutoffTime = activeList[j].startTime
-                break
-            end
-        end
-    end
-
-    -- Mix each voice into mixBuf
+    -- Mix each SFX voice into mixBuf
     local mixedCount = 0
     for i = 1, #activeList do
         local item = activeList[i]
-        local asset = assetCache[item.asset]
+        local asset = assetCache[item.path]
         if asset == nil then
-            asset = loadAudioAsset(item.asset, baseDir) or false
-            assetCache[item.asset] = asset
+            asset = loadAudioAsset(item.path, baseDir) or false
+            assetCache[item.path] = asset
         end
         if asset and asset.sampleCount > 1 then
             mixedCount = mixedCount + 1
-            local pitchScale = math.max(0.62, math.min(1.0, 0.35 + 0.65 * item.speed))
-            local step = (asset.sampleRate / sampleRate) * item.pitch * pitchScale
+            local speedPitch = Replay.slowMoPitchScale(item.speed)
+            local effectivePitch = math.max(0.35, item.basePitch * speedPitch)
+            local step = (asset.sampleRate / sampleRate) * effectivePitch
             local startFrame = math.floor(item.startTime * sampleRate)
             local maxOutFrame = totalFrames - 1
             if item.cutoffTime then
@@ -227,7 +294,29 @@ function ReplayExport.mixAudioToWav(clip, wavPath, baseDir)
         end
     end
 
-    -- Write 16-bit stereo PCM WAV with soft tanh limiting
+    -- Mix in-game level BGM if recorded in clip and decoder is available
+    local bgmPath = clip.bgmLevel and Bgm.getTrackPath and Bgm.getTrackPath(clip.bgmLevel) or nil
+    if bgmPath then
+        local bgmData = decodeBgmSegment(bgmPath, clip.bgmOffset or 0, clip.clipDuration or duration)
+        if bgmData and bgmData.sampleCount > 1 then
+            local bgmVol = Bgm.getVolume and Bgm.getVolume() or Bgm.DEFAULT_VOLUME or 0.45
+            local bgmSamples = bgmData.samples
+            local bgmMax = bgmData.sampleCount - 1
+            local baseRateRatio = bgmData.sampleRate / sampleRate
+            local bgmPos = 0
+            for outIdx = 0, totalFrames - 1 do
+                if bgmPos >= bgmMax then break end
+                local i0 = math.floor(bgmPos)
+                local frac = bgmPos - i0
+                local s = bgmSamples[i0] + (bgmSamples[i0 + 1] - bgmSamples[i0]) * frac
+                mixBuf[outIdx] = mixBuf[outIdx] + s * bgmVol
+                local _, speed = Replay.mapPlaybackTime(clip, outIdx / sampleRate)
+                bgmPos = bgmPos + baseRateRatio * Replay.slowMoPitchScale(speed)
+            end
+        end
+    end
+
+    -- Write 16-bit stereo PCM WAV with soft limiting
     local f, err = io.open(wavPath, "wb")
     if not f then
         return false, "오디오 임시 파일 생성 실패: " .. tostring(err)
@@ -244,7 +333,7 @@ function ReplayExport.mixAudioToWav(clip, wavPath, baseDir)
     f:write("WAVE")
     f:write("fmt ")
     f:write(writeU32LE(16))
-    f:write(writeU16LE(1)) -- PCM
+    f:write(writeU16LE(1))
     f:write(writeU16LE(numChannels))
     f:write(writeU32LE(sampleRate))
     f:write(writeU32LE(byteRate))
@@ -257,7 +346,6 @@ function ReplayExport.mixAudioToWav(clip, wavPath, baseDir)
     local chunkLen = 0
     for i = 0, totalFrames - 1 do
         local v = mixBuf[i]
-        -- Smooth soft-limiter preventing clipping when many SFX overlap
         local limited = v / (1 + math.abs(v) * 0.35)
         if limited > 1 then limited = 1 elseif limited < -1 then limited = -1 end
         local pcm = math.floor(limited * 32767 + 0.5)
@@ -373,6 +461,7 @@ function ReplayExport.start(clip, fonts)
     local canvas = love.graphics.newCanvas(w, h, { msaa = 4 })
     local stars = Starfield.new(w, h)
     local stageBackground = StageBackground.new(w, h, { level = clip.level or StageBackground.DEFAULT_LEVEL })
+    Replay.syncBackgroundToClip(stageBackground, clip)
 
     return setmetatable({
         clip = clip,
@@ -433,21 +522,15 @@ function ReplayExport:step(maxFrames)
         local pbTime = self.frameIndex * dt
         local srcTime, speed = Replay.mapPlaybackTime(self.clip, pbTime)
         local f0, f1, alpha = Replay.sampleClipFrame(self.clip, srcTime)
-        local vx = (f0.shipVx + f0.shipWrapVx) * (1 - alpha) + (f1.shipVx + f1.shipWrapVx) * alpha
-        local vy = (f0.shipVy + f0.shipWrapVy) * (1 - alpha) + (f1.shipVy + f1.shipWrapVy) * alpha
-        local boostLevel = f0.shipBoostLevel * (1 - alpha) + f1.shipBoostLevel * alpha
-        local surge = 1050 * boostLevel
-        if self.stageBackground then
-            local bgBoost = 120 * boostLevel
-            self.stageBackground:update(dt * speed,
-                vx + f0.shipBoostX * bgBoost,
-                vy + f0.shipBoostY * bgBoost,
-                self.width, self.height)
-        end
-        self.stars:update(dt * speed,
-            120 + vx * 2.8 + f0.shipBoostX * surge,
-            -290 + vy * 2.8 + f0.shipBoostY * surge,
-            f0.shipAccelerating and 1 or 0, self.width, self.height, boostLevel)
+        local shipProxy = Ship.buildReplayProxy(
+            f0.layers and f0.layers.ship,
+            f1.layers and f1.layers.ship,
+            alpha)
+        BattleScene.updateEnvironment(dt * speed, {
+            ship = shipProxy,
+            stageBackground = self.stageBackground,
+            stars = self.stars,
+        }, self.width, self.height, { scale = 1 })
 
         love.graphics.push("all")
         love.graphics.setCanvas(self.canvas)
