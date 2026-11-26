@@ -243,9 +243,17 @@ local function buildPartSpecRows(def, penaltyPct)
     if cat == "weapon" then
         local damage = def.damage or 0
         local shotCount = def.shotCount or 1
-        local dmgStr = shotCount > 1
-            and string.format("%s x %d발", formatNum(damage), shotCount)
-            or string.format("%s (%d발)", formatNum(damage), shotCount)
+        local burstCount = def.burstCount or 1
+        local dmgStr
+        if burstCount > 1 and shotCount == 1 then
+            dmgStr = string.format("%s x %d연발", formatNum(damage), burstCount)
+        elseif burstCount > 1 then
+            dmgStr = string.format("%s x %d발 (%d연발)", formatNum(damage), shotCount, burstCount)
+        elseif shotCount > 1 then
+            dmgStr = string.format("%s x %d발", formatNum(damage), shotCount)
+        else
+            dmgStr = string.format("%s (%d발)", formatNum(damage), shotCount)
+        end
         local interval = def.fireInterval or 0
         local rof = interval > 0 and (1 / interval) or 0
         local enCost = math.floor((def.baseBatteryCost or 0) * mult + 0.5)

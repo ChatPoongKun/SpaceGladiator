@@ -259,9 +259,11 @@ function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameF
     local rocketSpeed = (cfg and cfg.projectileSpeed ~= nil) and cfg.projectileSpeed
         or (def and def.projectileSpeed)
         or 600
+    local ejectAngles = (cfg and cfg.ejectAnglesDeg) or (def and def.ejectAnglesDeg)
+    local maxBend = (cfg and cfg.ejectBend) or (def and def.ejectBend) or rocketMaxBend
     local firstMissile = nil
     local distance = math.sqrt((targetX - spec.x) ^ 2 + (targetY - spec.y) ^ 2)
-    for _, offset in ipairs(offsets) do
+    for offsetIdx, offset in ipairs(offsets) do
         local a = (spec.baseAngle + offset) % tau
         local rdx, rdy = math.sin(a), -math.cos(a)
         local tx = targetX
@@ -282,9 +284,24 @@ function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameF
             emitTrailEmbers = (spec.projectileStyle == "salvo_lance"),
         }
         local dist = math.sqrt((tx - spec.x) ^ 2 + (ty - spec.y) ^ 2)
-        local bend = turret.launchSide * math.min(rocketMaxBend, dist * 0.18)
-        turret.launchSide = -turret.launchSide
-        missile.bendX, missile.bendY = -rdy * bend * camera.zoom, rdx * bend * camera.zoom
+        local bend = math.min(maxBend, dist * 0.18)
+        if ejectAngles and #ejectAngles > 0 then
+            local angleIdx = (((spec.burstIndex or 1) - 1 + offsetIdx - 1) % #ejectAngles) + 1
+            local ejectDeg = ejectAngles[angleIdx]
+            local phi = math.rad(ejectDeg)
+            local fdx = dist > 1e-6 and ((tx - spec.x) / dist) or rdx
+            local fdy = dist > 1e-6 and ((ty - spec.y) / dist) or rdy
+            local rx, ry = -fdy, fdx
+            local ex = fdx * math.cos(phi) + rx * math.sin(phi)
+            local ey = fdy * math.cos(phi) + ry * math.sin(phi)
+            missile.bendX, missile.bendY = ex * bend * camera.zoom, ey * bend * camera.zoom
+            missile.ejectAngleDeg = ejectDeg
+        else
+            local signedBend = turret.launchSide * bend
+            turret.launchSide = -turret.launchSide
+            missile.bendX, missile.bendY = -rdy * signedBend * camera.zoom, rdx * signedBend * camera.zoom
+            missile.ejectAngleDeg = signedBend >= 0 and 90 or -90
+        end
         missile.startScreenX, missile.startScreenY = camera:worldToScreen(spec.x, spec.y, width, height)
         missile.targetScreenX, missile.targetScreenY = camera:worldToScreen(tx, ty, width, height)
         missile.lifetime = dist / rocketSpeed
@@ -350,23 +367,33 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         ship.battery = ship.battery - batteryCost
     end
 
-    -- Queue burst follow-up shots for the burst support chip.
-    if cfg and (cfg.extraBurst or 0) > 0 and not opts.fromBurst then
-        for b = 1, cfg.extraBurst do
+    local def = weapon and ModulesData.getByWeaponIndex(weapon) or nil
+
+    -- Queue module-defined salvo shots plus any burst support chip follow-ups.
+    local baseBurstCount = math.max(1, math.floor((cfg and cfg.burstCount ~= nil) and cfg.burstCount
+        or (def and def.burstCount)
+        or 1))
+    local extraBurst = (cfg and cfg.extraBurst) or 0
+    local totalFollowUps = math.max(0, (baseBurstCount - 1) + extraBurst)
+    local burstInterval = (cfg and cfg.burstInterval ~= nil) and cfg.burstInterval
+        or (def and def.burstInterval)
+        or 0.06
+    if totalFollowUps > 0 and not opts.fromBurst then
+        for b = 1, totalFollowUps do
             self.burstQueue[#self.burstQueue + 1] = {
-                delay = b * 0.06,
+                delay = b * burstInterval,
                 weapon = weapon,
                 angle = opts.angle,
                 targetX = targetX,
                 targetY = targetY,
                 weaponBuild = cfg,
                 free = true,
+                burstIndex = b + 1,
             }
         end
     end
 
     self.shotsFired = self.shotsFired + 1
-    local def = weapon and ModulesData.getByWeaponIndex(weapon) or nil
     local fireMode = (cfg and cfg.fireMode)
         or (def and def.fireMode)
         or (weapon == 3 and "beam" or (weapon == 2 and "rocket" or "projectile"))
@@ -412,6 +439,7 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         damage = math.max(0.1, baseDamage * (cfg and cfg.damageMult or 1)),
         baseShotCount = baseShotCount,
         baseSpreadRad = baseSpreadRad,
+        burstIndex = opts.burstIndex or 1,
     }
     local handler = Turret.fireModes[fireMode] or Turret.fireModes.projectile
     return handler(self, ship, targetX, targetY, enemies, frameFraction, camera, width, height, cfg, opts, spec)
@@ -505,6 +533,15 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                 end
             end
         end
+        if self.burstQueue and #self.burstQueue > 0 then
+            for _, q in ipairs(self.burstQueue) do
+                if q.delay <= eps then
+                    step = 0
+                elseif q.delay < step then
+                    step = q.delay
+                end
+            end
+        end
         if self.beam then
             self.beam.age = self.beam.age + step
             if self.beam.age >= beamLifetime then self.beam = nil end
@@ -519,11 +556,11 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
             for qi = #self.burstQueue, 1, -1 do
                 local q = self.burstQueue[qi]
                 q.delay = q.delay - step
-                if q.delay <= 0 then
+                if q.delay <= eps then
                     table.remove(self.burstQueue, qi)
                     self:fire(ship, mouseWorldX, mouseWorldY, enemies,
-                        dt > 0 and (dt - remaining) / dt or 0, camera, width, height,
-                        q.weaponBuild, { weapon = q.weapon, angle = q.angle, free = q.free, fromBurst = true })
+                        dt > 0 and (dt - remaining + step) / dt or 0, camera, width, height,
+                        q.weaponBuild, { weapon = q.weapon, angle = q.angle, free = q.free, fromBurst = true, burstIndex = q.burstIndex })
                 end
             end
         end

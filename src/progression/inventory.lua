@@ -661,6 +661,10 @@ local function newWeaponConfig(def, mod)
         fireInterval = def and def.fireInterval or nil,
         damage = def and def.damage or nil,
         shotCount = def and def.shotCount or nil,
+        burstCount = def and def.burstCount or nil,
+        burstInterval = def and def.burstInterval or nil,
+        ejectAnglesDeg = def and def.ejectAnglesDeg or nil,
+        ejectBend = def and def.ejectBend or nil,
         spreadDeg = def and def.spreadDeg or nil,
         projectileSpeed = def and def.projectileSpeed or nil,
         projectileRange = def and def.projectileRange or nil,
@@ -899,6 +903,10 @@ function Inventory:computeBuild(feverActive)
                 wCfg.fireInterval = wCfg.fireInterval or def.fireInterval
                 wCfg.damage = wCfg.damage or def.damage
                 wCfg.shotCount = wCfg.shotCount or def.shotCount
+                wCfg.burstCount = wCfg.burstCount or def.burstCount
+                wCfg.burstInterval = wCfg.burstInterval or def.burstInterval
+                wCfg.ejectAnglesDeg = wCfg.ejectAnglesDeg or def.ejectAnglesDeg
+                wCfg.ejectBend = wCfg.ejectBend or def.ejectBend
                 wCfg.spreadDeg = wCfg.spreadDeg or def.spreadDeg
                 wCfg.projectileSpeed = wCfg.projectileSpeed or def.projectileSpeed
                 wCfg.projectileRange = wCfg.projectileRange or def.projectileRange
