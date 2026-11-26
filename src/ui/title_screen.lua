@@ -270,6 +270,10 @@ local function buildMeshes()
             { pos = 0.45, p.railLine[1], p.railLine[2], p.railLine[3], 0.24 },
             { pos = 1.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.34 },
         }, false),
+        menuSpineFadeBottom = Theme.createGradientMesh({
+            { pos = 0.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.30 },
+            { pos = 1.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.00 },
+        }, false),
         menuActivePlateMesh = createActivePlateMesh(MENU_WIDTH, ROW_H),
         menuActiveInnerGlowMesh = createActiveInnerGlowMesh(MENU_WIDTH, ROW_H),
         menuTriangleMesh = createTriangleMesh(TRI_W, ROW_H),
@@ -288,13 +292,6 @@ local function buildMeshes()
             { pos = 0.50, 1.0, 1.0, 1.0, 0.98 },
             { pos = 0.58, bright[1], bright[2], bright[3], 0.65 },
             { pos = 1.00, 1.0, 1.0, 1.0, 0.00 },
-        }, true),
-        -- Subtle fading footer hairline
-        footerRule = Theme.createGradientMesh({
-            { pos = 0.00, acc[1], acc[2], acc[3], 0.00 },
-            { pos = 0.08, acc[1], acc[2], acc[3], 0.26 },
-            { pos = 0.92, acc[1], acc[2], acc[3], 0.26 },
-            { pos = 1.00, acc[1], acc[2], acc[3], 0.00 },
         }, true),
     }
 end
@@ -383,29 +380,28 @@ local function drawMenuTickIcon(ix, cy, focus, alpha)
     g.line(pts)
 end
 
-local function drawKeycap(x, y, w, h, label, font, alpha, iconKind)
-    local g = love.graphics
-    local c = Theme.colors
-    Theme.setColor(c.panelBg, 0.72 * alpha)
-    g.rectangle("fill", x, y, w, h, 3, 3)
-    Theme.setColor(c.panelBorder, 0.68 * alpha)
-    g.rectangle("line", x + 0.5, y + 0.5, w - 1, h - 1, 3, 3)
-
-    if iconKind == "up" or iconKind == "down" then
-        Theme.setColor(c.accentBright, 0.85 * alpha)
-        local cx, cy = x + w * 0.5, y + h * 0.5
-        if iconKind == "up" then
-            g.polygon("fill", cx, cy - 3.2, cx + 3.6, cy + 2.4, cx - 3.6, cy + 2.4)
-        else
-            g.polygon("fill", cx, cy + 3.2, cx + 3.6, cy - 2.4, cx - 3.6, cy - 2.4)
-        end
-    elseif label and font then
-        g.setFont(font)
-        Theme.setColor(c.textPrimary, 0.86 * alpha)
-        local tw = font:getWidth(label)
-        local th = font:getHeight()
-        g.print(label, math.floor(x + (w - tw) * 0.5 + 0.5), math.floor(y + (h - th) * 0.5 + 0.5))
-    end
+local function getFrameAnchors(width, height, px, py)
+    local spineX = MENU_LEFT + px
+    local outerX = spineX - 38
+    local farX = spineX - 48
+    local shelfY = height - 58 + py
+    local nodeY = shelfY - 16
+    local outerCornerY = nodeY - 38
+    local splitX = spineX + 130
+    local baseY = shelfY + 12
+    return {
+        spineX = spineX,
+        outerX = outerX,
+        farX = farX,
+        shelfY = shelfY,
+        nodeY = nodeY,
+        outerCornerY = outerCornerY,
+        splitX = splitX,
+        baseY = baseY,
+        rightStepX1 = width - 134 + px,
+        rightStepX2 = width - 126 + px,
+        rightShelfY = baseY - 8,
+    }
 end
 
 function TitleScreen.new()
@@ -753,7 +749,7 @@ function TitleScreen:_drawHeroTitle(fonts, width, logoP, ruleP, launchP)
     g.pop()
 end
 
-function TitleScreen:_drawLeftMenu(menu, fonts, selected, launchP)
+function TitleScreen:_drawLeftMenu(menu, fonts, selected, width, height, launchP)
     local g = love.graphics
     local c = Theme.colors
     local p = MENU_PALETTE
@@ -776,9 +772,10 @@ function TitleScreen:_drawLeftMenu(menu, fonts, selected, launchP)
     local buttonFont = fonts.titleButton or fonts.menuButton
     local firstIntroA = self:_menuItemIntro(1)
     local railAlpha = firstIntroA * launchMenuAlpha
-    local spineX = MENU_LEFT + px + launchSlideX
+    local fa = getFrameAnchors(width, height, px, py)
+    local frameSpineX = fa.spineX
+    local spineX = frameSpineX + launchSlideX
     local railTop = topY + py
-    local railBot = railTop + totalH
     local breathe = 0.88 + 0.12 * math.sin(self.elapsed * 2.5)
 
     local activeItem = items[selected] or items[1]
@@ -788,39 +785,81 @@ function TitleScreen:_drawLeftMenu(menu, fonts, selected, launchP)
 
     g.push("all")
 
-    -- 1. Dotted circular orbital arc framing the left menu
+    -- 1. Rotating dotted circular orbital quadrant framing the left menu
     if railAlpha > 0.01 then
-        local arcCx = spineX - 8
-        local arcCy = railTop + 62
+        local arcCx = frameSpineX - 2
+        local arcCy = railTop + 60
         local arcR = 166
-        local startAng = math.rad(-84)
-        local endAng = math.rad(74)
-        local dotCount = 88
-        for i = 0, dotCount do
-            local t = i / dotCount
-            local ang = startAng + (endAng - startAng) * t
-            local dx = arcCx + math.cos(ang) * arcR
-            local dy = arcCy + math.sin(ang) * arcR
-            local endFade = math.sin(t * math.pi) ^ 0.55
-            Theme.setColor(p.railLine, 0.22 * endFade * railAlpha)
-            g.circle("fill", dx, dy, 0.85)
+        local dotCount = 120
+        local rotAngle = self.elapsed * 0.16
+        local minAng = -math.pi * 0.50
+        local maxAng = math.pi * 0.45
+
+        for i = 0, dotCount - 1 do
+            local rawAng = (i / dotCount) * (math.pi * 2) + rotAngle
+            local ang = ((rawAng + math.pi) % (math.pi * 2)) - math.pi
+            if ang >= minAng and ang <= maxAng then
+                local edgeFade = Theme.smoothstep(-math.pi * 0.50, -math.pi * 0.42, ang)
+                    * (1 - Theme.smoothstep(math.pi * 0.34, math.pi * 0.45, ang))
+                local cosA = math.cos(ang)
+                local sinA = math.sin(ang)
+                local dx = arcCx + cosA * arcR
+                local dy = arcCy + sinA * arcR
+                if i % 30 == 0 then
+                    Theme.setColor(p.iceBright, 0.36 * edgeFade * railAlpha)
+                    g.setLineWidth(1)
+                    g.line(
+                        arcCx + cosA * (arcR - 3.5), arcCy + sinA * (arcR - 3.5),
+                        arcCx + cosA * (arcR + 1.5), arcCy + sinA * (arcR + 1.5)
+                    )
+                end
+                if i % 10 == 0 then
+                    Theme.setColor(p.iceBright, 0.48 * edgeFade * railAlpha)
+                    g.circle("fill", dx, dy, 1.35)
+                else
+                    Theme.setColor(p.railLine, 0.24 * edgeFade * railAlpha)
+                    g.circle("fill", dx, dy, 0.9)
+                end
+            end
         end
+
+        -- Stationary subtle anchor pip where the arc meets the spine at top
+        Theme.setColor(p.iceBright, 0.55 * railAlpha)
+        g.circle("fill", frameSpineX, arcCy - arcR, 1.35)
     end
 
-    -- 2. Left structural telemetry frame (vertical spine, upper notches, outer chamfered rail, corner node)
+    -- 2. Left structural telemetry frame (full outer perimeter rails, upper spine, lower corner node)
     if railAlpha > 0.01 then
-        -- Upper fading spine segment + telemetry tick marks
-        Theme.drawGradientRect(m.menuSpineFadeTop, spineX - 0.5, railTop - 165, 1, 165, railAlpha)
-        Theme.setColor(p.railLine, 0.24 * railAlpha)
-        g.setLineWidth(1)
-        g.line(spineX - 3, railTop - 122, spineX + 3, railTop - 122)
-        g.line(spineX - 2, railTop - 88, spineX, railTop - 88)
-        g.line(spineX - 2, railTop - 44, spineX, railTop - 44)
+        local upperSpineTop = 103 + py
+        local upperArcTop = railTop + 60 - 166
 
-        -- Main solid vertical spine through menu rows down to corner baseline
+        -- Far-left faint full-height hairline
+        Theme.setColor(p.railLine, 0.11 * railAlpha)
+        g.setLineWidth(1)
+        g.line(fa.farX, -10, fa.farX, height + 10)
+
+        -- Upper outer left rail & diagonal chamfer branches
+        Theme.setColor(p.railLine, 0.22 * railAlpha)
+        g.setLineWidth(1)
+        g.line(fa.outerX, -10, fa.outerX, railTop - 120, frameSpineX, railTop - 82)
+        Theme.setColor(p.railLine, 0.14 * railAlpha)
+        g.line(fa.outerX, 65 + py, frameSpineX, upperSpineTop)
+
+        -- Upper fading spine segment + telemetry dashed ticks between arc top and menu top
+        Theme.drawGradientRect(m.menuSpineFadeTop, frameSpineX - 0.5, upperSpineTop, 1, railTop - upperSpineTop, railAlpha)
+        Theme.setColor(p.iceBright, 0.28 * railAlpha)
+        g.setLineWidth(1)
+        for tickY = upperArcTop + 14, railTop - 12, 16 do
+            g.line(frameSpineX, tickY, frameSpineX, tickY + 5)
+        end
+        Theme.setColor(p.railLine, 0.24 * railAlpha)
+        g.line(frameSpineX - 3, upperArcTop, frameSpineX + 3, upperArcTop)
+
+        -- Main solid vertical spine through menu rows down to bottom shelf
         Theme.setColor(p.railLine, 0.30 * railAlpha)
         g.setLineWidth(1)
-        g.line(spineX, railTop, spineX, railBot + 34)
+        g.line(frameSpineX, railTop, frameSpineX, fa.shelfY)
+        Theme.drawGradientRect(m.menuSpineFadeBottom, frameSpineX - 0.5, fa.shelfY, 1, 26, railAlpha)
 
         -- Subtle additive highlight along spine behind active button
         if indA > 0.01 then
@@ -829,26 +868,27 @@ function TitleScreen:_drawLeftMenu(menu, fonts, selected, launchP)
             g.setBlendMode("alpha")
         end
 
-        -- Outer left chamfered structural rail
-        Theme.setColor(p.railLine, 0.26 * railAlpha)
+        -- Lower outer left rail & 45-degree chamfer through glowing node to bottom shelf
+        Theme.setColor(p.railLine, 0.28 * railAlpha)
         g.setLineWidth(1)
         g.line(
-            spineX - 30, railTop - 150,
-            spineX - 30, railTop - 74,
-            spineX - 20, railTop - 64,
-            spineX - 20, railBot + 2,
-            spineX,      railBot + 22,
-            spineX + 12, railBot + 34
+            fa.outerX,    railTop - 88,
+            fa.outerX,    fa.outerCornerY,
+            frameSpineX,  fa.nodeY,
+            frameSpineX + 16, fa.shelfY
         )
-        -- Faint fading horizontal baseline extending right under the menu
-        Theme.drawGradientRect(m.menuDivider, spineX + 12, railBot + 34, 240, 1, 0.65 * railAlpha)
 
-        -- Glowing corner node at (spineX, railBot + 22)
+        -- Glowing intersection corner node at (frameSpineX, fa.nodeY)
         g.setBlendMode("add")
-        Theme.drawRadialHalo(m.menuFlareHalo, spineX, railBot + 22, 6, 6, 0.55 * railAlpha)
+        Theme.drawRadialHalo(m.menuFlareHalo, frameSpineX, fa.nodeY, 7, 7, 0.60 * railAlpha)
+        Theme.drawRadialHalo(m.menuFlareCore, frameSpineX, fa.nodeY, 3.5, 3.5, 0.72 * railAlpha)
         g.setBlendMode("alpha")
-        Theme.setColor(p.iceWhite, 0.85 * railAlpha)
-        g.circle("fill", spineX, railBot + 22, 1.8)
+        Theme.setColor(p.iceWhite, 0.90 * railAlpha)
+        g.circle("fill", frameSpineX, fa.nodeY, 2.0)
+
+        -- Subtle cross pip at spine/shelf intersection
+        Theme.setColor(p.railLine, 0.35 * railAlpha)
+        g.circle("fill", frameSpineX, fa.shelfY, 1.1)
     end
 
     -- 3. Unselected row dividers & spine intersection pips
@@ -1036,63 +1076,78 @@ function TitleScreen:_drawBottomBar(fonts, width, height, footerP, launchP)
     if alpha <= 0.005 then return end
 
     local g = love.graphics
-    local c = Theme.colors
+    local p = MENU_PALETTE
     local m = self.meshes
-    local smallFont = fonts.menuSmall or fonts.small
-    local microFont = fonts.titleMicro or smallFont
-
-    local ruleY = height - 54
-    local barY = height - 34
-    local leftX = MENU_LEFT - 18
-    local rightX = width - 68
+    local microFont = fonts.titleMicro or fonts.menuSmall or fonts.small
+    local px = self.parallaxX * TitleScreen.PARALLAX_UI_MAX_PX * 0.55
+    local py = self.parallaxY * TitleScreen.PARALLAX_UI_MAX_PX * 0.55
+    local fa = getFrameAnchors(width, height, px, py)
 
     g.push("all")
-    -- Hairline bottom divider
-    Theme.drawGradientRect(m.footerRule, leftX - 16, ruleY, (rightX - leftX) + 32, 1, alpha)
 
-    -- Left: pulsing status dot + title/version metadata
-    local dotPulse = 0.62 + 0.38 * math.sin(self.elapsed * 3.0)
-    Theme.setColor(c.accentBright, dotPulse * 0.85 * alpha)
-    g.circle("fill", leftX + 4, barY + 6, 2.6)
+    -- 1. Seamless lower perimeter frame continuing from (fa.spineX + 16, fa.shelfY)
+    Theme.setColor(p.railLine, 0.30 * alpha)
+    g.setLineWidth(1)
+    g.line(fa.spineX + 16, fa.shelfY, fa.splitX, fa.shelfY)
+    -- Fading upper horizontal continuation rightward
+    Theme.drawGradientRect(m.menuDivider, fa.splitX, fa.shelfY, 270, 1, 0.85 * alpha)
+    -- Step down and run across the entire bottom edge to the stepped-up right corner
+    Theme.setColor(p.railLine, 0.30 * alpha)
+    g.line(
+        fa.splitX,      fa.shelfY,
+        fa.splitX + 12, fa.baseY,
+        fa.rightStepX1, fa.baseY,
+        fa.rightStepX2, fa.rightShelfY,
+        width + 10,     fa.rightShelfY
+    )
+
+    -- Small luminous node at the shelf split point
     g.setBlendMode("add")
-    Theme.setColor(c.accent, dotPulse * 0.35 * alpha)
-    g.circle("fill", leftX + 4, barY + 6, 6.2)
+    Theme.drawRadialHalo(m.menuFlareHalo, fa.splitX, fa.shelfY, 4.5, 4.5, 0.48 * alpha)
     g.setBlendMode("alpha")
+    Theme.setColor(p.iceWhite, 0.86 * alpha)
+    g.circle("fill", fa.splitX, fa.shelfY, 1.4)
 
-    g.setFont(smallFont)
-    Theme.setColor(c.textMuted, 0.72 * alpha)
-    g.print("SPACE GLADIATOR  /  " .. TitleScreen.GAME_VERSION, leftX + 16, math.floor(barY - 1))
+    -- 2. Bottom-left tracked version text + 3 slanted diagonal bars
+    Theme.setColor(p.idleText, 0.68 * alpha)
+    drawTrackedText(microFont, TitleScreen.GAME_VERSION, fa.spineX + 10, fa.baseY + 5, 3.6, "left")
 
-    -- Right: clean keycap badges with procedural vector arrow icons (100% glyph-safe)
-    local capH = 19
-    local capY = math.floor(barY - 3)
-    local curX = rightX
-    local labelY = math.floor(barY - 1)
-
-    local function pushHint(text, capLabel, capW, iconKind)
-        g.setFont(smallFont)
-        local tw = smallFont:getWidth(text)
-        curX = curX - tw
-        Theme.setColor(c.textMuted, 0.72 * alpha)
-        g.print(text, math.floor(curX), labelY)
-        curX = curX - 7 - capW
-        drawKeycap(curX, capY, capW, capH, capLabel, microFont, alpha, iconKind)
-        curX = curX - 20
+    local barStartX = fa.spineX + 82
+    local barTopY = fa.baseY + 5
+    local barW = 7.5
+    local barH = 9.5
+    local barSkew = 9.5
+    local barStride = 14
+    g.setColor(0.36, 0.48, 0.60, 0.38 * alpha)
+    for i = 0, 2 do
+        local bx = barStartX + i * barStride
+        g.polygon(
+            "fill",
+            bx,                barTopY,
+            bx + barW,         barTopY,
+            bx + barW + barSkew, barTopY + barH,
+            bx + barSkew,      barTopY + barH
+        )
     end
 
-    pushHint("선택", "CLICK", 44, nil)
-    pushHint("확인", "ENTER", 48, nil)
+    -- 3. Bottom-right 4 subtle indicator dots
+    local dotY = fa.baseY + 9
+    local dotXs = {
+        width - 88 + px,
+        width - 68 + px,
+        width - 48 + px,
+        width - 28 + px,
+    }
+    g.setBlendMode("add")
+    Theme.drawRadialHalo(m.menuFlareHalo, dotXs[1], dotY, 4.5, 4.5, 0.36 * alpha)
+    g.setBlendMode("alpha")
+    Theme.setColor(p.iceBright, 0.52 * alpha)
+    g.circle("fill", dotXs[1], dotY, 2.0)
 
-    -- Up/Down vector arrow keycap pair + "이동"
-    g.setFont(smallFont)
-    local moveW = smallFont:getWidth("이동")
-    curX = curX - moveW
-    Theme.setColor(c.textMuted, 0.72 * alpha)
-    g.print("이동", math.floor(curX), labelY)
-    curX = curX - 7 - 20
-    drawKeycap(curX, capY, 20, capH, nil, nil, alpha, "down")
-    curX = curX - 4 - 20
-    drawKeycap(curX, capY, 20, capH, nil, nil, alpha, "up")
+    Theme.setColor(p.railLine, 0.24 * alpha)
+    for i = 2, 4 do
+        g.circle("fill", dotXs[i], dotY, 1.25)
+    end
 
     g.pop()
 end
@@ -1103,7 +1158,7 @@ function TitleScreen:draw(menu, fonts, selected, width, height)
 
     self:_drawScrims(width, height, scrimAlpha)
     self:_drawHeroTitle(fonts, width, logoP, ruleP, 0)
-    self:_drawLeftMenu(menu, fonts, selected, 0)
+    self:_drawLeftMenu(menu, fonts, selected, width, height, 0)
     self:_drawBottomBar(fonts, width, height, footerP, 0)
 
     -- Cinematic intro fade-from-black veil
@@ -1124,7 +1179,7 @@ function TitleScreen:drawLaunchOverlay(fonts, width, height)
 
     self:_drawScrims(width, height, scrimAlpha)
     self:_drawHeroTitle(fonts, width, 1, 1, launchP)
-    self:_drawLeftMenu(self.launchMenu, fonts, self.launchSelected, launchP)
+    self:_drawLeftMenu(self.launchMenu, fonts, self.launchSelected, width, height, launchP)
     self:_drawBottomBar(fonts, width, height, 1, launchP)
 end
 
