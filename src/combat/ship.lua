@@ -59,6 +59,7 @@ function Ship.new(width, height)
         thrustBatteryCost = 0,
         baseWrapBonusSpeed = Ship.wrapBonusSpeed,
         wrapBonusSpeed = Ship.wrapBonusSpeed,
+        totalWeight = 0,
         wrapInvulnDuration = 0, invulnTimer = 0, invulnDuration = 0, wrapEvents = 0,
         combatPower = Ship.combatPower,
         damageCount = 0,
@@ -128,10 +129,11 @@ function Ship:applyBuild(build, opts)
         self.maxHull = build.maxHull or self.maxHull or 3
         self.maxBattery = build.maxBattery or 0
         self.batteryRecharge = build.batteryRecharge or 0
+        self.totalWeight = build.totalWeight or 0
         self.maxSpeed = build.maxSpeed or 0
-        self.thrust = build.thrust or Ship.thrust
+        self.thrust = build.thrust ~= nil and build.thrust or Ship.thrust
         self.boostSpeed = build.boostSpeed or 0
-        self.boostThrust = build.boostThrust or (self.boostSpeed > 0 and Ship.boostThrust or 0)
+        self.boostThrust = build.boostThrust ~= nil and build.boostThrust or (self.boostSpeed > 0 and Ship.boostThrust or 0)
         self.boostCost = (build.boostCost and build.boostCost > 0) and build.boostCost or Ship.boostCost
         self.thrustBatteryCost = build.thrustBatteryCost or 0
         self.wrapBonusSpeed = build.wrapBonusSpeed or Ship.wrapBonusSpeed

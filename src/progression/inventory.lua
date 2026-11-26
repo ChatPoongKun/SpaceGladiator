@@ -727,6 +727,7 @@ function Inventory:computeBuild(feverActive)
     local chassis = self.chassis or ChassisData.get(self.chassisId)
     local base = (chassis and chassis.baseStats) or {}
 
+    local baseWeight = base.weight or (chassis and chassis.weight) or 0
     local baseShield = base.maxShield or 0
     local baseShieldRegen = base.shieldRegen or 0
     local baseShieldRegenBatteryCost = base.shieldRegenBatteryCost or 0
@@ -735,10 +736,8 @@ function Inventory:computeBuild(feverActive)
     local baseHull = base.maxHull or 0
     local baseBattery = base.maxBattery or 0
     local baseRecharge = base.batteryRecharge or 0
-    local baseMaxSpeed = base.maxSpeed or 0
     local baseThrust = base.thrust or 0
     local baseBoostThrust = base.boostThrust or 0
-    local baseBoostSpeed = base.boostSpeed or 0
     local baseBoostCost = base.boostCost or 0
     local baseThrustBatteryCost = base.thrustBatteryCost or 0
     local baseWrapBonusSpeed = base.wrapBonusSpeed or 0
@@ -749,6 +748,11 @@ function Inventory:computeBuild(feverActive)
         chassis = chassis,
         specialEffect = chassis and chassis.specialEffect or nil,
 
+        -- Weight breakdown (chassis + all mounted modules)
+        chassisWeight = baseWeight,
+        moduleWeight = 0,
+        totalWeight = baseWeight,
+
         -- Absolute derived chassis + module stats
         maxShield = baseShield,
         shieldRegen = baseShieldRegen,
@@ -758,10 +762,10 @@ function Inventory:computeBuild(feverActive)
         maxHull = baseHull,
         maxBattery = baseBattery,
         batteryRecharge = baseRecharge,
-        maxSpeed = baseMaxSpeed,
+        maxSpeed = 0,
         thrust = baseThrust,
         boostThrust = baseBoostThrust,
-        boostSpeed = baseBoostSpeed,
+        boostSpeed = 0,
         boostCost = baseBoostCost,
         thrustBatteryCost = baseThrustBatteryCost,
         wrapBonusSpeed = baseWrapBonusSpeed,
@@ -776,10 +780,8 @@ function Inventory:computeBuild(feverActive)
         maxBatteryBonus = 0,
         batteryRechargeBonus = 0,
         batteryRechargeMult = 1.0,
-        maxSpeedBonus = 0,
         thrustBonus = 0,
         boostThrustBonus = 0,
-        boostSpeedBonus = 0,
         boostCostBase = 0,
         boostCostBonus = 0,
         thrustBatteryCostBonus = 0,
@@ -835,6 +837,9 @@ function Inventory:computeBuild(feverActive)
     for _, mod in ipairs(self.placed) do
         local def = mod.def
         local isDisabledWeapon = Inventory.isWeaponModule(mod) and mod.disabled == true
+        if def then
+            build.moduleWeight = build.moduleWeight + (def.weight or (def.stats and def.stats.weight) or 0)
+        end
         if not isDisabledWeapon and def then
             local cat = canonicalCategory(def.category)
             local catMult = Inventory.getDuplicateBatteryPenalty(cat, categoryCounts[cat])
@@ -851,10 +856,8 @@ function Inventory:computeBuild(feverActive)
                 build.maxArmorBonus = build.maxArmorBonus + (stats.maxArmor or 0)
                 build.maxBatteryBonus = build.maxBatteryBonus + (stats.maxBattery or 0)
                 build.batteryRechargeBonus = build.batteryRechargeBonus + (stats.batteryRecharge or 0)
-                build.maxSpeedBonus = build.maxSpeedBonus + (stats.maxSpeed or 0)
                 build.thrustBonus = build.thrustBonus + (stats.thrust or 0)
                 build.boostThrustBonus = build.boostThrustBonus + (stats.boostThrust or 0)
-                build.boostSpeedBonus = build.boostSpeedBonus + (stats.boostSpeed or 0)
                 build.boostCostBase = build.boostCostBase + (stats.boostCost or 0) * catMult
                 build.thrustBatteryCostBonus = build.thrustBatteryCostBonus + (stats.thrustBatteryCost or 0) * catMult
                 build.wrapBonusSpeedAdd = build.wrapBonusSpeedAdd + (stats.wrapBonusSpeed or 0)
@@ -978,10 +981,11 @@ function Inventory:computeBuild(feverActive)
     build.maxArmor = baseArmor + build.maxArmorBonus
     build.maxBattery = baseBattery + build.maxBatteryBonus
     build.batteryRecharge = (baseRecharge + build.batteryRechargeBonus) * build.batteryRechargeMult
-    build.maxSpeed = baseMaxSpeed + build.maxSpeedBonus
+    build.totalWeight = baseWeight + build.moduleWeight
     build.thrust = baseThrust + build.thrustBonus
     build.boostThrust = baseBoostThrust + build.boostThrustBonus
-    build.boostSpeed = baseBoostSpeed + build.boostSpeedBonus
+    build.maxSpeed = math.max(0, build.thrust - build.totalWeight)
+    build.boostSpeed = math.max(0, build.boostThrust - build.totalWeight)
     build.boostCost = math.floor((baseBoostCost + build.boostCostBase) + 0.5)
     if build.boostCost > 0 then
         build.boostCost = math.max(5, math.floor(build.boostCost + build.boostCostBonus + 0.5))
@@ -1035,6 +1039,13 @@ function Inventory:validateLoadout(feverActive)
             message = "제너레이터 모듈을 최소 1개 이상 장착해야 합니다.",
         }
     end
+    if thrusterCount >= 1 and (build.maxSpeed or 0) <= 0 then
+        warnings[#warnings + 1] = {
+            code = "overweight",
+            message = string.format("기체 총 무게(%d)가 추진력(%d) 이상이어서 이동할 수 없습니다.",
+                build.totalWeight or 0, build.thrust or 0),
+        }
+    end
 
     if (build.maxWeaponBatteryCost or 0) > build.maxBattery then
         warnings[#warnings + 1] = {
@@ -1056,6 +1067,7 @@ function Inventory:validateLoadout(feverActive)
         weaponCount = weaponCount,
         thrusterCount = thrusterCount,
         generatorCount = generatorCount,
+        totalWeight = build.totalWeight,
         maxBattery = build.maxBattery,
         batteryRecharge = build.batteryRecharge,
         shieldRegen = build.shieldRegen,

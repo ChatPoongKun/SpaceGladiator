@@ -765,8 +765,8 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
             if Inventory.isWeaponModule(inspectItem) and inspectItem.row then
                 statusSuffix = inspectItem.disabled and " · [비활성]" or " · [활성]"
             end
-            g.print(string.format("[%s] %s (%dx%d) · 소켓 %d/%d%s",
-                rarityLabel, inspectItem.def.name, iw, ih, inv:equippedSocketCount(inspectItem), inspectItem.maxSockets, statusSuffix),
+            g.print(string.format("[%s] %s (%dx%d) · 무게 %d · 소켓 %d/%d%s",
+                rarityLabel, inspectItem.def.name, iw, ih, inspectItem.def.weight or 0, inv:equippedSocketCount(inspectItem), inspectItem.maxSockets, statusSuffix),
                 textX, curY + 10)
         else
             local targetTxt = targetKoreanLabel[inspectItem.def.target] or inspectItem.def.target
@@ -905,7 +905,7 @@ function InventoryUI:draw(inv, fonts, width, height, feverActive, opts)
             string.format("· 배치 모듈: %d개 (활성 무기: %d개)  · 보관 칩: %d개", #inv.placed, #build.weaponModules, #inv.placedChips),
             string.format("· 실드 보너스: +%d   · 장갑 보너스: +%d", build.maxShieldBonus, build.maxArmorBonus),
             string.format("· 배터리 보너스: +%d   · 점수 배율: x%.2f", build.maxBatteryBonus, build.scoreMultiplier),
-            string.format("· 속도 보너스: +%d   · 부스트 보너스: +%d", build.maxSpeedBonus, build.boostSpeedBonus),
+            string.format("· 최대속력: %d   · 부스터 속력: %d   · 총 무게: %d", build.maxSpeed or 0, build.boostSpeed or 0, build.totalWeight or 0),
         }
         g.setColor(0.84, 0.92, 0.96, 0.95)
         for i, line in ipairs(lines) do

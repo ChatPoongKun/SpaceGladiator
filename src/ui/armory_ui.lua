@@ -104,8 +104,8 @@ local function formatModuleStatLines(def)
     local lines = {}
     local cat = def.category
     if cat == "weapon" then
-        lines[#lines + 1] = string.format("발사 배터리 %d  ·  발사 간격 %.2f초",
-            def.baseBatteryCost or 0, def.fireInterval or 0)
+        lines[#lines + 1] = string.format("발사 배터리 %d  ·  발사 간격 %.2f초  ·  무게 %d",
+            def.baseBatteryCost or 0, def.fireInterval or 0, def.weight or 0)
         lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개",
             def.w or 1, def.h or 1, def.maxSockets or 0)
     elseif cat == "defense" then
@@ -113,27 +113,28 @@ local function formatModuleStatLines(def)
         if (s.maxShield or 0) > 0 then
             lines[#lines + 1] = string.format("실드 +%d  ·  회복 +%s/s (지연 %s초)  ·  배터리 %s/s",
                 s.maxShield, formatNum(s.shieldRegen or 0), formatNum(s.shieldRegenDelay or 2), formatNum(s.shieldRegenBatteryCost or 0))
-            lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개  ·  중복 합산",
-                def.w or 1, def.h or 1, def.maxSockets or 0)
+            lines[#lines + 1] = string.format("무게 %d  ·  점유 크기 %dx%d  ·  서포트 칩 소켓 %d개  ·  중복 합산",
+                def.weight or 0, def.w or 1, def.h or 1, def.maxSockets or 0)
         else
             local parts = {}
             if (s.maxArmor or 0) > 0 then parts[#parts + 1] = string.format("아머 +%d", s.maxArmor) end
             if #parts == 0 then parts[1] = "방호 모듈" end
+            parts[#parts + 1] = string.format("무게 %d", def.weight or 0)
             lines[#lines + 1] = table.concat(parts, "  ·  ") .. "  ·  중복 장착 시 합산"
             lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개",
                 def.w or 1, def.h or 1, def.maxSockets or 0)
         end
     elseif cat == "thruster" then
         local s = def.stats or {}
-        lines[#lines + 1] = string.format("가속 소모 %d/s  ·  부스트 소모 %d  ·  최고속도 +%d",
-            s.thrustBatteryCost or 0, s.boostCost or 0, s.maxSpeed or 0)
-        lines[#lines + 1] = string.format("추진력 +%d  ·  부스트추진력 +%d  ·  부스트속도 +%d",
-            s.thrust or 0, s.boostThrust or 0, s.boostSpeed or 0)
+        lines[#lines + 1] = string.format("추진력 +%d  ·  부스트 추진력 +%d  ·  무게 %d",
+            s.thrust or 0, s.boostThrust or 0, def.weight or 0)
+        lines[#lines + 1] = string.format("가속 소모 %d/s  ·  부스트 소모 %d  ·  서포트 칩 소켓 %d개",
+            s.thrustBatteryCost or 0, s.boostCost or 0, def.maxSockets or 0)
     elseif cat == "generator" or cat == "battery" then
         local s = def.stats or {}
-        lines[#lines + 1] = string.format("배터리 총량 +%d  ·  초당 충전 +%d/s  ·  중복 합산",
-            s.maxBattery or 0, s.batteryRecharge or 0)
-        lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개",
+        lines[#lines + 1] = string.format("배터리 총량 +%d  ·  초당 충전 +%d/s  ·  무게 %d",
+            s.maxBattery or 0, s.batteryRecharge or 0, def.weight or 0)
+        lines[#lines + 1] = string.format("점유 크기 %dx%d  ·  서포트 칩 소켓 %d개  ·  중복 합산",
             def.w or 1, def.h or 1, def.maxSockets or 0)
     end
     return lines
@@ -143,20 +144,20 @@ local function formatBriefCatalogStats(def)
     if not def then return "" end
     local s = def.stats or {}
     if def.category == "weapon" then
-        return string.format("발사 %d · %.2fs · 소켓 %d",
-            def.baseBatteryCost or 0, def.fireInterval or 0, def.maxSockets or 0)
+        return string.format("발사 %d · %.2fs · 무게 %d · 소켓 %d",
+            def.baseBatteryCost or 0, def.fireInterval or 0, def.weight or 0, def.maxSockets or 0)
     elseif def.category == "defense" then
         if (s.maxShield or 0) > 0 then
-            return string.format("실드 +%d · 회복 %s/s · 배터리 %s/s",
-                s.maxShield, formatNum(s.shieldRegen or 0), formatNum(s.shieldRegenBatteryCost or 0))
+            return string.format("실드 +%d · 회복 %s/s · 무게 %d",
+                s.maxShield, formatNum(s.shieldRegen or 0), def.weight or 0)
         end
-        return string.format("아머 +%d · 소켓 %d", s.maxArmor or 0, def.maxSockets or 0)
+        return string.format("아머 +%d · 무게 %d · 소켓 %d", s.maxArmor or 0, def.weight or 0, def.maxSockets or 0)
     elseif def.category == "thruster" then
-        return string.format("속도 +%d · 가속 %d/s · 부스트 %d",
-            s.maxSpeed or 0, s.thrustBatteryCost or 0, s.boostCost or 0)
+        return string.format("추진 +%d · 부스트 +%d · 무게 %d",
+            s.thrust or 0, s.boostThrust or 0, def.weight or 0)
     elseif def.category == "generator" or def.category == "battery" then
-        return string.format("총량 +%d · 충전 +%d/s",
-            s.maxBattery or 0, s.batteryRecharge or 0)
+        return string.format("총량 +%d · 충전 +%d/s · 무게 %d",
+            s.maxBattery or 0, s.batteryRecharge or 0, def.weight or 0)
     end
     return ""
 end
@@ -739,7 +740,7 @@ function ArmoryUI:_drawInspectorPanel(inv, fonts, validationSummary)
         return
     end
 
-    local col1X, col2X, col3X = px + 20, px + 278, px + 532
+    local col1X, col2X, col3X = px + 20, px + 272, px + 516
     local rowY = #cautions > 0 and (py + 46) or (py + 52)
     local rowStep = #cautions > 0 and 26 or 28
     local hasDefPenalty = penalties.defense and penalties.defense.addPct > 0
@@ -756,9 +757,9 @@ function ArmoryUI:_drawInspectorPanel(inv, fonts, validationSummary)
         g.print(string.format("실드: %d", build.maxShield or 0), col1X, rowY)
     end
     Theme.setColor(c.textPrimary, 0.96)
-    g.print(string.format("아머: %d", build.maxArmor or 0), col1X, rowY + rowStep)
-    g.print(string.format("헐: %d", build.maxHull or 0), col1X, rowY + rowStep * 2)
-    g.print(string.format("장착 무기: %d개", validationSummary.weaponCount or 0), col1X, rowY + rowStep * 3)
+    g.print(string.format("아머: %d  ·  헐: %d", build.maxArmor or 0, build.maxHull or 0), col1X, rowY + rowStep)
+    g.print(string.format("장착 무기: %d개", validationSummary.weaponCount or 0), col1X, rowY + rowStep * 2)
+    g.print("특수 효과: " .. (ch and ch.specialEffect or "없음"), col1X, rowY + rowStep * 3)
 
     g.print(string.format("배터리 총량: %d", build.maxBattery or 0), col2X, rowY)
     g.print(string.format("초당 충전: +%.0f/s", build.batteryRecharge or 0), col2X, rowY + rowStep)
@@ -767,10 +768,10 @@ function ArmoryUI:_drawInspectorPanel(inv, fonts, validationSummary)
     g.print(string.format("부스트 소모: %d", build.boostCost or 0), col2X, rowY + rowStep * 3)
 
     Theme.setColor(c.textPrimary, 0.96)
-    g.print(string.format("최고속도: %d", build.maxSpeed or 0), col3X, rowY)
-    g.print(string.format("부스트속도: %d", build.boostSpeed or 0), col3X, rowY + rowStep)
-    g.print(string.format("추진력: %d (부스트 +%d)", build.thrust or 0, build.boostThrust or 0), col3X, rowY + rowStep * 2)
-    g.print("특수 효과: " .. (ch and ch.specialEffect or "없음"), col3X, rowY + rowStep * 3)
+    g.print(string.format("최대속력: %d", build.maxSpeed or 0), col3X, rowY)
+    g.print(string.format("부스터 속력: %d", build.boostSpeed or 0), col3X, rowY + rowStep)
+    g.print(string.format("추진력: %d (부스트 %d)", build.thrust or 0, build.boostThrust or 0), col3X, rowY + rowStep * 2)
+    g.print(string.format("총 무게: %d", build.totalWeight or 0), col3X, rowY + rowStep * 3)
 
     if #cautions > 0 then
         local stripX, stripY, stripW, stripH = px + 18, py + ph - 30, pw - 36, 22
@@ -839,9 +840,9 @@ function ArmoryUI:_drawChassisAndGridPanel(inv, fonts, isValid, warnings, summar
     Theme.setColor(c.textSecondary, 0.92)
     local baseInfo = ch.locked
         and string.format("섀시 %d/%d  ·  미해금 기체", self.chassisIndex, #ChassisData.list)
-        or string.format("섀시 %d/%d  ·  기본 장갑 %d · 선체 %d · 실드 %d",
+        or string.format("섀시 %d/%d  ·  장갑 %d · 선체 %d · 실드 %d · 무게 %d",
             self.chassisIndex, #ChassisData.list,
-            ch.baseStats.maxArmor or 0, ch.baseStats.maxHull or 0, ch.baseStats.maxShield or 0)
+            ch.baseStats.maxArmor or 0, ch.baseStats.maxHull or 0, ch.baseStats.maxShield or 0, ch.baseStats.weight or 0)
     g.printf(baseInfo, nextX + navW + 14, py + 15, px + pw - (nextX + navW + 26), "right")
 
     -- 2. Hangar Ship Silhouette + 5x3 Triangle Grid Overlay (y = 314..610)
