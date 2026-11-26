@@ -1255,12 +1255,7 @@ local function getHullMeshes(g)
     end
 
     -- Kind 2: EQUILATERAL (BOLTTHROWER — Nova Drift orchid-pink serrated pincer-jaws)
-    -- Kind 3: OBTUSE (BULWARK-PRIME)
-    local oDark = { 0.09, 0.035, 0.065 }
-    local oAmber = { 0.52, 0.24, 0.09 }
-    local oLHi, oLLo = { 0.32, 0.13, 0.18 }, { 0.16, 0.065, 0.105 }
-    local oRHi, oRLo = { 0.45, 0.17, 0.23 }, { 0.25, 0.09, 0.135 }
-    local oCitHi, oCitLo = { 0.34, 0.14, 0.19 }, { 0.15, 0.06, 0.10 }
+    -- Kind 3: OBTUSE (CRIMSON SPECTRE — wide crimson Spectre Lance)
 
     hullMeshes = {
         [1] = {
@@ -1278,13 +1273,7 @@ local function getHullMeshes(g)
             bloom = radialGlowMesh(g, 0, -2, 30, 24, { 1.0, 0.294, 0.596, 0.24 }, { 1.0, 0.294, 0.596, 0.0 }),
         },
         [3] = {
-            underframe = fanMesh(g, 0, 3, oAmber, { 0, -13, -26, 8, 0, 13, 26, 8 }, oDark),
-            leftWing = gradPolyMesh(g, { { -13, -7, oLHi }, { -28.5, 6.5, oLLo }, { -24, 12.5, oLLo }, { -14, 9, oLHi }, { -11, -1, oLHi } }),
-            rightWing = gradPolyMesh(g, { { 13, -7, oRHi }, { 28.5, 6.5, oRLo }, { 24, 12.5, oRLo }, { 14, 9, oRHi }, { 11, -1, oRHi } }),
-            citadel = fanMesh(g, 0, 2, oCitHi, { 0, -16, -11, -8, -9.5, 11.5, -3.5, 13.5, 3.5, 13.5, 9.5, 11.5, 11, -8 }, oCitLo),
-            browLeft = gradPolyMesh(g, { { 0, -15.5, { 0.96, 0.76, 0.34 } }, { -9, -8, { 0.72, 0.48, 0.16 } }, { -6.5, -4.5, { 0.78, 0.54, 0.18 } }, { 0, -9.5, { 0.92, 0.68, 0.26 } } }),
-            browRight = gradPolyMesh(g, { { 0, -15.5, { 1, 0.92, 0.60 } }, { 9, -8, { 0.88, 0.64, 0.24 } }, { 6.5, -4.5, { 0.94, 0.72, 0.30 } }, { 0, -9.5, { 1, 0.86, 0.46 } } }),
-            core = fanMesh(g, 0, 2, { 1, 0.98, 0.88 }, { 0, -4.5, -4.2, 2, 0, 8, 4.2, 2 }, { 1, 0.68, 0.18 }),
+            bloom = radialGlowMesh(g, 0, 0, 38, 28, { 1.0, 0.169, 0.227, 0.26 }, { 1.0, 0.169, 0.227, 0.0 }),
         },
     }
     return hullMeshes
@@ -1341,7 +1330,45 @@ local function drawBoltthrowerPlates(g, mode)
     g.polygon(mode, BOLT_BRIDGE)
 end
 
--- Nova Drift enemy hull renderer (SPEAR, BOLTTHROWER, BULWARK-PRIME).
+local OBTUSE_CORE_OUTLINE = {
+    0, -10.5, 9.6, -0.5, 10.2, 6.2, 4.4, 13.2,
+    0, 10.8, -4.4, 13.2, -10.2, 6.2, -9.6, -0.5,
+}
+local OBTUSE_CORE_FILLS = {
+    { 0, -10.5, 9.6, -0.5, 10.2, 6.2, 6.4, 10.8, -6.4, 10.8, -10.2, 6.2, -9.6, -0.5 },
+    { 0, 10.8, 6.4, 10.8, 4.4, 13.2 },
+    { -6.4, 10.8, 0, 10.8, -4.4, 13.2 },
+}
+local OBTUSE_COWL_RIGHT_OUTLINE = { 1.4, -17.5, 7.5, -14.8, 30.5, 6.8, 24.5, 13.8, 13.2, 10.2, 12.2, -1.2, 1.4, -13.2 }
+local OBTUSE_COWL_RIGHT_FILLS = {
+    { 1.4, -17.5, 7.5, -14.8, 19.0, -4.0, 12.2, -1.2, 1.4, -13.2 },
+    { 19.0, -4.0, 30.5, 6.8, 24.5, 13.8, 13.2, 10.2, 12.2, -1.2 },
+}
+local OBTUSE_COWL_LEFT_OUTLINE = { -1.4, -17.5, -1.4, -13.2, -12.2, -1.2, -13.2, 10.2, -24.5, 13.8, -30.5, 6.8, -7.5, -14.8 }
+local OBTUSE_COWL_LEFT_FILLS = {
+    { -1.4, -17.5, -1.4, -13.2, -12.2, -1.2, -19.0, -4.0, -7.5, -14.8 },
+    { -19.0, -4.0, -12.2, -1.2, -13.2, 10.2, -24.5, 13.8, -30.5, 6.8 },
+}
+
+local function drawObtuseSpectrePlates(g, mode)
+    if mode == "fill" then
+        for _, part in ipairs(OBTUSE_CORE_FILLS) do
+            g.polygon("fill", part)
+        end
+        for _, part in ipairs(OBTUSE_COWL_LEFT_FILLS) do
+            g.polygon("fill", part)
+        end
+        for _, part in ipairs(OBTUSE_COWL_RIGHT_FILLS) do
+            g.polygon("fill", part)
+        end
+    else
+        g.polygon("line", OBTUSE_CORE_OUTLINE)
+        g.polygon("line", OBTUSE_COWL_LEFT_OUTLINE)
+        g.polygon("line", OBTUSE_COWL_RIGHT_OUTLINE)
+    end
+end
+
+-- Nova Drift enemy hull renderer (SPEAR, BOLTTHROWER, CRIMSON SPECTRE).
 -- Drawn in local space centered at (0, 0), nose pointing up (-Y).
 function Enemies.drawHull(kind, aimed, time, opts)
     local g = love.graphics
@@ -1471,93 +1498,70 @@ function Enemies.drawHull(kind, aimed, time, opts)
         g.pop()
 
     else
-        -- OBTUSE: BULWARK-PRIME (obsidian + ceremonial gold command flying wing + opaque gradients)
+        -- OBTUSE: CRIMSON SPECTRE (wide spread Spectre Lance in crimson-red Nova Drift tone)
+        g.push("all")
+
         if thrust > 0.05 then
             local len = (9 + 6 * thrust) * flicker
-            for _, spec in ipairs({ { -11, 9, 0.75 }, { 0, 11, 1.0 }, { 11, 9, 0.75 } }) do
+            for _, spec in ipairs({ { -14.5, 11.2, 0.72 }, { 0, 12.2, 1.0 }, { 14.5, 11.2, 0.72 } }) do
                 local nx, ny, s = spec[1], spec[2], spec[3]
-                g.setColor(1, 0.72, 0.24, 0.72 * s * thrust)
-                g.polygon("fill", nx - 3.6 * s, ny, nx, ny + len * s, nx + 3.6 * s, ny)
-                g.setColor(1, 0.97, 0.85, 0.92 * s * thrust)
-                g.polygon("fill", nx - 1.5 * s, ny, nx, ny + len * 0.55 * s, nx + 1.5 * s, ny)
+                g.setColor(1.0, 0.24, 0.26, 0.74 * s * thrust)
+                g.polygon("fill", nx - 3.4 * s, ny, nx, ny + len * s, nx + 3.4 * s, ny)
+                g.setColor(1.0, 0.90, 0.88, 0.92 * s * thrust)
+                g.polygon("fill", nx - 1.4 * s, ny, nx, ny + len * 0.55 * s, nx + 1.4 * s, ny)
             end
         end
 
-        if meshes then
-            g.setColor(1, 1, 1, 1)
-            g.draw(meshes[3].underframe)
-            g.draw(meshes[3].leftWing)
-            g.draw(meshes[3].rightWing)
+        -- 1. Soft additive crimson-red outer bloom (#ff2b3a).
+        local bloomPulse = aimed and 1.18 or (0.88 + 0.12 * pulse)
+        if meshes and meshes[3] and meshes[3].bloom then
+            g.setColor(1, 1, 1, bloomPulse)
+            g.draw(meshes[3].bloom)
         else
-            g.setColor(0.18, 0.08, 0.08, 1)
-            g.polygon("fill", 0, -13, -26, 8, 0, 13, 26, 8)
-            g.setColor(0.24, 0.10, 0.145, 1)
-            g.polygon("fill", -13, -7, -28.5, 6.5, -24, 12.5, -14, 9, -11, -1)
-            g.setColor(0.36, 0.13, 0.18, 1)
-            g.polygon("fill", 13, -7, 28.5, 6.5, 24, 12.5, 14, 9, 11, -1)
+            g.setColor(1.0, 0.169, 0.227, 0.20 * bloomPulse)
+            g.circle("fill", 0, 0, 32)
         end
 
-        g.setLineWidth(1.2)
-        g.setColor(1, aimed and 0.74 or 0.60, aimed and 0.42 or 0.24, 1)
-        g.polygon("line", -13, -7, -28.5, 6.5, -24, 12.5, -14, 9, -11, -1)
-        g.setColor(1, aimed and 0.82 or 0.72, aimed and 0.52 or 0.33, 1)
-        g.polygon("line", 13, -7, 28.5, 6.5, 24, 12.5, 14, 9, 11, -1)
-
-        if meshes then
-            g.setColor(1, 1, 1, 1)
-            g.draw(meshes[3].citadel)
-        else
-            g.setColor(0.22, 0.095, 0.14, 1)
-            g.polygon("fill", 0, -16, -11, -8, -9.5, 11.5, -3.5, 13.5, 3.5, 13.5, 9.5, 11.5, 11, -8)
-        end
-        g.setLineWidth(1.3)
-        g.setColor(1, 0.82, 0.44, 1)
-        g.polygon("line", 0, -16, -11, -8, -9.5, 11.5, -3.5, 13.5, 3.5, 13.5, 9.5, 11.5, 11, -8)
-
-        -- Sculpted ceremonial gold brow chevron (opaque gradient)
-        if meshes then
-            g.setColor(1, 1, 1, 1)
-            g.draw(meshes[3].browLeft)
-            g.draw(meshes[3].browRight)
-        else
-            g.setColor(0.86, 0.62, 0.22, 1)
-            g.polygon("fill", 0, -15.5, -9, -8, -6.5, -4.5, 0, -9.5)
-            g.setColor(1, 0.84, 0.44, 1)
-            g.polygon("fill", 0, -15.5, 9, -8, 6.5, -4.5, 0, -9.5)
-        end
-        g.setLineWidth(0.7)
-        g.setColor(1, 0.96, 0.80, 0.9)
-        g.line(-9, -8, 0, -15.5, 9, -8)
-
-        -- 6 recessed crimson missile bay blisters (3 per wing, opaque)
-        local pods = {
-            { -21.5, 5.2, -0.24 }, { -17.0, 3.2, -0.17 }, { -12.5, 1.7, -0.10 },
-            { 12.5, 1.7, 0.10 }, { 17.0, 3.2, 0.17 }, { 21.5, 5.2, 0.24 },
-        }
-        g.setLineWidth(0.7)
-        for _, pod in ipairs(pods) do
-            g.push()
-            g.translate(pod[1], pod[2])
-            g.rotate(pod[3])
-            g.setColor(0.95, 0.22, 0.24, 1)
-            g.rectangle("fill", -1.5, -2.2, 3.0, 4.4, 0.7, 0.7)
-            g.setColor(1, 0.84, 0.48, 0.95)
-            g.rectangle("line", -1.5, -2.2, 3.0, 4.4, 0.7, 0.7)
-            g.pop()
+        g.setBlendMode("add")
+        g.setLineJoin("bevel")
+        local br, bg, bb = 1.0, aimed and 0.30 or 0.169, aimed and 0.26 or 0.227
+        for _, layer in ipairs({
+            { width = 8.5, alpha = 0.09 },
+            { width = 4.8, alpha = 0.18 },
+            { width = 2.2, alpha = 0.32 },
+        }) do
+            g.setColor(br, bg, bb, layer.alpha * bloomPulse)
+            g.setLineWidth(layer.width)
+            drawObtuseSpectrePlates(g, "line")
         end
 
-        -- Burning solar-gold reactor core (opaque gradient)
-        if meshes then
-            g.setColor(1, 1, 1, 1)
-            g.draw(meshes[3].core)
-        else
-            g.setColor(1, 0.83, 0.36, 1)
-            g.polygon("fill", 0, -4.5, -4.2, 2, 0, 8, 4.2, 2)
+        g.push()
+        g.scale(1.04)
+        g.setColor(br, bg, bb, 0.06 * bloomPulse)
+        drawObtuseSpectrePlates(g, "fill")
+        g.pop()
+        g.setBlendMode("alpha")
+
+        -- 2. Luminous red-tone solid plates: wide cowls (#ff9c98) + faceted center core (#ffcdc9).
+        g.setColor(1.0, 0.612, 0.596, 1)
+        for _, part in ipairs(OBTUSE_COWL_LEFT_FILLS) do
+            g.polygon("fill", part)
         end
+        for _, part in ipairs(OBTUSE_COWL_RIGHT_FILLS) do
+            g.polygon("fill", part)
+        end
+
+        g.setColor(1.0, 0.804, 0.788, 1)
+        for _, part in ipairs(OBTUSE_CORE_FILLS) do
+            g.polygon("fill", part)
+        end
+
+        -- 3. Crisp anti-aliased edge highlight.
         g.setLineWidth(0.8)
-        g.setColor(1, 1, 1, 1)
-        g.polygon("line", 0, -4.5, -4.2, 2, 0, 8, 4.2, 2)
-        g.circle("fill", 0, 2, 1.8)
+        g.setColor(1.0, 0.910, 0.902, aimed and 0.96 or 0.84)
+        drawObtuseSpectrePlates(g, "line")
+
+        g.pop()
     end
 end
 
