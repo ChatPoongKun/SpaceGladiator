@@ -653,6 +653,11 @@ local function newWeaponConfig(def, mod)
         defId = def and def.id or nil,
         name = def and def.name or nil,
         weaponIndex = def and def.weaponIndex or nil,
+        fireMode = def and def.fireMode or nil,
+        projectileStyle = def and def.projectileStyle or nil,
+        impactStyle = def and def.impactStyle or nil,
+        fireSfx = def and def.fireSfx or nil,
+        impactSfx = def and def.impactSfx or nil,
         fireInterval = def and def.fireInterval or nil,
         damage = def and def.damage or nil,
         shotCount = def and def.shotCount or nil,
@@ -886,6 +891,11 @@ function Inventory:computeBuild(feverActive)
             local mCfg = nil
             if wCfg then
                 wCfg.installed = true
+                wCfg.fireMode = wCfg.fireMode or def.fireMode
+                wCfg.projectileStyle = wCfg.projectileStyle or def.projectileStyle
+                wCfg.impactStyle = wCfg.impactStyle or def.impactStyle
+                wCfg.fireSfx = wCfg.fireSfx or def.fireSfx
+                wCfg.impactSfx = wCfg.impactSfx or def.impactSfx
                 wCfg.fireInterval = wCfg.fireInterval or def.fireInterval
                 wCfg.damage = wCfg.damage or def.damage
                 wCfg.shotCount = wCfg.shotCount or def.shotCount

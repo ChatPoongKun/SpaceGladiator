@@ -102,6 +102,12 @@ Turret.baseDamage = defaultProjectile.damage or 5
 Turret.aimLineWidthRatio = 0.30
 Turret.explosionLifetime = 0.45
 
+Turret.impactSpecs = {
+    scatter_ring = { lifetime = nil, emitEmbers = false, isSalvo = false },
+    salvo_spark = { lifetime = nil, emitEmbers = true, emberCount = 7, isSalvo = true },
+    beam_impact = { lifetime = beamImpactLifetime, radius = 28, colors = beamImpactColors, emitEmbers = false, isSalvo = false },
+}
+
 function Turret.new(initialAngle)
     return setmetatable({
         angle = (initialAngle or 0) % tau,
@@ -176,11 +182,167 @@ local function updateRocketPose(rocket, camera, width, height)
     rocket.speed = math.sqrt(rocket.vx ^ 2 + rocket.vy ^ 2)
 end
 
+Turret.fireModes = {}
+
+function Turret.fireModes.beam(turret, ship, targetX, targetY, enemies, frameFraction, camera, width, height, cfg, opts, spec)
+    local offsets = buildOffsets(spec.baseShotCount, spec.extraCount, spec.baseSpreadRad, spec.extraSpreadRad)
+    turret.beams = turret.beams or {}
+    local primaryBeam = nil
+    local anyHit = false
+    local impactSpec = Turret.impactSpecs[spec.impactStyle] or Turret.impactSpecs.beam_impact
+    for _, offset in ipairs(offsets) do
+        local a = (spec.baseAngle + offset) % tau
+        local bdx, bdy = math.sin(a), -math.cos(a)
+        local bx, by = ship.x + bdx * muzzleLength, ship.y + bdy * muzzleLength
+        local hitX, hitY, hitEnemy
+        if enemies then
+            local entry, exit = camera:clipRay(bx, by, bdx, bdy, width, height)
+            if exit then
+                local t = frameFraction or 1
+                hitX, hitY, _, hitEnemy = enemies:hitSegment(bx + bdx * entry, by + bdy * entry,
+                    bx + bdx * exit, by + bdy * exit, t, t, camera, width, height, spec.damage)
+            end
+        end
+        if hitX then
+            anyHit = true
+            turret.explosions[#turret.explosions + 1] = {
+                x = hitX, y = hitY,
+                radius = (impactSpec.radius or 28) * spec.areaMult,
+                age = 0,
+                lifetime = impactSpec.lifetime or beamImpactLifetime,
+                colors = impactSpec.colors or beamImpactColors,
+                style = spec.impactStyle,
+                isSalvo = impactSpec.isSalvo == true,
+                sparkAngle = impactSpec.isSalvo and (math.random() * tau) or nil,
+            }
+            if spec.bounces > 0 and enemies then
+                local nxt = nearestEnemy(enemies, hitX, hitY, hitX, hitY, camera, width, height, hitEnemy)
+                if nxt then
+                    local rdx, rdy = nxt.x - hitX, nxt.y - hitY
+                    local rlen = math.sqrt(rdx * rdx + rdy * rdy)
+                    if rlen > 0 then
+                        local rhx, rhy = enemies:hitSegment(hitX, hitY, nxt.x, nxt.y,
+                            frameFraction or 1, frameFraction or 1, camera, width, height, spec.damage, hitEnemy)
+                        if rhx then
+                            turret.beams[#turret.beams + 1] = {
+                                x = hitX, y = hitY, dx = rdx / rlen, dy = rdy / rlen,
+                                hitX = rhx, hitY = rhy, age = 0, style = spec.projectileStyle,
+                            }
+                        end
+                    end
+                end
+            end
+        end
+        local bObj = {
+            x = bx, y = by, dx = bdx, dy = bdy, hitX = hitX, hitY = hitY, age = 0,
+            style = spec.projectileStyle,
+        }
+        turret.beams[#turret.beams + 1] = bObj
+        if not primaryBeam then primaryBeam = bObj end
+    end
+    if spec.fireSfx ~= "" then Sfx.play(spec.fireSfx) end
+    if anyHit then
+        turret.shotsHit = turret.shotsHit + 1
+        if spec.impactSfx ~= "" then Sfx.play(spec.impactSfx) end
+    end
+    turret.beam = primaryBeam
+    return turret.beam
+end
+
+function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameFraction, camera, width, height, cfg, opts, spec)
+    local shot = { hit = false }
+    local offsets = buildOffsets(spec.baseShotCount, spec.extraCount, spec.baseSpreadRad, spec.extraSpreadRad)
+    local def = spec.def
+    local baseBlastRadius = (cfg and cfg.blastRadius ~= nil) and cfg.blastRadius
+        or (def and def.blastRadius)
+        or 90
+    local rocketSpeed = (cfg and cfg.projectileSpeed ~= nil) and cfg.projectileSpeed
+        or (def and def.projectileSpeed)
+        or 600
+    local firstMissile = nil
+    local distance = math.sqrt((targetX - spec.x) ^ 2 + (targetY - spec.y) ^ 2)
+    for _, offset in ipairs(offsets) do
+        local a = (spec.baseAngle + offset) % tau
+        local rdx, rdy = math.sin(a), -math.cos(a)
+        local tx = targetX
+        local ty = targetY
+        if offset ~= 0 then
+            tx = spec.x + rdx * math.max(120, distance)
+            ty = spec.y + rdy * math.max(120, distance)
+        end
+        local missile = {
+            x = spec.x, y = spec.y, startX = spec.x, startY = spec.y,
+            owner = ship, angle = a, distance = 0, age = 0, shot = shot,
+            blastRadius = baseBlastRadius * spec.areaMult,
+            damage = spec.damage,
+            fireMode = "rocket",
+            style = spec.projectileStyle,
+            impactStyle = spec.impactStyle,
+            impactSfx = spec.impactSfx,
+            emitTrailEmbers = (spec.projectileStyle == "salvo_lance"),
+        }
+        local dist = math.sqrt((tx - spec.x) ^ 2 + (ty - spec.y) ^ 2)
+        local bend = turret.launchSide * math.min(rocketMaxBend, dist * 0.18)
+        turret.launchSide = -turret.launchSide
+        missile.bendX, missile.bendY = -rdy * bend * camera.zoom, rdx * bend * camera.zoom
+        missile.startScreenX, missile.startScreenY = camera:worldToScreen(spec.x, spec.y, width, height)
+        missile.targetScreenX, missile.targetScreenY = camera:worldToScreen(tx, ty, width, height)
+        missile.lifetime = dist / rocketSpeed
+        missile.trail = { { x = spec.x, y = spec.y } }
+        missile.emberAcc = 0
+        updateRocketPose(missile, camera, width, height)
+        recordRocketTrail(missile)
+        turret.missiles[#turret.missiles + 1] = missile
+        if not firstMissile then firstMissile = missile end
+    end
+    if spec.fireSfx ~= "" then Sfx.play(spec.fireSfx) end
+    return firstMissile
+end
+
+function Turret.fireModes.projectile(turret, ship, targetX, targetY, enemies, frameFraction, camera, width, height, cfg, opts, spec)
+    local shot = { hit = false }
+    local vx, vy = ship:worldVelocity()
+    local first = #turret.missiles + 1
+    local offsets = buildOffsets(spec.baseShotCount, spec.extraCount, spec.baseSpreadRad, spec.extraSpreadRad)
+    local def = spec.def
+    local projSpeed = (cfg and cfg.projectileSpeed ~= nil) and cfg.projectileSpeed
+        or (def and def.projectileSpeed)
+        or turret.missileSpeed
+    local projRange = (cfg and cfg.projectileRange ~= nil) and cfg.projectileRange
+        or (def and def.projectileRange)
+    local projLifetime = (cfg and cfg.projectileLifetime ~= nil) and cfg.projectileLifetime
+        or (projRange and projSpeed > 0 and (projRange / projSpeed))
+        or turret.missileLifetime
+    for _, offset in ipairs(offsets) do
+        local angle = (spec.baseAngle + offset) % tau
+        local shotVx = math.sin(angle) * projSpeed + vx
+        local shotVy = -math.cos(angle) * projSpeed + vy
+        turret.missiles[#turret.missiles + 1] = {
+            x = spec.x, y = spec.y, startX = spec.x, startY = spec.y,
+            owner = ship, angle = angle, distance = 0, age = 0, shot = shot,
+            vx = shotVx, vy = shotVy, speed = math.sqrt(shotVx ^ 2 + shotVy ^ 2),
+            lifetime = projLifetime,
+            baseLifetime = projLifetime,
+            homing = cfg and cfg.homing or false,
+            homingTurnRate = cfg and cfg.homingTurnRate or 0,
+            bounces = spec.bounces,
+            damage = spec.damage,
+            fireMode = "projectile",
+            style = spec.projectileStyle,
+            impactStyle = spec.impactStyle,
+            impactSfx = spec.impactSfx,
+            emitTrailEmbers = (spec.projectileStyle == "salvo_lance"),
+        }
+    end
+    if spec.fireSfx ~= "" then Sfx.play(spec.fireSfx) end
+    return turret.missiles[first]
+end
+
 function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, width, height, weaponBuild, opts)
     opts = opts or {}
     local cfg = weaponBuild
     local weapon = opts.weapon or (cfg and cfg.weaponIndex) or self.weapon
-    if not weapon then return nil end
+    if not weapon and not (cfg and cfg.fireMode) then return nil end
     local baseAngle = opts.angle or self.angle
     local batteryCost = (cfg and not opts.free) and (cfg.batteryCost or 0) or 0
     if batteryCost > 0 then
@@ -204,16 +366,27 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
     end
 
     self.shotsFired = self.shotsFired + 1
-    local def = ModulesData.getByWeaponIndex(weapon)
-    local extraCount = cfg and cfg.extraCount or 0
-    local extraSpreadRad = cfg and math.rad(cfg.extraSpreadDeg or 0) or 0
-    local areaMult = (cfg and cfg.areaMult or 1) * (opts.areaMult or 1)
-    local bounces = cfg and cfg.bounces or 0
+    local def = weapon and ModulesData.getByWeaponIndex(weapon) or nil
+    local fireMode = (cfg and cfg.fireMode)
+        or (def and def.fireMode)
+        or (weapon == 3 and "beam" or (weapon == 2 and "rocket" or "projectile"))
+    local projectileStyle = (cfg and cfg.projectileStyle)
+        or (def and def.projectileStyle)
+        or (fireMode == "beam" and "snap_beam" or (fireMode == "rocket" and "salvo_lance" or "twin_dart"))
+    local impactStyle = (cfg and cfg.impactStyle)
+        or (def and def.impactStyle)
+        or (fireMode == "beam" and "beam_impact" or (fireMode == "rocket" and "salvo_spark" or "scatter_ring"))
+    local fireSfx = (cfg and cfg.fireSfx ~= nil) and cfg.fireSfx
+        or (def and def.fireSfx)
+        or (fireMode == "beam" and "laser" or (fireMode == "rocket" and "missile" or "projectile"))
+    local impactSfx = (cfg and cfg.impactSfx ~= nil) and cfg.impactSfx
+        or (def and def.impactSfx)
+        or "impact"
+
     local baseDamage = (cfg and cfg.damage ~= nil) and cfg.damage
         or (def and def.damage)
         or self.baseDamage
         or Turret.baseDamage
-    local damage = math.max(0.1, baseDamage * (cfg and cfg.damageMult or 1))
     local baseShotCount = (cfg and cfg.shotCount ~= nil) and cfg.shotCount
         or (def and def.shotCount)
         or 1
@@ -221,136 +394,27 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         or (def and def.spreadDeg)
         or 0)
     local dx, dy = math.sin(baseAngle), -math.cos(baseAngle)
-    local x, y = ship.x + dx * muzzleLength, ship.y + dy * muzzleLength
-
-    if weapon == 3 then
-        local offsets = buildOffsets(baseShotCount, extraCount, baseSpreadRad, extraSpreadRad)
-        self.beams = self.beams or {}
-        local primaryBeam = nil
-        local anyHit = false
-        for _, offset in ipairs(offsets) do
-            local a = (baseAngle + offset) % tau
-            local bdx, bdy = math.sin(a), -math.cos(a)
-            local bx, by = ship.x + bdx * muzzleLength, ship.y + bdy * muzzleLength
-            local hitX, hitY, hitEnemy
-            if enemies then
-                local entry, exit = camera:clipRay(bx, by, bdx, bdy, width, height)
-                if exit then
-                    local t = frameFraction or 1
-                    hitX, hitY, _, hitEnemy = enemies:hitSegment(bx + bdx * entry, by + bdy * entry,
-                        bx + bdx * exit, by + bdy * exit, t, t, camera, width, height, damage)
-                end
-            end
-            if hitX then
-                anyHit = true
-                self.explosions[#self.explosions + 1] = {
-                    x = hitX, y = hitY, radius = 28 * areaMult, age = 0, lifetime = beamImpactLifetime,
-                    colors = beamImpactColors,
-                }
-                if bounces > 0 and enemies then
-                    local nxt = nearestEnemy(enemies, hitX, hitY, hitX, hitY, camera, width, height, hitEnemy)
-                    if nxt then
-                        local rdx, rdy = nxt.x - hitX, nxt.y - hitY
-                        local rlen = math.sqrt(rdx * rdx + rdy * rdy)
-                        if rlen > 0 then
-                            local rhx, rhy = enemies:hitSegment(hitX, hitY, nxt.x, nxt.y,
-                                frameFraction or 1, frameFraction or 1, camera, width, height, damage, hitEnemy)
-                            if rhx then
-                                self.beams[#self.beams + 1] = {
-                                    x = hitX, y = hitY, dx = rdx / rlen, dy = rdy / rlen,
-                                    hitX = rhx, hitY = rhy, age = 0,
-                                }
-                            end
-                        end
-                    end
-                end
-            end
-            local bObj = { x = bx, y = by, dx = bdx, dy = bdy, hitX = hitX, hitY = hitY, age = 0 }
-            self.beams[#self.beams + 1] = bObj
-            if not primaryBeam then primaryBeam = bObj end
-        end
-        Sfx.play("laser")
-        if anyHit then
-            self.shotsHit = self.shotsHit + 1
-            Sfx.play("impact")
-        end
-        self.beam = primaryBeam
-        return self.beam
-    end
-
-    local shot = { hit = false }
-    if weapon == 2 then
-        local offsets = buildOffsets(baseShotCount, extraCount, baseSpreadRad, extraSpreadRad)
-        local baseBlastRadius = (cfg and cfg.blastRadius ~= nil) and cfg.blastRadius
-            or (def and def.blastRadius)
-            or 90
-        local rocketSpeed = (cfg and cfg.projectileSpeed ~= nil) and cfg.projectileSpeed
-            or (def and def.projectileSpeed)
-            or 600
-        local firstMissile = nil
-        local distance = math.sqrt((targetX - x) ^ 2 + (targetY - y) ^ 2)
-        for _, offset in ipairs(offsets) do
-            local a = (baseAngle + offset) % tau
-            local rdx, rdy = math.sin(a), -math.cos(a)
-            local tx = targetX
-            local ty = targetY
-            if offset ~= 0 then
-                tx = x + rdx * math.max(120, distance)
-                ty = y + rdy * math.max(120, distance)
-            end
-            local missile = {
-                x = x, y = y, startX = x, startY = y,
-                owner = ship, angle = a, distance = 0, age = 0, shot = shot,
-                blastRadius = baseBlastRadius * areaMult,
-                damage = damage,
-            }
-            local dist = math.sqrt((tx - x) ^ 2 + (ty - y) ^ 2)
-            local bend = self.launchSide * math.min(rocketMaxBend, dist * 0.18)
-            self.launchSide = -self.launchSide
-            missile.bendX, missile.bendY = -rdy * bend * camera.zoom, rdx * bend * camera.zoom
-            missile.startScreenX, missile.startScreenY = camera:worldToScreen(x, y, width, height)
-            missile.targetScreenX, missile.targetScreenY = camera:worldToScreen(tx, ty, width, height)
-            missile.lifetime = dist / rocketSpeed
-            missile.trail = { { x = x, y = y } }
-            missile.emberAcc = 0
-            updateRocketPose(missile, camera, width, height)
-            recordRocketTrail(missile)
-            self.missiles[#self.missiles + 1] = missile
-            if not firstMissile then firstMissile = missile end
-        end
-        Sfx.play("missile")
-        return firstMissile
-    end
-
-    local vx, vy = ship:worldVelocity()
-    local first = #self.missiles + 1
-    local offsets = buildOffsets(baseShotCount, extraCount, baseSpreadRad, extraSpreadRad)
-    local projSpeed = (cfg and cfg.projectileSpeed ~= nil) and cfg.projectileSpeed
-        or (def and def.projectileSpeed)
-        or self.missileSpeed
-    local projRange = (cfg and cfg.projectileRange ~= nil) and cfg.projectileRange
-        or (def and def.projectileRange)
-    local projLifetime = (cfg and cfg.projectileLifetime ~= nil) and cfg.projectileLifetime
-        or (projRange and projSpeed > 0 and (projRange / projSpeed))
-        or self.missileLifetime
-    for _, offset in ipairs(offsets) do
-        local angle = (baseAngle + offset) % tau
-        local shotVx = math.sin(angle) * projSpeed + vx
-        local shotVy = -math.cos(angle) * projSpeed + vy
-        self.missiles[#self.missiles + 1] = {
-            x = x, y = y, startX = x, startY = y,
-            owner = ship, angle = angle, distance = 0, age = 0, shot = shot,
-            vx = shotVx, vy = shotVy, speed = math.sqrt(shotVx ^ 2 + shotVy ^ 2),
-            lifetime = projLifetime,
-            baseLifetime = projLifetime,
-            homing = cfg and cfg.homing or false,
-            homingTurnRate = cfg and cfg.homingTurnRate or 0,
-            bounces = bounces,
-            damage = damage,
-        }
-    end
-    Sfx.play("projectile")
-    return self.missiles[first]
+    local spec = {
+        weapon = weapon,
+        def = def,
+        fireMode = fireMode,
+        projectileStyle = projectileStyle,
+        impactStyle = impactStyle,
+        fireSfx = fireSfx,
+        impactSfx = impactSfx,
+        baseAngle = baseAngle,
+        x = ship.x + dx * muzzleLength,
+        y = ship.y + dy * muzzleLength,
+        extraCount = cfg and cfg.extraCount or 0,
+        extraSpreadRad = cfg and math.rad(cfg.extraSpreadDeg or 0) or 0,
+        areaMult = (cfg and cfg.areaMult or 1) * (opts.areaMult or 1),
+        bounces = cfg and cfg.bounces or 0,
+        damage = math.max(0.1, baseDamage * (cfg and cfg.damageMult or 1)),
+        baseShotCount = baseShotCount,
+        baseSpreadRad = baseSpreadRad,
+    }
+    local handler = Turret.fireModes[fireMode] or Turret.fireModes.projectile
+    return handler(self, ship, targetX, targetY, enemies, frameFraction, camera, width, height, cfg, opts, spec)
 end
 
 function Turret:fireTriggered(weaponIndex, ship, targetX, targetY, enemies, camera, width, height, weaponBuild, opts)
@@ -403,7 +467,7 @@ local function resolveActiveWeapons(turret, weaponInput)
     if weaponInput.weaponModules ~= nil then
         return weaponInput.weaponModules
     end
-    if weaponInput.weaponIndex ~= nil then
+    if weaponInput.weaponIndex ~= nil or weaponInput.fireMode ~= nil then
         if weaponInput.installed == false or weaponInput.disabled then
             return {}
         end
@@ -432,7 +496,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
         local step = remaining
         if firing and #activeWeapons > 0 then
             for idx, wCfg in ipairs(activeWeapons) do
-                if wCfg and wCfg.weaponIndex and canAffordWeapon(ship, wCfg) then
+                if wCfg and (wCfg.weaponIndex or wCfg.fireMode) and canAffordWeapon(ship, wCfg) then
                     local key = getWeaponKey(wCfg, idx)
                     local cd = self.weaponCooldowns[key] or 0
                     if cd < step then
@@ -473,7 +537,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
         updateSalvoEmbers(self, step)
         for i = #self.missiles, 1, -1 do
             local missile = self.missiles[i]
-            local isRocket = missile.targetScreenX ~= nil
+            local isRocket = missile.fireMode == "rocket" or missile.targetScreenX ~= nil
             local oldX, oldY = missile.x, missile.y
             local flightTime = math.min(step, missile.lifetime - missile.age)
             local elapsed = missile.age + step
@@ -481,14 +545,6 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
             if isRocket then
                 updateRocketPose(missile, camera, width, height)
                 recordRocketTrail(missile)
-                if flightTime > 0 and (missile.speed or 0) > 10 then
-                    missile.emberAcc = (missile.emberAcc or 0) + flightTime
-                    local dx, dy = missile.vx / missile.speed, missile.vy / missile.speed
-                    while missile.emberAcc >= 0.016 do
-                        missile.emberAcc = missile.emberAcc - 0.016
-                        spawnSalvoEmber(self, missile.x, missile.y, dx, dy, missile.speed, false)
-                    end
-                end
             else
                 if missile.homing and enemies then
                     local tgt = nearestEnemy(enemies, missile.x, missile.y, nil, nil, camera, width, height)
@@ -515,6 +571,14 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                     missile.y = missile.startY + missile.vy * missile.age
                 end
             end
+            if (missile.emitTrailEmbers or (missile.emitTrailEmbers == nil and isRocket)) and flightTime > 0 and (missile.speed or 0) > 10 then
+                missile.emberAcc = (missile.emberAcc or 0) + flightTime
+                local dx, dy = missile.vx / missile.speed, missile.vy / missile.speed
+                while missile.emberAcc >= 0.016 do
+                    missile.emberAcc = missile.emberAcc - 0.016
+                    spawnSalvoEmber(self, missile.x, missile.y, dx, dy, missile.speed, false)
+                end
+            end
             local hitX, hitY, hitTime, hitEnemy
             if enemies and not isRocket then
                 local frameStart = dt > 0 and (dt - remaining) / dt or 0
@@ -537,18 +601,25 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                     missile.shot.hit = true
                     self.shotsHit = self.shotsHit + 1
                 end
-                if hitX or isRocket then Sfx.play("impact") end
-                if isRocket then
-                    for _ = 1, 7 do
+                local impactSfx = missile.impactSfx ~= nil and missile.impactSfx or "impact"
+                if (hitX or isRocket) and impactSfx ~= "" then Sfx.play(impactSfx) end
+                local impactStyle = missile.impactStyle or (isRocket and "salvo_spark" or "scatter_ring")
+                local impactSpec = Turret.impactSpecs[impactStyle] or Turret.impactSpecs.scatter_ring
+                if impactSpec.emitEmbers then
+                    for _ = 1, (impactSpec.emberCount or 7) do
                         spawnSalvoEmber(self, x, y, 1, 0, 0, true)
                     end
                 end
-                if age < self.explosionLifetime then
+                if age < (impactSpec.lifetime or self.explosionLifetime) then
                     self.explosions[#self.explosions + 1] = {
-                        x = x, y = y, radius = isRocket and rRadius,
-                        age = age, lifetime = self.explosionLifetime,
-                        isSalvo = isRocket,
-                        sparkAngle = isRocket and (math.random() * tau) or nil,
+                        x = x, y = y,
+                        radius = isRocket and rRadius or impactSpec.radius,
+                        age = age,
+                        lifetime = impactSpec.lifetime or self.explosionLifetime,
+                        colors = impactSpec.colors,
+                        style = impactStyle,
+                        isSalvo = impactSpec.isSalvo == true,
+                        sparkAngle = impactSpec.isSalvo and (math.random() * tau) or nil,
                     }
                 end
                 if hitX and not isRocket and (missile.bounces or 0) > 0 and enemies then
@@ -587,7 +658,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
         if firing and #activeWeapons > 0 then
             local frameFraction = dt > 0 and (dt - remaining) / dt or 0
             for idx, wCfg in ipairs(activeWeapons) do
-                if wCfg and wCfg.weaponIndex then
+                if wCfg and (wCfg.weaponIndex or wCfg.fireMode) then
                     local key = getWeaponKey(wCfg, idx)
                     local cd = self.weaponCooldowns[key] or 0
                     if cd <= eps and canAffordWeapon(ship, wCfg) then
@@ -697,6 +768,225 @@ function Turret:updateEffects(dt, camera, width, height)
     end
 end
 
+Turret.projectileRenderers = {}
+
+function Turret.projectileRenderers.salvo_lance(g, missile, dx, dy, fade)
+    -- VE3D-inspired Player Salvo: cyan serrated lance-dart + gradient-fading wake + scattered dots
+    local px, py = -dy, dx
+    local mx, my = missile.x, missile.y
+    local pts = {}
+    if missile.trail and #missile.trail >= 2 then
+        for ti = 1, #missile.trail do
+            pts[ti] = missile.trail[ti]
+        end
+        pts[#pts + 1] = { x = mx, y = my }
+    else
+        local fallbackLen = math.min(34, missile.speed * math.min(0.055, missile.age or 0))
+        if fallbackLen > 0 then
+            for si = 5, 0, -1 do
+                local d = fallbackLen * (si / 5)
+                pts[#pts + 1] = { x = mx - dx * d, y = my - dy * d }
+            end
+        end
+    end
+
+    g.setBlendMode("add")
+    if #pts >= 2 then
+        local segCount = #pts - 1
+        for si = 1, segCount do
+            local p0, p1 = pts[si], pts[si + 1]
+            local frac = si / segCount
+            local gAlpha = (frac ^ 1.65) * fade
+            g.setLineWidth(1.2 + 4.4 * frac)
+            g.setColor(0.141, 0.549, 1.0, 0.34 * gAlpha)
+            g.line(p0.x, p0.y, p1.x, p1.y)
+            g.setLineWidth(0.6 + 2.0 * frac)
+            g.setColor(0.220, 0.863, 1.0, 0.85 * gAlpha)
+            g.line(p0.x, p0.y, p1.x, p1.y)
+            if frac > 0.45 then
+                local coreAlpha = ((frac - 0.45) / 0.55) * fade
+                g.setLineWidth(0.9 * frac)
+                g.setColor(0.933, 0.984, 1.0, 0.82 * coreAlpha)
+                g.line(p0.x, p0.y, p1.x, p1.y)
+            end
+        end
+        if not missile.trail or #missile.trail < 2 then
+            for di = 1, 3 do
+                local f = di / 4
+                local side = (di % 2 == 0) and 1 or -1
+                local sx = mx - dx * (30 * f) + px * (side * (3.5 + di))
+                local sy = my - dy * (30 * f) + py * (side * (3.5 + di))
+                g.setColor(0.220, 0.863, 1.0, 0.65 * (1 - f) * fade)
+                g.circle("fill", sx, sy, 1.5)
+            end
+        end
+    end
+
+    g.setColor(0.220, 0.863, 1.0, 0.34 * fade)
+    g.circle("fill", mx, my, 9.0)
+    g.setColor(0.72, 0.96, 1.0, 0.65 * fade)
+    g.circle("fill", mx - dx * 5.0, my - dy * 5.0, 4.0)
+    g.setBlendMode("alpha")
+
+    -- Serrated lance-dart warhead (split into 2 strictly convex triangles around rear notch)
+    local tipX, tipY = mx + dx * 9.0, my + dy * 9.0
+    local notchX, notchY = mx - dx * 5.0, my - dy * 5.0
+    local wingLX, wingLY = mx - dx * 10.5 + px * 3.8, my - dy * 10.5 + py * 3.8
+    local wingRX, wingRY = mx - dx * 10.5 - px * 3.8, my - dy * 10.5 - py * 3.8
+    g.setColor(0.933, 0.984, 1.0, fade)
+    g.polygon("fill", tipX, tipY, wingLX, wingLY, notchX, notchY)
+    g.polygon("fill", tipX, tipY, notchX, notchY, wingRX, wingRY)
+    g.setLineWidth(1.0)
+    g.setColor(0.220, 0.863, 1.0, 0.95 * fade)
+    g.polygon("line", tipX, tipY, wingLX, wingLY, notchX, notchY, wingRX, wingRY)
+end
+
+function Turret.projectileRenderers.twin_dart(g, missile, dx, dy, fade)
+    -- VP1B: Electric Twin-Facet Dart (pure-white diamond core + electric-blue/cyan tapered wake)
+    local px, py = -dy, dx
+    local mx, my = missile.x, missile.y
+    local trail = math.min(24, missile.distance or 0)
+    g.setBlendMode("add")
+    if trail > 0 then
+        g.setColor(0.141, 0.549, 1.0, 0.34 * fade)
+        g.polygon("fill",
+            mx + dx * 6.5, my + dy * 6.5,
+            mx + px * 3.8, my + py * 3.8,
+            mx - dx * trail, my - dy * trail,
+            mx - px * 3.8, my - py * 3.8)
+        local innerTrail = trail * 0.72
+        g.setColor(0.220, 0.863, 1.0, 0.78 * fade)
+        g.polygon("fill",
+            mx + dx * 6.5, my + dy * 6.5,
+            mx + px * 2.1, my + py * 2.1,
+            mx - dx * innerTrail, my - dy * innerTrail,
+            mx - px * 2.1, my - py * 2.1)
+        g.setLineWidth(1.5)
+        g.setColor(0.220, 0.863, 1.0, 0.82 * fade)
+        g.line(mx, my, mx - dx * trail, my - dy * trail)
+    else
+        g.setColor(0.141, 0.549, 1.0, 0.42 * fade)
+        g.circle("fill", mx, my, 5.5)
+    end
+    g.setBlendMode("alpha")
+    g.setColor(1, 1, 1, fade)
+    g.polygon("fill",
+        mx + dx * 6.8, my + dy * 6.8,
+        mx + px * 2.3, my + py * 2.3,
+        mx - dx * 4.5, my - dy * 4.5,
+        mx - px * 2.3, my - py * 2.3)
+    g.setLineWidth(1.2)
+    g.line(mx - dx * 6, my - dy * 6, mx, my)
+    g.setLineWidth(0.8)
+    g.setColor(0.56, 0.96, 1.0, 0.85 * fade)
+    g.polygon("line",
+        mx + dx * 6.8, my + dy * 6.8,
+        mx + px * 2.3, my + py * 2.3,
+        mx - dx * 4.5, my - dy * 4.5,
+        mx - px * 2.3, my - py * 2.3)
+end
+
+Turret.beamRenderers = {}
+
+function Turret.beamRenderers.snap_beam(g, beam, x, y)
+    -- VP3A: 3-Tier Snap-Taper Beam + Muzzle Ring + 4-Point Impact Starburst
+    local alpha = math.max(0, 1 - beam.age / beamLifetime)
+    local taper = 0.28 + 0.72 * (alpha ^ 0.75)
+    g.setBlendMode("add")
+    g.setColor(0.141, 0.549, 1.0, 0.30 * alpha)
+    g.setLineWidth(14.0 * taper)
+    g.line(beam.x, beam.y, x, y)
+    g.setColor(0.220, 0.863, 1.0, 0.78 * alpha)
+    g.setLineWidth(6.2 * taper)
+    g.line(beam.x, beam.y, x, y)
+    g.setColor(1.0, 1.0, 1.0, 0.98 * alpha)
+    g.setLineWidth(2.4 * taper)
+    g.line(beam.x, beam.y, x, y)
+
+    -- Muzzle ring flash
+    local muzzleR = 5.5 + (1 - alpha) * 9.0
+    g.setLineWidth(math.max(0.7, 1.8 * alpha))
+    g.setColor(0.220, 0.863, 1.0, 0.85 * alpha)
+    g.circle("line", beam.x, beam.y, muzzleR)
+    g.setColor(1.0, 1.0, 1.0, 0.92 * alpha)
+    g.circle("fill", beam.x, beam.y, 3.5 * alpha)
+
+    -- 4-point starburst impact flare when hitting an enemy
+    if beam.hitX then
+        local rLong = 24.0 * (0.40 + 0.60 * alpha)
+        local rShort = math.max(0.8, 2.8 * alpha)
+        local dLong = rLong * 0.7071
+        local dShort = rShort * 0.7071
+        local function drawStar(scale, r, green, b, a)
+            local rl, rs = rLong * scale, rShort * scale
+            local dl, ds = dLong * scale, dShort * scale
+            g.setColor(r, green, b, a)
+            -- 45-degree rotated crossed convex diamonds
+            g.polygon("fill",
+                x + dl, y + dl,
+                x + ds, y - ds,
+                x - dl, y - dl,
+                x - ds, y + ds)
+            g.polygon("fill",
+                x + dl, y - dl,
+                x + ds, y + ds,
+                x - dl, y + dl,
+                x - ds, y - ds)
+        end
+        drawStar(1.25, 0.220, 0.863, 1.0, 0.55 * alpha)
+        drawStar(1.00, 0.93, 0.98, 1.0, 0.95 * alpha)
+        g.setColor(1.0, 1.0, 1.0, alpha)
+        g.circle("fill", x, y, 4.2 * alpha)
+    end
+    g.setBlendMode("alpha")
+end
+
+Turret.impactRenderers = {}
+
+function Turret.impactRenderers.salvo_spark(g, explosion, radius, maxR, ease, alpha, glow, ring, core)
+    local ringAlpha = alpha ^ 1.15
+    local sparkAlpha = math.max(0, alpha ^ 1.35)
+    g.setColor(glow[1], glow[2], glow[3], 0.16 * ringAlpha)
+    g.circle("fill", explosion.x, explosion.y, radius * 0.92)
+    g.setColor(ring[1], ring[2], ring[3], 0.92 * ringAlpha)
+    g.setLineWidth(2.4 * ringAlpha + 0.5)
+    g.circle("line", explosion.x, explosion.y, radius)
+    g.setColor(core[1], core[2], core[3], 0.76 * ringAlpha)
+    g.setLineWidth(1.4 * ringAlpha + 0.3)
+    g.circle("line", explosion.x, explosion.y, radius * 0.62)
+
+    local rLong = maxR * (0.45 + 0.70 * ease) * (0.35 + 0.65 * sparkAlpha)
+    local rShort = math.max(0.7, maxR * 0.10 * sparkAlpha)
+    local rLongOuter, rShortOuter = rLong * 1.22, rShort * 1.22
+    g.push()
+    g.translate(explosion.x, explosion.y)
+    g.rotate(explosion.sparkAngle or 0)
+    g.setColor(ring[1], ring[2], ring[3], 0.50 * sparkAlpha)
+    g.polygon("fill", -rLongOuter, 0, 0, -rShortOuter, rLongOuter, 0, 0, rShortOuter)
+    g.polygon("fill", 0, -rLongOuter, rShortOuter, 0, 0, rLongOuter, -rShortOuter, 0)
+    g.setColor(core[1], core[2], core[3], 0.96 * sparkAlpha)
+    g.polygon("fill", -rLong, 0, 0, -rShort, rLong, 0, 0, rShort)
+    g.polygon("fill", 0, -rLong, rShort, 0, 0, rLong, -rShort, 0)
+    g.setColor(1, 1, 1, 0.98 * sparkAlpha)
+    g.circle("fill", 0, 0, math.max(1.5, maxR * 0.22 * sparkAlpha))
+    g.pop()
+end
+
+function Turret.impactRenderers.scatter_ring(g, explosion, radius, maxR, ease, alpha, glow, ring, core)
+    g.setColor(glow[1], glow[2], glow[3], alpha * 0.20)
+    g.circle("fill", explosion.x, explosion.y, radius * 0.85)
+    g.setColor(ring[1], ring[2], ring[3], alpha * 0.90)
+    g.setLineWidth(2.0 * alpha + 0.5)
+    g.circle("line", explosion.x, explosion.y, radius)
+    g.setColor(core[1], core[2], core[3], alpha * 0.58)
+    g.setLineWidth(1.0 * alpha + 0.3)
+    g.circle("line", explosion.x, explosion.y, radius * 0.58)
+    g.setColor(core[1], core[2], core[3], alpha * 0.92)
+    g.circle("fill", explosion.x, explosion.y, 6.5 * alpha)
+end
+
+Turret.impactRenderers.beam_impact = Turret.impactRenderers.scatter_ring
+
 function Turret:drawEffects(camera, width, height)
     local g = love.graphics
     g.push("all")
@@ -721,119 +1011,9 @@ function Turret:drawEffects(camera, width, height)
         end
         local speed = missile.speed > 0 and missile.speed or 1
         local dx, dy = missile.vx / speed, missile.vy / speed
-        if missile.targetScreenX then
-            -- VE3D-inspired Player Salvo: cyan serrated lance-dart + gradient-fading wake + scattered dots
-            local px, py = -dy, dx
-            local mx, my = missile.x, missile.y
-            local pts = {}
-            if missile.trail and #missile.trail >= 2 then
-                for ti = 1, #missile.trail do
-                    pts[ti] = missile.trail[ti]
-                end
-                pts[#pts + 1] = { x = mx, y = my }
-            else
-                local fallbackLen = math.min(34, missile.speed * math.min(0.055, missile.age or 0))
-                if fallbackLen > 0 then
-                    for si = 5, 0, -1 do
-                        local d = fallbackLen * (si / 5)
-                        pts[#pts + 1] = { x = mx - dx * d, y = my - dy * d }
-                    end
-                end
-            end
-
-            g.setBlendMode("add")
-            if #pts >= 2 then
-                local segCount = #pts - 1
-                for si = 1, segCount do
-                    local p0, p1 = pts[si], pts[si + 1]
-                    local frac = si / segCount
-                    local gAlpha = (frac ^ 1.65) * fade
-                    g.setLineWidth(1.2 + 4.4 * frac)
-                    g.setColor(0.141, 0.549, 1.0, 0.34 * gAlpha)
-                    g.line(p0.x, p0.y, p1.x, p1.y)
-                    g.setLineWidth(0.6 + 2.0 * frac)
-                    g.setColor(0.220, 0.863, 1.0, 0.85 * gAlpha)
-                    g.line(p0.x, p0.y, p1.x, p1.y)
-                    if frac > 0.45 then
-                        local coreAlpha = ((frac - 0.45) / 0.55) * fade
-                        g.setLineWidth(0.9 * frac)
-                        g.setColor(0.933, 0.984, 1.0, 0.82 * coreAlpha)
-                        g.line(p0.x, p0.y, p1.x, p1.y)
-                    end
-                end
-                if not missile.trail or #missile.trail < 2 then
-                    for di = 1, 3 do
-                        local f = di / 4
-                        local side = (di % 2 == 0) and 1 or -1
-                        local sx = mx - dx * (30 * f) + px * (side * (3.5 + di))
-                        local sy = my - dy * (30 * f) + py * (side * (3.5 + di))
-                        g.setColor(0.220, 0.863, 1.0, 0.65 * (1 - f) * fade)
-                        g.circle("fill", sx, sy, 1.5)
-                    end
-                end
-            end
-
-            g.setColor(0.220, 0.863, 1.0, 0.34 * fade)
-            g.circle("fill", mx, my, 9.0)
-            g.setColor(0.72, 0.96, 1.0, 0.65 * fade)
-            g.circle("fill", mx - dx * 5.0, my - dy * 5.0, 4.0)
-            g.setBlendMode("alpha")
-
-            -- Serrated lance-dart warhead (split into 2 strictly convex triangles around rear notch)
-            local tipX, tipY = mx + dx * 9.0, my + dy * 9.0
-            local notchX, notchY = mx - dx * 5.0, my - dy * 5.0
-            local wingLX, wingLY = mx - dx * 10.5 + px * 3.8, my - dy * 10.5 + py * 3.8
-            local wingRX, wingRY = mx - dx * 10.5 - px * 3.8, my - dy * 10.5 - py * 3.8
-            g.setColor(0.933, 0.984, 1.0, fade)
-            g.polygon("fill", tipX, tipY, wingLX, wingLY, notchX, notchY)
-            g.polygon("fill", tipX, tipY, notchX, notchY, wingRX, wingRY)
-            g.setLineWidth(1.0)
-            g.setColor(0.220, 0.863, 1.0, 0.95 * fade)
-            g.polygon("line", tipX, tipY, wingLX, wingLY, notchX, notchY, wingRX, wingRY)
-        else
-            -- VP1B: Electric Twin-Facet Dart (pure-white diamond core + electric-blue/cyan tapered wake)
-            local px, py = -dy, dx
-            local mx, my = missile.x, missile.y
-            local trail = math.min(24, missile.distance or 0)
-            g.setBlendMode("add")
-            if trail > 0 then
-                g.setColor(0.141, 0.549, 1.0, 0.34 * fade)
-                g.polygon("fill",
-                    mx + dx * 6.5, my + dy * 6.5,
-                    mx + px * 3.8, my + py * 3.8,
-                    mx - dx * trail, my - dy * trail,
-                    mx - px * 3.8, my - py * 3.8)
-                local innerTrail = trail * 0.72
-                g.setColor(0.220, 0.863, 1.0, 0.78 * fade)
-                g.polygon("fill",
-                    mx + dx * 6.5, my + dy * 6.5,
-                    mx + px * 2.1, my + py * 2.1,
-                    mx - dx * innerTrail, my - dy * innerTrail,
-                    mx - px * 2.1, my - py * 2.1)
-                g.setLineWidth(1.5)
-                g.setColor(0.220, 0.863, 1.0, 0.82 * fade)
-                g.line(mx, my, mx - dx * trail, my - dy * trail)
-            else
-                g.setColor(0.141, 0.549, 1.0, 0.42 * fade)
-                g.circle("fill", mx, my, 5.5)
-            end
-            g.setBlendMode("alpha")
-            g.setColor(1, 1, 1, fade)
-            g.polygon("fill",
-                mx + dx * 6.8, my + dy * 6.8,
-                mx + px * 2.3, my + py * 2.3,
-                mx - dx * 4.5, my - dy * 4.5,
-                mx - px * 2.3, my - py * 2.3)
-            g.setLineWidth(1.2)
-            g.line(mx - dx * 6, my - dy * 6, mx, my)
-            g.setLineWidth(0.8)
-            g.setColor(0.56, 0.96, 1.0, 0.85 * fade)
-            g.polygon("line",
-                mx + dx * 6.8, my + dy * 6.8,
-                mx + px * 2.3, my + py * 2.3,
-                mx - dx * 4.5, my - dy * 4.5,
-                mx - px * 2.3, my - py * 2.3)
-        end
+        local style = missile.style or (missile.targetScreenX and "salvo_lance" or "twin_dart")
+        local renderer = Turret.projectileRenderers[style] or Turret.projectileRenderers.twin_dart
+        renderer(g, missile, dx, dy, fade)
     end
     local beamList = (self.beams and #self.beams > 0) and self.beams or (self.beam and { self.beam } or {})
     for _, beam in ipairs(beamList) do
@@ -844,56 +1024,8 @@ function Turret:drawEffects(camera, width, height)
             if exit then x, y = beam.x + beam.dx * exit, beam.y + beam.dy * exit end
         end
         if x then
-            -- VP3A: 3-Tier Snap-Taper Beam + Muzzle Ring + 4-Point Impact Starburst
-            local alpha = math.max(0, 1 - beam.age / beamLifetime)
-            local taper = 0.28 + 0.72 * (alpha ^ 0.75)
-            g.setBlendMode("add")
-            g.setColor(0.141, 0.549, 1.0, 0.30 * alpha)
-            g.setLineWidth(14.0 * taper)
-            g.line(beam.x, beam.y, x, y)
-            g.setColor(0.220, 0.863, 1.0, 0.78 * alpha)
-            g.setLineWidth(6.2 * taper)
-            g.line(beam.x, beam.y, x, y)
-            g.setColor(1.0, 1.0, 1.0, 0.98 * alpha)
-            g.setLineWidth(2.4 * taper)
-            g.line(beam.x, beam.y, x, y)
-
-            -- Muzzle ring flash
-            local muzzleR = 5.5 + (1 - alpha) * 9.0
-            g.setLineWidth(math.max(0.7, 1.8 * alpha))
-            g.setColor(0.220, 0.863, 1.0, 0.85 * alpha)
-            g.circle("line", beam.x, beam.y, muzzleR)
-            g.setColor(1.0, 1.0, 1.0, 0.92 * alpha)
-            g.circle("fill", beam.x, beam.y, 3.5 * alpha)
-
-            -- 4-point starburst impact flare when hitting an enemy
-            if beam.hitX then
-                local rLong = 24.0 * (0.40 + 0.60 * alpha)
-                local rShort = math.max(0.8, 2.8 * alpha)
-                local dLong = rLong * 0.7071
-                local dShort = rShort * 0.7071
-                local function drawStar(scale, r, green, b, a)
-                    local rl, rs = rLong * scale, rShort * scale
-                    local dl, ds = dLong * scale, dShort * scale
-                    g.setColor(r, green, b, a)
-                    -- 45-degree rotated crossed convex diamonds
-                    g.polygon("fill",
-                        x + dl, y + dl,
-                        x + ds, y - ds,
-                        x - dl, y - dl,
-                        x - ds, y + ds)
-                    g.polygon("fill",
-                        x + dl, y - dl,
-                        x + ds, y + ds,
-                        x - dl, y + dl,
-                        x - ds, y - ds)
-                end
-                drawStar(1.25, 0.220, 0.863, 1.0, 0.55 * alpha)
-                drawStar(1.00, 0.93, 0.98, 1.0, 0.95 * alpha)
-                g.setColor(1.0, 1.0, 1.0, alpha)
-                g.circle("fill", x, y, 4.2 * alpha)
-            end
-            g.setBlendMode("alpha")
+            local renderer = Turret.beamRenderers[beam.style or "snap_beam"] or Turret.beamRenderers.snap_beam
+            renderer(g, beam, x, y)
         end
     end
     for _, explosion in ipairs(self.explosions) do
@@ -904,46 +1036,10 @@ function Turret:drawEffects(camera, width, height)
         local alpha = 1 - progress
         local colors = explosion.colors or explosionColors
         local glow, ring, core = colors.glow, colors.ring, colors.core
+        local style = explosion.style or (explosion.isSalvo and "salvo_spark" or "scatter_ring")
+        local renderer = Turret.impactRenderers[style] or Turret.impactRenderers.scatter_ring
         g.setBlendMode("add")
-        if explosion.isSalvo then
-            local ringAlpha = alpha ^ 1.15
-            local sparkAlpha = math.max(0, alpha ^ 1.35)
-            g.setColor(glow[1], glow[2], glow[3], 0.16 * ringAlpha)
-            g.circle("fill", explosion.x, explosion.y, radius * 0.92)
-            g.setColor(ring[1], ring[2], ring[3], 0.92 * ringAlpha)
-            g.setLineWidth(2.4 * ringAlpha + 0.5)
-            g.circle("line", explosion.x, explosion.y, radius)
-            g.setColor(core[1], core[2], core[3], 0.76 * ringAlpha)
-            g.setLineWidth(1.4 * ringAlpha + 0.3)
-            g.circle("line", explosion.x, explosion.y, radius * 0.62)
-
-            local rLong = maxR * (0.45 + 0.70 * ease) * (0.35 + 0.65 * sparkAlpha)
-            local rShort = math.max(0.7, maxR * 0.10 * sparkAlpha)
-            local rLongOuter, rShortOuter = rLong * 1.22, rShort * 1.22
-            g.push()
-            g.translate(explosion.x, explosion.y)
-            g.rotate(explosion.sparkAngle or 0)
-            g.setColor(ring[1], ring[2], ring[3], 0.50 * sparkAlpha)
-            g.polygon("fill", -rLongOuter, 0, 0, -rShortOuter, rLongOuter, 0, 0, rShortOuter)
-            g.polygon("fill", 0, -rLongOuter, rShortOuter, 0, 0, rLongOuter, -rShortOuter, 0)
-            g.setColor(core[1], core[2], core[3], 0.96 * sparkAlpha)
-            g.polygon("fill", -rLong, 0, 0, -rShort, rLong, 0, 0, rShort)
-            g.polygon("fill", 0, -rLong, rShort, 0, 0, rLong, -rShort, 0)
-            g.setColor(1, 1, 1, 0.98 * sparkAlpha)
-            g.circle("fill", 0, 0, math.max(1.5, maxR * 0.22 * sparkAlpha))
-            g.pop()
-        else
-            g.setColor(glow[1], glow[2], glow[3], alpha * 0.20)
-            g.circle("fill", explosion.x, explosion.y, radius * 0.85)
-            g.setColor(ring[1], ring[2], ring[3], alpha * 0.90)
-            g.setLineWidth(2.0 * alpha + 0.5)
-            g.circle("line", explosion.x, explosion.y, radius)
-            g.setColor(core[1], core[2], core[3], alpha * 0.58)
-            g.setLineWidth(1.0 * alpha + 0.3)
-            g.circle("line", explosion.x, explosion.y, radius * 0.58)
-            g.setColor(core[1], core[2], core[3], alpha * 0.92)
-            g.circle("fill", explosion.x, explosion.y, 6.5 * alpha)
-        end
+        renderer(g, explosion, radius, maxR, ease, alpha, glow, ring, core)
         g.setBlendMode("alpha")
     end
     g.pop()
