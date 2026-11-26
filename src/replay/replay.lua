@@ -1227,7 +1227,8 @@ function Replay.renderClipFrame(clip, playbackTime, width, height, fonts, starsO
             x = ex.x, y = ex.y, radius = ex.radius,
             age = ex.age, lifetime = ex.lifetime,
             colors = ex.isBeamImpact and beamImpactColors or explosionColors,
-            isHex = not ex.isBeamImpact,
+            isSalvo = (not ex.isBeamImpact) and ((ex.radius or 0) > 50),
+            sparkAngle = ((ex.x or 0) * 0.037 + (ex.y or 0) * 0.053) % (2 * math.pi),
         }
     end
 

@@ -519,7 +519,8 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                     self.explosions[#self.explosions + 1] = {
                         x = x, y = y, radius = isRocket and rRadius,
                         age = age, lifetime = self.explosionLifetime,
-                        isHex = isRocket,
+                        isSalvo = isRocket,
+                        sparkAngle = isRocket and (math.random() * tau) or nil,
                     }
                 end
                 if hitX and not isRocket and (missile.bounces or 0) > 0 and enemies then
@@ -869,53 +870,53 @@ function Turret:drawEffects(camera, width, height)
     end
     for _, explosion in ipairs(self.explosions) do
         local progress = math.max(0, math.min(1, explosion.age / explosion.lifetime))
-        local radius, alpha = 5 + progress * ((explosion.radius or 41) - 5), 1 - progress
+        local ease = 1 - (1 - progress) * (1 - progress)
+        local maxR = explosion.radius or 41
+        local radius = 6 + ease * (maxR - 6)
+        local alpha = 1 - progress
         local colors = explosion.colors or explosionColors
         local glow, ring, core = colors.glow, colors.ring, colors.core
-        if explosion.isHex then
-            local outerVerts, innerVerts = {}, {}
-            for i = 0, 5 do
-                local a0 = i * (tau / 6)
-                local a1 = a0 + (tau / 12)
-                outerVerts[#outerVerts + 1] = explosion.x + math.cos(a0) * radius
-                outerVerts[#outerVerts + 1] = explosion.y + math.sin(a0) * radius
-                innerVerts[#innerVerts + 1] = explosion.x + math.cos(a1) * (radius * 0.62)
-                innerVerts[#innerVerts + 1] = explosion.y + math.sin(a1) * (radius * 0.62)
-            end
-            g.setBlendMode("add")
-            g.setColor(glow[1], glow[2], glow[3], alpha * 0.22)
-            g.polygon("fill", outerVerts)
-            g.setColor(ring[1], ring[2], ring[3], alpha * 0.95)
-            g.setLineWidth(2.4 * alpha + 0.5)
-            g.polygon("line", outerVerts)
-            g.setColor(core[1], core[2], core[3], alpha * 0.72)
-            g.setLineWidth(1.2 * alpha + 0.3)
-            g.polygon("line", innerVerts)
-            g.setColor(core[1], core[2], core[3], alpha)
-            g.circle("fill", explosion.x, explosion.y, 9 * alpha)
-            g.setLineWidth(1.5 * alpha + 0.4)
-            g.setColor(ring[1], ring[2], ring[3], alpha * 0.85)
-            for i = 0, 5 do
-                local a0 = i * (tau / 6)
-                local dx, dy = math.cos(a0), math.sin(a0)
-                g.line(explosion.x + dx * radius * 0.72, explosion.y + dy * radius * 0.72,
-                    explosion.x + dx * (radius + 7), explosion.y + dy * (radius + 7))
-            end
-            g.setBlendMode("alpha")
-        else
-            g.setColor(glow[1], glow[2], glow[3], alpha * 0.25)
-            g.circle("fill", explosion.x, explosion.y, radius)
-            g.setColor(ring[1], ring[2], ring[3], alpha)
-            g.setLineWidth(2 * alpha + 0.5)
+        g.setBlendMode("add")
+        if explosion.isSalvo then
+            local ringAlpha = alpha ^ 1.15
+            local sparkAlpha = math.max(0, alpha ^ 1.35)
+            g.setColor(glow[1], glow[2], glow[3], 0.16 * ringAlpha)
+            g.circle("fill", explosion.x, explosion.y, radius * 0.92)
+            g.setColor(ring[1], ring[2], ring[3], 0.92 * ringAlpha)
+            g.setLineWidth(2.4 * ringAlpha + 0.5)
             g.circle("line", explosion.x, explosion.y, radius)
-            g.setColor(core[1], core[2], core[3], alpha)
-            g.circle("fill", explosion.x, explosion.y, 8 * alpha)
-            for i = 1, 8 do
-                local dx, dy = math.sin(i * tau / 8), -math.cos(i * tau / 8)
-                g.line(explosion.x + dx * radius * 0.7, explosion.y + dy * radius * 0.7,
-                    explosion.x + dx * (radius + 5), explosion.y + dy * (radius + 5))
-            end
+            g.setColor(core[1], core[2], core[3], 0.76 * ringAlpha)
+            g.setLineWidth(1.4 * ringAlpha + 0.3)
+            g.circle("line", explosion.x, explosion.y, radius * 0.62)
+
+            local rLong = maxR * (0.45 + 0.70 * ease) * (0.35 + 0.65 * sparkAlpha)
+            local rShort = math.max(0.7, maxR * 0.10 * sparkAlpha)
+            local rLongOuter, rShortOuter = rLong * 1.22, rShort * 1.22
+            g.push()
+            g.translate(explosion.x, explosion.y)
+            g.rotate(explosion.sparkAngle or 0)
+            g.setColor(ring[1], ring[2], ring[3], 0.50 * sparkAlpha)
+            g.polygon("fill", -rLongOuter, 0, 0, -rShortOuter, rLongOuter, 0, 0, rShortOuter)
+            g.polygon("fill", 0, -rLongOuter, rShortOuter, 0, 0, rLongOuter, -rShortOuter, 0)
+            g.setColor(core[1], core[2], core[3], 0.96 * sparkAlpha)
+            g.polygon("fill", -rLong, 0, 0, -rShort, rLong, 0, 0, rShort)
+            g.polygon("fill", 0, -rLong, rShort, 0, 0, rLong, -rShort, 0)
+            g.setColor(1, 1, 1, 0.98 * sparkAlpha)
+            g.circle("fill", 0, 0, math.max(1.5, maxR * 0.22 * sparkAlpha))
+            g.pop()
+        else
+            g.setColor(glow[1], glow[2], glow[3], alpha * 0.20)
+            g.circle("fill", explosion.x, explosion.y, radius * 0.85)
+            g.setColor(ring[1], ring[2], ring[3], alpha * 0.90)
+            g.setLineWidth(2.0 * alpha + 0.5)
+            g.circle("line", explosion.x, explosion.y, radius)
+            g.setColor(core[1], core[2], core[3], alpha * 0.58)
+            g.setLineWidth(1.0 * alpha + 0.3)
+            g.circle("line", explosion.x, explosion.y, radius * 0.58)
+            g.setColor(core[1], core[2], core[3], alpha * 0.92)
+            g.circle("fill", explosion.x, explosion.y, 6.5 * alpha)
         end
+        g.setBlendMode("alpha")
     end
     g.pop()
 end
