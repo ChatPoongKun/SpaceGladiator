@@ -24,18 +24,187 @@ TitleScreen.SHIMMER_DURATION = 0.85
 TitleScreen.PARALLAX_BG_MAX_PX = 7.0
 TitleScreen.PARALLAX_UI_MAX_PX = 2.6
 
-local MENU_LEFT = 86
-local MENU_TOP = 388
-local MENU_WIDTH = 278
-local PRIMARY_ROW_H = 58
-local REGULAR_ROW_H = 46
-local PRIMARY_GAP = 14
-local REGULAR_GAP = 10
+local MENU_LEFT = 62
+local MENU_TOP = 424
+local MENU_WIDTH = 314
+local ROW_H = 38
+local ROW_GAP = 10
+local TRI_W = 22
+local BEVEL_STEP = 5
+local BEVEL_SHELF = 22
+local BEVEL_TOP_TIP = 2.5
+
+local MENU_PALETTE = {
+    iceWhite   = { 0.94, 0.99, 1.00 },
+    iceBright  = { 0.74, 0.90, 1.00 },
+    iceGlow    = { 0.36, 0.74, 1.00 },
+    iceDeep    = { 0.16, 0.44, 0.76 },
+    plateDark  = { 0.028, 0.050, 0.088 },
+    plateLeft  = { 0.095, 0.205, 0.330 },
+    railLine   = { 0.56, 0.72, 0.86 },
+    idleText   = { 0.60, 0.70, 0.80 },
+    idleIcon   = { 0.54, 0.66, 0.78 },
+}
+
+local function createActivePlateMesh(w, h)
+    if not (love and love.graphics and love.graphics.newMesh) then
+        return nil
+    end
+    local p = MENU_PALETTE
+    local slash = h - (BEVEL_TOP_TIP + BEVEL_STEP)
+    local xBevelBottom = w - slash
+    local xNotchRight = xBevelBottom - BEVEL_SHELF
+    local xNotchLeft = xNotchRight - BEVEL_STEP
+    local yShelf = h - BEVEL_STEP
+
+    local function colorAt(x)
+        local tLeft = Theme.clamp(1 - x / 90, 0, 1)
+        local tRight = Theme.clamp((x - (w - 85)) / 85, 0, 1)
+        local r = Theme.lerp(p.plateDark[1], p.plateLeft[1], tLeft) + tRight * 0.025
+        local g = Theme.lerp(p.plateDark[2], p.plateLeft[2], tLeft) + tRight * 0.055
+        local b = Theme.lerp(p.plateDark[3], p.plateLeft[3], tLeft) + tRight * 0.090
+        local a = 0.84 + 0.08 * tLeft
+        return r, g, b, a
+    end
+
+    local verts = {}
+    local function pushTri(x1, y1, x2, y2, x3, y3)
+        local r1, g1, b1, a1 = colorAt(x1)
+        local r2, g2, b2, a2 = colorAt(x2)
+        local r3, g3, b3, a3 = colorAt(x3)
+        verts[#verts + 1] = { x1, y1, x1 / w, y1 / h, r1, g1, b1, a1 }
+        verts[#verts + 1] = { x2, y2, x2 / w, y2 / h, r2, g2, b2, a2 }
+        verts[#verts + 1] = { x3, y3, x3 / w, y3 / h, r3, g3, b3, a3 }
+    end
+    local function pushQuad(x0, y0, x1, y1)
+        pushTri(x0, y0, x1, y0, x1, y1)
+        pushTri(x0, y0, x1, y1, x0, y1)
+    end
+
+    -- Top thin strip (0 .. BEVEL_TOP_TIP)
+    local xsTop = { 0, 26, 62, 160, xNotchLeft, xNotchRight, xBevelBottom, w }
+    for i = 1, #xsTop - 1 do
+        pushQuad(xsTop[i], 0, xsTop[i + 1], BEVEL_TOP_TIP)
+    end
+
+    -- Middle main body (BEVEL_TOP_TIP .. yShelf)
+    local xsMid = { 0, 26, 62, 160, xNotchLeft, xNotchRight, xBevelBottom }
+    for i = 1, #xsMid - 1 do
+        pushQuad(xsMid[i], BEVEL_TOP_TIP, xsMid[i + 1], yShelf)
+    end
+    pushTri(xBevelBottom, BEVEL_TOP_TIP, w, BEVEL_TOP_TIP, xBevelBottom, yShelf)
+
+    -- Bottom strip left of the 45-degree notch (yShelf .. h)
+    local xsBot = { 0, 26, 62, 160, xNotchLeft }
+    for i = 1, #xsBot - 1 do
+        pushQuad(xsBot[i], yShelf, xsBot[i + 1], h)
+    end
+    pushTri(xNotchLeft, yShelf, xNotchRight, yShelf, xNotchLeft, h)
+
+    local ok, mesh = pcall(love.graphics.newMesh, verts, "triangles", "static")
+    if ok then return mesh end
+    return nil
+end
+
+local function createActiveInnerGlowMesh(w, h)
+    if not (love and love.graphics and love.graphics.newMesh) then
+        return nil
+    end
+    local p = MENU_PALETTE
+    local slash = h - (BEVEL_TOP_TIP + BEVEL_STEP)
+    local xBevelBottom = w - slash
+    local xNotchRight = xBevelBottom - BEVEL_SHELF
+    local xNotchLeft = xNotchRight - BEVEL_STEP
+    local yShelf = h - BEVEL_STEP
+    local yInnerTop = 6.5
+    local yInnerBot = h - 6.5
+    local xInnerRightAtTop = w - (yInnerTop - BEVEL_TOP_TIP)
+    local xInnerRightAtBot = w - (yInnerBot - BEVEL_TOP_TIP)
+
+    local function glowAt(x, y)
+        local tLeft = Theme.clamp(1 - x / 85, 0, 1)
+        local dEdge = math.min(y, h - y)
+        local tEdge = Theme.clamp(1 - dEdge / 6.5, 0, 1)
+        local rightSlopeX = (y <= BEVEL_TOP_TIP) and w or (w - (y - BEVEL_TOP_TIP))
+        local tDiag = (y <= yShelf) and Theme.clamp(1 - (rightSlopeX - x) / 14, 0, 1) or 0
+        local intensity = math.max(tLeft * 0.26, tEdge * 0.16, tDiag * 0.22)
+        return p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], intensity
+    end
+
+    local verts = {}
+    local function pushTri(x1, y1, x2, y2, x3, y3)
+        local r1, g1, b1, a1 = glowAt(x1, y1)
+        local r2, g2, b2, a2 = glowAt(x2, y2)
+        local r3, g3, b3, a3 = glowAt(x3, y3)
+        verts[#verts + 1] = { x1, y1, x1 / w, y1 / h, r1, g1, b1, a1 }
+        verts[#verts + 1] = { x2, y2, x2 / w, y2 / h, r2, g2, b2, a2 }
+        verts[#verts + 1] = { x3, y3, x3 / w, y3 / h, r3, g3, b3, a3 }
+    end
+    local function pushQuadPts(x0, y0, x1, y1, x2, y2, x3, y3)
+        pushTri(x0, y0, x1, y1, x2, y2)
+        pushTri(x0, y0, x2, y2, x3, y3)
+    end
+
+    -- Band 1: 0 .. BEVEL_TOP_TIP
+    local xs1 = { 0, 32, 85, xNotchLeft, xBevelBottom, w }
+    for i = 1, #xs1 - 1 do
+        pushQuadPts(xs1[i], 0, xs1[i + 1], 0, xs1[i + 1], BEVEL_TOP_TIP, xs1[i], BEVEL_TOP_TIP)
+    end
+    -- Band 2: BEVEL_TOP_TIP .. yInnerTop
+    local xs2 = { 0, 32, 85, xNotchLeft, xInnerRightAtTop }
+    for i = 1, #xs2 - 1 do
+        pushQuadPts(xs2[i], BEVEL_TOP_TIP, xs2[i + 1], BEVEL_TOP_TIP, xs2[i + 1], yInnerTop, xs2[i], yInnerTop)
+    end
+    pushTri(xInnerRightAtTop, BEVEL_TOP_TIP, w, BEVEL_TOP_TIP, xInnerRightAtTop, yInnerTop)
+    -- Band 3: yInnerTop .. yInnerBot
+    local xs3 = { 0, 32, 85, xNotchLeft, xInnerRightAtBot }
+    for i = 1, #xs3 - 1 do
+        pushQuadPts(xs3[i], yInnerTop, xs3[i + 1], yInnerTop, xs3[i + 1], yInnerBot, xs3[i], yInnerBot)
+    end
+    pushTri(xInnerRightAtBot, yInnerTop, xInnerRightAtTop, yInnerTop, xInnerRightAtBot, yInnerBot)
+    -- Band 4: yInnerBot .. yShelf
+    local xs4 = { 0, 32, 85, xNotchLeft, xBevelBottom }
+    for i = 1, #xs4 - 1 do
+        pushQuadPts(xs4[i], yInnerBot, xs4[i + 1], yInnerBot, xs4[i + 1], yShelf, xs4[i], yShelf)
+    end
+    pushTri(xBevelBottom, yInnerBot, xInnerRightAtBot, yInnerBot, xBevelBottom, yShelf)
+    -- Band 5: yShelf .. h
+    local xs5 = { 0, 32, 85, xNotchLeft }
+    for i = 1, #xs5 - 1 do
+        pushQuadPts(xs5[i], yShelf, xs5[i + 1], yShelf, xs5[i + 1], h, xs5[i], h)
+    end
+    pushTri(xNotchLeft, yShelf, xNotchRight, yShelf, xNotchLeft, h)
+
+    local ok, mesh = pcall(love.graphics.newMesh, verts, "triangles", "static")
+    if ok then return mesh end
+    return nil
+end
+
+local function createTriangleMesh(triW, h)
+    if not (love and love.graphics and love.graphics.newMesh) then
+        return nil
+    end
+    local midY = h * 0.5
+    local verts = {
+        -- Top half
+        { 0,    0,    0, 0,   0.76, 0.88, 0.97, 0.94 },
+        { triW, midY, 1, 0.5, 0.58, 0.76, 0.90, 0.88 },
+        { 0,    midY, 0, 0.5, 0.97, 0.99, 1.00, 1.00 },
+        -- Bottom half
+        { 0,    midY, 0, 0.5, 0.97, 0.99, 1.00, 1.00 },
+        { triW, midY, 1, 0.5, 0.58, 0.76, 0.90, 0.88 },
+        { 0,    h,    0, 1,   0.76, 0.88, 0.97, 0.94 },
+    }
+    local ok, mesh = pcall(love.graphics.newMesh, verts, "triangles", "static")
+    if ok then return mesh end
+    return nil
+end
 
 local function buildMeshes()
     local deep = Theme.colors.bgOverlay
     local acc = Theme.colors.accent
     local bright = Theme.colors.accentBright
+    local p = MENU_PALETTE
     return {
         -- Left-to-right readability scrim (keeps live ship combat and planet bright)
         leftScrim = Theme.createGradientMesh({
@@ -59,19 +228,51 @@ local function buildMeshes()
         }, false),
         -- Soft elliptical radial halo behind the centered title (zero rectangular seams)
         titleHalo = Theme.createRadialGradientMesh(deep[1], deep[2], deep[3], 0.52, nil, 40),
-        -- Active menu item horizontal highlight wash
-        activeWash = Theme.createGradientMesh({
-            { pos = 0.00, acc[1], acc[2], acc[3], 0.26 },
-            { pos = 0.32, acc[1], acc[2], acc[3], 0.14 },
-            { pos = 0.75, acc[1], acc[2], acc[3], 0.04 },
-            { pos = 1.00, acc[1], acc[2], acc[3], 0.00 },
+        -- Reference-style left menu optical flares & gradients
+        menuFlareHalo = Theme.createRadialGradientMesh(p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.85, nil, 40),
+        menuFlareCore = Theme.createRadialGradientMesh(0.95, 0.99, 1.00, 1.00, nil, 32),
+        menuRightBeamSoft = Theme.createGradientMesh({
+            { pos = 0.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.55 },
+            { pos = 0.15, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.30 },
+            { pos = 0.45, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.11 },
+            { pos = 0.78, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.03 },
+            { pos = 1.00, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.00 },
         }, true),
-        -- Active menu item fading hairline edge
-        activeRule = Theme.createGradientMesh({
-            { pos = 0.00, bright[1], bright[2], bright[3], 0.80 },
-            { pos = 0.45, acc[1],    acc[2],    acc[3],    0.34 },
-            { pos = 1.00, acc[1],    acc[2],    acc[3],    0.00 },
+        menuRightBeamCore = Theme.createGradientMesh({
+            { pos = 0.00, 0.96, 0.99, 1.00, 1.00 },
+            { pos = 0.08, p.iceBright[1], p.iceBright[2], p.iceBright[3], 0.85 },
+            { pos = 0.28, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.40 },
+            { pos = 0.62, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.10 },
+            { pos = 1.00, p.iceDeep[1],   p.iceDeep[2],   p.iceDeep[3],   0.00 },
         }, true),
+        menuStreak = Theme.createGradientMesh({
+            { pos = 0.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.00 },
+            { pos = 0.35, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.35 },
+            { pos = 0.50, 0.96, 0.99, 1.00, 1.00 },
+            { pos = 0.65, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.35 },
+            { pos = 1.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.00 },
+        }, true),
+        menuVertStreak = Theme.createGradientMesh({
+            { pos = 0.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.00 },
+            { pos = 0.35, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.35 },
+            { pos = 0.50, 0.96, 0.99, 1.00, 1.00 },
+            { pos = 0.65, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.35 },
+            { pos = 1.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.00 },
+        }, false),
+        menuDivider = Theme.createGradientMesh({
+            { pos = 0.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.32 },
+            { pos = 0.38, p.railLine[1], p.railLine[2], p.railLine[3], 0.20 },
+            { pos = 0.78, p.railLine[1], p.railLine[2], p.railLine[3], 0.07 },
+            { pos = 1.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.00 },
+        }, true),
+        menuSpineFadeTop = Theme.createGradientMesh({
+            { pos = 0.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.00 },
+            { pos = 0.45, p.railLine[1], p.railLine[2], p.railLine[3], 0.24 },
+            { pos = 1.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.34 },
+        }, false),
+        menuActivePlateMesh = createActivePlateMesh(MENU_WIDTH, ROW_H),
+        menuActiveInnerGlowMesh = createActiveInnerGlowMesh(MENU_WIDTH, ROW_H),
+        menuTriangleMesh = createTriangleMesh(TRI_W, ROW_H),
         -- Symmetrical glowing accent rule under the centered title
         centerRule = Theme.createGradientMesh({
             { pos = 0.00, acc[1],    acc[2],    acc[3],    0.00 },
@@ -103,19 +304,15 @@ local function computeMenuLayout(menu)
     local buttons = (menu and menu.buttons) or {}
     local y = MENU_TOP
     for i, button in ipairs(buttons) do
-        local isPrimary = (button.primary == true) or (i == 1 and button.primary ~= false)
-        local h = isPrimary and PRIMARY_ROW_H or REGULAR_ROW_H
-        local gap = isPrimary and PRIMARY_GAP or REGULAR_GAP
         items[i] = {
             index = i,
             button = button,
-            primary = isPrimary,
             x = MENU_LEFT,
             y = y,
             w = MENU_WIDTH,
-            h = h,
+            h = ROW_H,
         }
-        y = y + h + gap
+        y = y + ROW_H + ROW_GAP
     end
     local totalH = #items > 0 and (items[#items].y + items[#items].h - MENU_TOP) or 0
     return items, MENU_TOP, totalH
@@ -162,14 +359,28 @@ local function drawDiamond(x, y, r)
     love.graphics.polygon("fill", x, y - r, x + r, y, x, y + r, x - r, y)
 end
 
-local function drawChevron(x, y, size)
-    love.graphics.polygon(
-        "fill",
-        x, y - size * 0.65,
-        x + size * 0.92, y,
-        x, y + size * 0.65,
-        x + size * 0.28, y
-    )
+local function drawMenuTickIcon(ix, cy, focus, alpha)
+    local g = love.graphics
+    local p = MENU_PALETTE
+    local r = Theme.lerp(p.idleIcon[1], p.iceWhite[1], focus)
+    local gr = Theme.lerp(p.idleIcon[2], p.iceWhite[2], focus)
+    local b = Theme.lerp(p.idleIcon[3], p.iceWhite[3], focus)
+    local pts = {
+        ix,        cy - 4.5,
+        ix + 3.5,  cy - 4.5,
+        ix + 11.5, cy + 4.5,
+        ix + 19.0, cy + 4.5,
+    }
+    if focus > 0.05 then
+        g.setBlendMode("add")
+        g.setLineWidth(3.2)
+        Theme.setColor(p.iceGlow, 0.38 * focus * alpha)
+        g.line(pts)
+        g.setBlendMode("alpha")
+    end
+    g.setLineWidth(Theme.lerp(1.15, 1.85, focus))
+    g.setColor(r, gr, b, Theme.lerp(0.62, 0.96, focus) * alpha)
+    g.line(pts)
 end
 
 local function drawKeycap(x, y, w, h, label, font, alpha, iconKind)
@@ -213,7 +424,7 @@ function TitleScreen.new()
         selected = 1,
         selectPulse = 0,
         indicatorY = MENU_TOP,
-        indicatorH = PRIMARY_ROW_H,
+        indicatorH = ROW_H,
         indicatorInit = false,
         hoverMix = {},
         targetParallaxX = 0,
@@ -338,11 +549,11 @@ end
 function TitleScreen:buttonAt(menu, width, height, mouseX, mouseY)
     if not menu or not menu.buttons then return nil end
     local items = computeMenuLayout(menu)
-    local hitLeft = MENU_LEFT - 28
-    local hitRight = MENU_LEFT + MENU_WIDTH + 18
+    local hitLeft = MENU_LEFT - 14
+    local hitRight = MENU_LEFT + MENU_WIDTH + 14
     if mouseX < hitLeft or mouseX > hitRight then return nil end
     for _, item in ipairs(items) do
-        if mouseY >= item.y - 4 and mouseY <= item.y + item.h + 4 then
+        if mouseY >= item.y - 2 and mouseY <= item.y + item.h + 2 then
             return item.index
         end
     end
@@ -545,6 +756,7 @@ end
 function TitleScreen:_drawLeftMenu(menu, fonts, selected, launchP)
     local g = love.graphics
     local c = Theme.colors
+    local p = MENU_PALETTE
     local m = self.meshes
     local items, topY, totalH = computeMenuLayout(menu)
     if #items == 0 then return end
@@ -561,61 +773,211 @@ function TitleScreen:_drawLeftMenu(menu, fonts, selected, launchP)
     end
     if launchMenuAlpha <= 0.002 then return end
 
-    local primaryFont = fonts.titlePrimary or fonts.menuButton
     local buttonFont = fonts.titleButton or fonts.menuButton
-    local microFont = fonts.titleMicro or fonts.menuSmall
-
     local firstIntroA = self:_menuItemIntro(1)
     local railAlpha = firstIntroA * launchMenuAlpha
-    local railX = MENU_LEFT - 18 + px + launchSlideX
+    local spineX = MENU_LEFT + px + launchSlideX
     local railTop = topY + py
-    local breathe = 0.84 + 0.16 * math.sin(self.elapsed * 2.6)
+    local railBot = railTop + totalH
+    local breathe = 0.88 + 0.12 * math.sin(self.elapsed * 2.5)
 
-    g.push("all")
-
-    -- Micro section header above menu
-    if railAlpha > 0.01 then
-        local hdrY = railTop - 32
-        Theme.setColor(c.accent, 0.72 * railAlpha)
-        g.rectangle("fill", railX, hdrY + 5, 14, 2)
-        g.setFont(microFont)
-        Theme.setColor(c.accentBright, 0.58 * railAlpha)
-        g.print("COMMAND // MENU", math.floor(railX + 22), math.floor(hdrY))
-
-        -- Subtle vertical structural guide rail
-        Theme.setColor(c.panelBorder, 0.34 * railAlpha)
-        g.setLineWidth(1)
-        g.line(railX + 1.5, railTop - 4, railX + 1.5, railTop + totalH + 4)
-        Theme.setColor(c.accent, 0.50 * railAlpha)
-        g.rectangle("fill", railX, railTop - 5, 4, 1.5)
-        g.rectangle("fill", railX, railTop + totalH + 4, 4, 1.5)
-    end
-
-    -- Smoothly interpolated sliding indicator bar + active horizontal wash
     local activeItem = items[selected] or items[1]
     local indY = (self.indicatorInit and self.indicatorY or activeItem.y) + py
     local indH = self.indicatorInit and self.indicatorH or activeItem.h
     local indA = self:_menuItemIntro(selected) * launchMenuAlpha
 
-    if indA > 0.01 then
-        local washX = railX + 4
-        local washW = MENU_WIDTH + 22
-        -- Gradient horizontal wash behind active item
-        Theme.drawGradientRect(m.activeWash, washX, indY + 1, washW, indH - 2, (0.95 + 0.25 * self.selectPulse) * indA)
-        -- Top & bottom fading cyan accent rules
-        Theme.drawGradientRect(m.activeRule, washX, indY, washW * 0.85, 1.2, 0.65 * indA)
-        Theme.drawGradientRect(m.activeRule, washX, indY + indH - 1.2, washW * 0.65, 1.2, 0.38 * indA)
-        -- Additive glow halo behind sliding indicator pill
-        g.setBlendMode("add")
-        Theme.setColor(c.accent, (0.34 * breathe + 0.35 * self.selectPulse) * indA)
-        g.rectangle("fill", railX - 3, indY + 3, 9, indH - 6, 4, 4)
-        g.setBlendMode("alpha")
-        -- Crisp glowing indicator bar
-        Theme.setColor(c.accentBright, indA)
-        g.rectangle("fill", railX, indY + 5, 3.5, indH - 10, 1.8, 1.8)
+    g.push("all")
+
+    -- 1. Dotted circular orbital arc framing the left menu
+    if railAlpha > 0.01 then
+        local arcCx = spineX - 8
+        local arcCy = railTop + 62
+        local arcR = 166
+        local startAng = math.rad(-84)
+        local endAng = math.rad(74)
+        local dotCount = 88
+        for i = 0, dotCount do
+            local t = i / dotCount
+            local ang = startAng + (endAng - startAng) * t
+            local dx = arcCx + math.cos(ang) * arcR
+            local dy = arcCy + math.sin(ang) * arcR
+            local endFade = math.sin(t * math.pi) ^ 0.55
+            Theme.setColor(p.railLine, 0.22 * endFade * railAlpha)
+            g.circle("fill", dx, dy, 0.85)
+        end
     end
 
-    -- Menu items
+    -- 2. Left structural telemetry frame (vertical spine, upper notches, outer chamfered rail, corner node)
+    if railAlpha > 0.01 then
+        -- Upper fading spine segment + telemetry tick marks
+        Theme.drawGradientRect(m.menuSpineFadeTop, spineX - 0.5, railTop - 165, 1, 165, railAlpha)
+        Theme.setColor(p.railLine, 0.24 * railAlpha)
+        g.setLineWidth(1)
+        g.line(spineX - 3, railTop - 122, spineX + 3, railTop - 122)
+        g.line(spineX - 2, railTop - 88, spineX, railTop - 88)
+        g.line(spineX - 2, railTop - 44, spineX, railTop - 44)
+
+        -- Main solid vertical spine through menu rows down to corner baseline
+        Theme.setColor(p.railLine, 0.30 * railAlpha)
+        g.setLineWidth(1)
+        g.line(spineX, railTop, spineX, railBot + 34)
+
+        -- Subtle additive highlight along spine behind active button
+        if indA > 0.01 then
+            g.setBlendMode("add")
+            Theme.drawGradientRect(m.menuVertStreak, spineX - 0.9, indY - 16, 1.8, indH + 32, 0.42 * indA)
+            g.setBlendMode("alpha")
+        end
+
+        -- Outer left chamfered structural rail
+        Theme.setColor(p.railLine, 0.26 * railAlpha)
+        g.setLineWidth(1)
+        g.line(
+            spineX - 30, railTop - 150,
+            spineX - 30, railTop - 74,
+            spineX - 20, railTop - 64,
+            spineX - 20, railBot + 2,
+            spineX,      railBot + 22,
+            spineX + 12, railBot + 34
+        )
+        -- Faint fading horizontal baseline extending right under the menu
+        Theme.drawGradientRect(m.menuDivider, spineX + 12, railBot + 34, 240, 1, 0.65 * railAlpha)
+
+        -- Glowing corner node at (spineX, railBot + 22)
+        g.setBlendMode("add")
+        Theme.drawRadialHalo(m.menuFlareHalo, spineX, railBot + 22, 6, 6, 0.55 * railAlpha)
+        g.setBlendMode("alpha")
+        Theme.setColor(p.iceWhite, 0.85 * railAlpha)
+        g.circle("fill", spineX, railBot + 22, 1.8)
+    end
+
+    -- 3. Unselected row dividers & spine intersection pips
+    if railAlpha > 0.01 then
+        for i = 1, #items do
+            local item = items[i]
+            local divY = item.y + item.h + ROW_GAP * 0.5 + py
+            local nearActive = (divY >= indY - 2) and (divY <= indY + indH + 2)
+            local damp = nearActive and 0.25 or 1.0
+            local lineScale = (i == #items) and 0.62 or 1.0
+            Theme.drawGradientRect(m.menuDivider, spineX + 1, divY, MENU_WIDTH - 22, 1, lineScale * damp * railAlpha)
+
+            if i < #items then
+                g.setBlendMode("add")
+                Theme.drawRadialHalo(m.menuFlareHalo, spineX, divY, 3.5, 3.5, 0.45 * damp * railAlpha)
+                g.setBlendMode("alpha")
+                Theme.setColor(p.iceBright, 0.85 * damp * railAlpha)
+                g.circle("fill", spineX, divY, 1.25)
+            end
+        end
+    end
+
+    -- 4. Sliding active button frame + multi-layer optical glows
+    if indA > 0.01 then
+        local bx = spineX
+        local by = indY
+        local bw = MENU_WIDTH
+        local bh = indH
+        local slash = bh - (BEVEL_TOP_TIP + BEVEL_STEP)
+        local xBevelBottom = bx + bw - slash
+        local xNotchRight = xBevelBottom - BEVEL_SHELF
+        local xNotchLeft = xNotchRight - BEVEL_STEP
+        local yShelf = by + bh - BEVEL_STEP
+        local scaleY = bh / ROW_H
+
+        -- Dark translucent glass interior plate
+        if m.menuActivePlateMesh then
+            g.setColor(1, 1, 1, indA)
+            g.draw(m.menuActivePlateMesh, bx, by, 0, 1, scaleY)
+        end
+        -- Soft additive inner bezel glow
+        if m.menuActiveInnerGlowMesh then
+            g.setBlendMode("add")
+            g.setColor(1, 1, 1, (0.78 + 0.22 * self.selectPulse) * indA)
+            g.draw(m.menuActiveInnerGlowMesh, bx, by, 0, 1, scaleY)
+            g.setBlendMode("alpha")
+        end
+
+        local outline = {
+            bx,           by,
+            bx + bw,      by,
+            bx + bw,      by + BEVEL_TOP_TIP,
+            xBevelBottom, yShelf,
+            xNotchRight,  yShelf,
+            xNotchLeft,   by + bh,
+            bx,           by + bh,
+        }
+
+        -- Outer beveled outline in 4 passes (wide bloom -> mid glow -> crisp core -> top/slash highlight)
+        g.setBlendMode("add")
+        g.setLineWidth(5.5)
+        Theme.setColor(p.iceDeep, (0.28 * breathe + 0.20 * self.selectPulse) * indA)
+        g.polygon("line", outline)
+
+        g.setLineWidth(2.6)
+        Theme.setColor(p.iceGlow, (0.44 * breathe + 0.26 * self.selectPulse) * indA)
+        g.polygon("line", outline)
+        g.setBlendMode("alpha")
+
+        g.setLineWidth(1.25)
+        Theme.setColor(p.iceBright, 0.94 * indA)
+        g.polygon("line", outline)
+
+        g.setBlendMode("add")
+        g.setLineWidth(1.2)
+        Theme.setColor(p.iceWhite, 0.56 * indA)
+        g.line(bx, by, bx + bw, by, bx + bw, by + BEVEL_TOP_TIP, xBevelBottom, yShelf)
+        g.setBlendMode("alpha")
+
+        -- Inner top-left & bottom-left stepped bezel flanges
+        Theme.setColor(p.iceGlow, 0.16 * indA)
+        g.polygon("fill", bx + 1, by + 1, bx + 55.5, by + 1, bx + 51.5, by + 4.5, bx + 1, by + 4.5)
+        g.polygon("fill", bx + 1, by + bh - 4.5, bx + 51.5, by + bh - 4.5, bx + 55.5, by + bh - 1, bx + 1, by + bh - 1)
+
+        g.setLineWidth(1)
+        Theme.setColor(p.iceBright, 0.54 * indA)
+        g.line(bx + 2, by + 4.5, bx + 52, by + 4.5, bx + 56.5, by + 0.5)
+        Theme.setColor(p.iceBright, 0.48 * indA)
+        g.line(bx + 2, by + bh - 4.5, bx + 52, by + bh - 4.5, bx + 56.5, by + bh - 0.5)
+
+        -- Bottom-right micro tech recess tab left of the 45-degree notch
+        local tabX = xNotchLeft - 24
+        local tabY = by + bh - 3.5
+        Theme.setColor(p.iceDeep, 0.34 * indA)
+        g.rectangle("fill", tabX, tabY, 22, 3)
+        Theme.setColor(p.iceBright, 0.45 * indA)
+        g.line(tabX + 1, tabY, tabX + 21, tabY)
+
+        -- Left glowing right-pointing triangle + subtle diagonal rim sheen
+        if m.menuTriangleMesh then
+            g.setColor(1, 1, 1, indA)
+            g.draw(m.menuTriangleMesh, bx, by, 0, 1, scaleY)
+        end
+        g.setLineWidth(1)
+        Theme.setColor(p.iceWhite, 0.20 * indA)
+        g.line(bx, by, bx + TRI_W, by + bh * 0.5, bx, by + bh)
+
+        -- Left starburst flare centered on the triangle spine
+        local leftFlareY = by + bh * 0.5
+        g.setBlendMode("add")
+        Theme.drawRadialHalo(m.menuFlareHalo, bx, leftFlareY, 32, 38, (0.52 * breathe + 0.22 * self.selectPulse) * indA)
+        Theme.drawRadialHalo(m.menuFlareHalo, bx, leftFlareY, 14, 24, (0.72 * breathe + 0.24 * self.selectPulse) * indA)
+        Theme.drawRadialHalo(m.menuFlareCore, bx, leftFlareY, 7, 9, 0.92 * indA)
+        Theme.drawGradientRect(m.menuVertStreak, bx - 1.6, leftFlareY - 32, 3.2, 64, 0.84 * indA)
+        Theme.drawGradientRect(m.menuStreak, bx - 18, leftFlareY - 1.0, 36, 2.0, 0.60 * indA)
+
+        -- Top-right tip anamorphic lens flare & long horizontal light beam
+        local tipX = bx + bw
+        local tipY = by + 1.5
+        Theme.drawGradientRect(m.menuRightBeamSoft, tipX, tipY - 5.5, 310, 11, (0.68 * breathe + 0.24 * self.selectPulse) * indA)
+        Theme.drawGradientRect(m.menuRightBeamCore, tipX, tipY - 1.0, 260, 2.0, (0.86 * breathe + 0.22 * self.selectPulse) * indA)
+        Theme.drawGradientRect(m.menuStreak, tipX - 58, tipY - 1.0, 116, 2.0, 0.50 * indA)
+        Theme.drawRadialHalo(m.menuFlareHalo, tipX, tipY, 18, 12, (0.58 * breathe + 0.22 * self.selectPulse) * indA)
+        Theme.drawRadialHalo(m.menuFlareCore, tipX, tipY, 5.5, 4.5, 0.90 * indA)
+        Theme.drawGradientRect(m.menuVertStreak, tipX - 0.8, tipY - 10, 1.6, 20, 0.60 * indA)
+        g.setBlendMode("alpha")
+    end
+
+    -- 5. Menu items (bent-tick icons + Korean labels)
     for _, item in ipairs(items) do
         local introA, introShiftX = self:_menuItemIntro(item.index)
         local itemLaunchP = launchP > 0 and Theme.easeInCubic(Theme.clamp((launchP - (item.index - 1) * 0.08) / 0.55, 0, 1)) or 0
@@ -628,54 +990,39 @@ function TitleScreen:_drawLeftMenu(menu, fonts, selected, launchP)
         local baseX = item.x + itemShiftX
         local itemY = item.y + py
 
-        local font = item.primary and primaryFont or buttonFont
         local label = type(item.button.label) == "function" and item.button.label() or item.button.label
-        local textShift = focus * 11
-        local textX = math.floor(baseX + textShift + 0.5)
-        local textY = math.floor(itemY + (item.h - font:getHeight()) * 0.5 + 0.5)
+        local textX = math.floor(baseX + 70 + focus * 3 + 0.5)
+        local textY = math.floor(itemY + (item.h - buttonFont:getHeight()) * 0.5 + 0.5)
 
         if itemAlpha > 0.005 then
-            -- Small active chevron marker sliding in to the left of the text
-            if focus > 0.05 then
-                Theme.setColor(c.accentBright, focus * 0.92 * itemAlpha)
-                drawChevron(baseX - 4 + focus * 3, itemY + item.h * 0.5, 5.2)
-            end
+            drawMenuTickIcon(baseX + 36, itemY + item.h * 0.5, focus, itemAlpha)
 
-            -- Subtle dark drop shadow for sharp legibility over bright nebula wisps
-            g.setFont(font)
-            Theme.setColor(c.bgDeep, 0.72 * itemAlpha)
+            -- Subtle dark drop shadow for crisp legibility over nebula background
+            g.setFont(buttonFont)
+            Theme.setColor(c.bgDeep, 0.78 * itemAlpha)
             g.print(label, textX, textY + 1)
 
-            -- Soft additive highlight behind focused label
+            -- Soft additive icy-blue bloom behind focused label
             if focus > 0.05 then
                 g.setBlendMode("add")
-                Theme.setColor(c.accent, (0.24 * focus + 0.22 * self.selectPulse * focus) * itemAlpha)
+                Theme.setColor(p.iceGlow, (0.28 * focus + 0.22 * self.selectPulse * focus) * itemAlpha)
                 g.print(label, textX, textY)
                 g.setBlendMode("alpha")
             end
         end
 
-        -- Main label (bright pure white when selected, cool translucent slate when idle)
-        -- Always invoked during title mode (even at alpha 0 on frame 0) so UI label queries stay deterministic.
-        g.setFont(font)
-        local r = Theme.lerp(c.textSecondary[1], c.textHero[1], focus)
-        local gr = Theme.lerp(c.textSecondary[2], c.textHero[2], focus)
-        local b = Theme.lerp(c.textSecondary[3], c.textHero[3], focus)
-        local a = Theme.lerp(item.primary and 0.78 or 0.66, 1.0, focus) * itemAlpha
+        -- Main label (always invoked during title mode so UI label queries stay deterministic)
+        g.setFont(buttonFont)
+        local r = Theme.lerp(p.idleText[1], p.iceWhite[1], focus)
+        local gr = Theme.lerp(p.idleText[2], p.iceWhite[2], focus)
+        local b = Theme.lerp(p.idleText[3], p.iceWhite[3], focus)
+        local a = Theme.lerp(0.72, 1.0, focus) * itemAlpha
+        if focus > 0.25 and itemAlpha > 0.005 then
+            g.setColor(r, gr, b, a * 0.38 * focus)
+            g.print(label, textX + 0.55, textY)
+        end
         g.setColor(r, gr, b, a)
         g.print(label, textX, textY)
-
-        if itemAlpha > 0.005 then
-            -- Right-aligned English sub-label (LAUNCH / SETTINGS / EXIT)
-            if item.button.sublabel and item.button.sublabel ~= "" then
-                local subAlpha = Theme.lerp(0.36, 0.92, focus) * itemAlpha
-                local subColor = focus > 0.5 and c.accentBright or c.textSecondary
-                Theme.setColor(subColor, subAlpha)
-                local subX = baseX + MENU_WIDTH - (1 - focus) * 6
-                local subY = math.floor(itemY + (item.h - microFont:getHeight()) * 0.5 + 1)
-                drawTrackedText(microFont, item.button.sublabel, subX, subY, 2.4, "right")
-            end
-        end
     end
 
     g.pop()
