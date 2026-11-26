@@ -1628,7 +1628,7 @@ local function getHullMeshes(g)
     end
 
     -- Kind 2: EQUILATERAL (BOLTTHROWER — Nova Drift orchid-pink serrated pincer-jaws)
-    -- Kind 3: OBTUSE (CRIMSON SPECTRE — wide crimson Spectre Lance)
+    -- Kind 3: OBTUSE (RAZOR SPECTRE — flat sleek crimson Spectre Lance)
 
     hullMeshes = {
         [1] = {
@@ -1704,23 +1704,23 @@ local function drawBoltthrowerPlates(g, mode)
 end
 
 local OBTUSE_CORE_OUTLINE = {
-    0, -10.5, 9.6, -0.5, 10.2, 6.2, 4.4, 13.2,
-    0, 10.8, -4.4, 13.2, -10.2, 6.2, -9.6, -0.5,
+    0, -7.4, 9.2, -0.6, 8.4, 4.2, 3.8, 9.0,
+    0, 6.6, -3.8, 9.0, -8.4, 4.2, -9.2, -0.6,
 }
 local OBTUSE_CORE_FILLS = {
-    { 0, -10.5, 9.6, -0.5, 10.2, 6.2, 6.4, 10.8, -6.4, 10.8, -10.2, 6.2, -9.6, -0.5 },
-    { 0, 10.8, 6.4, 10.8, 4.4, 13.2 },
-    { -6.4, 10.8, 0, 10.8, -4.4, 13.2 },
+    { 0, -7.4, 9.2, -0.6, 8.4, 4.2, 6.1, 6.6, -6.1, 6.6, -8.4, 4.2, -9.2, -0.6 },
+    { 0, 6.6, 6.1, 6.6, 3.8, 9.0 },
+    { -6.1, 6.6, 0, 6.6, -3.8, 9.0 },
 }
-local OBTUSE_COWL_RIGHT_OUTLINE = { 1.4, -17.5, 7.5, -14.8, 30.5, 6.8, 24.5, 13.8, 13.2, 10.2, 12.2, -1.2, 1.4, -13.2 }
+local OBTUSE_COWL_RIGHT_OUTLINE = { 1.5, -12.5, 7.2, -10.8, 33.5, 4.8, 24.2, 9.6, 11.8, 5.8, 11.4, -1.0, 1.5, -9.4 }
 local OBTUSE_COWL_RIGHT_FILLS = {
-    { 1.4, -17.5, 7.5, -14.8, 19.0, -4.0, 12.2, -1.2, 1.4, -13.2 },
-    { 19.0, -4.0, 30.5, 6.8, 24.5, 13.8, 13.2, 10.2, 12.2, -1.2 },
+    { 1.5, -12.5, 7.2, -10.8, 20.35, -3.0, 11.4, -1.0, 1.5, -9.4 },
+    { 20.35, -3.0, 33.5, 4.8, 24.2, 9.6, 11.8, 5.8, 11.4, -1.0 },
 }
-local OBTUSE_COWL_LEFT_OUTLINE = { -1.4, -17.5, -1.4, -13.2, -12.2, -1.2, -13.2, 10.2, -24.5, 13.8, -30.5, 6.8, -7.5, -14.8 }
+local OBTUSE_COWL_LEFT_OUTLINE = { -1.5, -12.5, -1.5, -9.4, -11.4, -1.0, -11.8, 5.8, -24.2, 9.6, -33.5, 4.8, -7.2, -10.8 }
 local OBTUSE_COWL_LEFT_FILLS = {
-    { -1.4, -17.5, -1.4, -13.2, -12.2, -1.2, -19.0, -4.0, -7.5, -14.8 },
-    { -19.0, -4.0, -12.2, -1.2, -13.2, 10.2, -24.5, 13.8, -30.5, 6.8 },
+    { -1.5, -12.5, -1.5, -9.4, -11.4, -1.0, -20.35, -3.0, -7.2, -10.8 },
+    { -20.35, -3.0, -11.4, -1.0, -11.8, 5.8, -24.2, 9.6, -33.5, 4.8 },
 }
 
 local function drawObtuseSpectrePlates(g, mode)
@@ -1871,12 +1871,12 @@ function Enemies.drawHull(kind, aimed, time, opts)
         g.pop()
 
     else
-        -- OBTUSE: CRIMSON SPECTRE (wide spread Spectre Lance in crimson-red Nova Drift tone)
+        -- OBTUSE: RAZOR SPECTRE (flat sleek crimson Spectre Lance in Nova Drift tone)
         g.push("all")
 
         if thrust > 0.05 then
             local len = (9 + 6 * thrust) * flicker
-            for _, spec in ipairs({ { -14.5, 11.2, 0.72 }, { 0, 12.2, 1.0 }, { 14.5, 11.2, 0.72 } }) do
+            for _, spec in ipairs({ { -14.0, 6.8, 0.72 }, { 0, 7.8, 1.0 }, { 14.0, 6.8, 0.72 } }) do
                 local nx, ny, s = spec[1], spec[2], spec[3]
                 g.setColor(1.0, 0.24, 0.26, 0.74 * s * thrust)
                 g.polygon("fill", nx - 3.4 * s, ny, nx, ny + len * s, nx + 3.4 * s, ny)
