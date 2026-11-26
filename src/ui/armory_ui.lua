@@ -256,13 +256,23 @@ local function buildPartSpecRows(def, penaltyPct)
         end
         local interval = def.fireInterval or 0
         local rof = interval > 0 and (1 / interval) or 0
+        local accStr
+        if (def.targetScatterRadius or 0) > 0 then
+            accStr = string.format("착탄 오차 %d px", def.targetScatterRadius)
+        elseif (def.angleInaccuracy or 0) > 0 then
+            accStr = string.format("정확도 %d%%  (오차 %s%%)",
+                math.floor((1 - def.angleInaccuracy) * 100 + 0.5),
+                formatNum(def.angleInaccuracy * 100))
+        else
+            accStr = "정확도 100%  (오차 0%)"
+        end
         local enCost = math.floor((def.baseBatteryCost or 0) * mult + 0.5)
         rows = {
             { k = "피해 / 발사수", v = dmgStr },
             { k = "발사 간격 / 공속", v = string.format("%.2f s  (%.1f /s)", interval, rof) },
+            { k = "정확도 / 오차", v = accStr },
             { k = "발사 EN 소비", v = tostring(enCost) .. penTag, warn = (penaltyPct or 0) > 0 and enCost > 0 },
-            { k = "중량", v = string.format("%d t", def.weight or 0) },
-            { k = "점유 격자 / 소켓", v = string.format("%dx%d  ·  %d 슬롯", def.w or 1, def.h or 1, def.maxSockets or 0) },
+            { k = "중량 / 격자", v = string.format("%d t  ·  %dx%d (소켓 %d)", def.weight or 0, def.w or 1, def.h or 1, def.maxSockets or 0) },
         }
     elseif cat == "defense" then
         if (s.maxShield or 0) > 0 then

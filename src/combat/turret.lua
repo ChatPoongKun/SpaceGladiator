@@ -99,6 +99,7 @@ Turret.missileSpeed = defaultProjectile.projectileSpeed or 900
 Turret.missileLifetime = (defaultProjectile.projectileRange or 600) / Turret.missileSpeed
 Turret.fireInterval = defaultProjectile.fireInterval or 0.18
 Turret.baseDamage = defaultProjectile.damage or 5
+Turret.inaccuracyRefDeg = 90
 Turret.aimLineWidthRatio = 0.30
 Turret.explosionLifetime = 0.45
 
@@ -136,6 +137,21 @@ local function buildOffsets(baseCount, extraCount, baseSpread, extraSpreadRad)
         end
     end
     return offsets
+end
+
+local function sampleAngleJitter(turret, angleInaccuracy)
+    if not angleInaccuracy or angleInaccuracy <= 0 then return 0 end
+    local rng = turret.rng or math.random
+    local maxRad = math.rad(angleInaccuracy * (Turret.inaccuracyRefDeg or 90))
+    return (rng() * 2 - 1) * maxRad
+end
+
+local function sampleTargetScatter(turret, radius)
+    if not radius or radius <= 0 then return 0, 0 end
+    local rng = turret.rng or math.random
+    local r = radius * math.sqrt(rng())
+    local theta = rng() * tau
+    return math.cos(theta) * r, math.sin(theta) * r
 end
 
 local function nearestEnemy(enemies, x, y, excludeX, excludeY, camera, width, height, excludeEnemy)
@@ -191,7 +207,7 @@ function Turret.fireModes.beam(turret, ship, targetX, targetY, enemies, frameFra
     local anyHit = false
     local impactSpec = Turret.impactSpecs[spec.impactStyle] or Turret.impactSpecs.beam_impact
     for _, offset in ipairs(offsets) do
-        local a = (spec.baseAngle + offset) % tau
+        local a = (spec.baseAngle + offset + sampleAngleJitter(turret, spec.angleInaccuracy)) % tau
         local bdx, bdy = math.sin(a), -math.cos(a)
         local bx, by = ship.x + bdx * muzzleLength, ship.y + bdy * muzzleLength
         local hitX, hitY, hitEnemy
@@ -264,7 +280,7 @@ function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameF
     local firstMissile = nil
     local distance = math.sqrt((targetX - spec.x) ^ 2 + (targetY - spec.y) ^ 2)
     for offsetIdx, offset in ipairs(offsets) do
-        local a = (spec.baseAngle + offset) % tau
+        local a = (spec.baseAngle + offset + (offset ~= 0 and sampleAngleJitter(turret, spec.angleInaccuracy) or 0)) % tau
         local rdx, rdy = math.sin(a), -math.cos(a)
         local tx = targetX
         local ty = targetY
@@ -272,6 +288,9 @@ function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameF
             tx = spec.x + rdx * math.max(120, distance)
             ty = spec.y + rdy * math.max(120, distance)
         end
+        local sx, sy = sampleTargetScatter(turret, spec.targetScatterRadius)
+        tx = tx + sx
+        ty = ty + sy
         local missile = {
             x = spec.x, y = spec.y, startX = spec.x, startY = spec.y,
             owner = ship, angle = a, distance = 0, age = 0, shot = shot,
@@ -282,6 +301,8 @@ function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameF
             impactStyle = spec.impactStyle,
             impactSfx = spec.impactSfx,
             emitTrailEmbers = (spec.projectileStyle == "salvo_lance"),
+            targetOffsetX = sx,
+            targetOffsetY = sy,
         }
         local dist = math.sqrt((tx - spec.x) ^ 2 + (ty - spec.y) ^ 2)
         local bend = math.min(maxBend, dist * 0.18)
@@ -331,7 +352,7 @@ function Turret.fireModes.projectile(turret, ship, targetX, targetY, enemies, fr
         or (projRange and projSpeed > 0 and (projRange / projSpeed))
         or turret.missileLifetime
     for _, offset in ipairs(offsets) do
-        local angle = (spec.baseAngle + offset) % tau
+        local angle = (spec.baseAngle + offset + sampleAngleJitter(turret, spec.angleInaccuracy)) % tau
         local shotVx = math.sin(angle) * projSpeed + vx
         local shotVy = -math.cos(angle) * projSpeed + vy
         turret.missiles[#turret.missiles + 1] = {
@@ -420,6 +441,12 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
     local baseSpreadRad = math.rad((cfg and cfg.spreadDeg ~= nil) and cfg.spreadDeg
         or (def and def.spreadDeg)
         or 0)
+    local angleInaccuracy = (cfg and cfg.angleInaccuracy ~= nil) and cfg.angleInaccuracy
+        or (def and def.angleInaccuracy)
+        or 0
+    local targetScatterRadius = (cfg and cfg.targetScatterRadius ~= nil) and cfg.targetScatterRadius
+        or (def and def.targetScatterRadius)
+        or 0
     local dx, dy = math.sin(baseAngle), -math.cos(baseAngle)
     local spec = {
         weapon = weapon,
@@ -439,6 +466,8 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         damage = math.max(0.1, baseDamage * (cfg and cfg.damageMult or 1)),
         baseShotCount = baseShotCount,
         baseSpreadRad = baseSpreadRad,
+        angleInaccuracy = angleInaccuracy,
+        targetScatterRadius = targetScatterRadius,
         burstIndex = opts.burstIndex or 1,
     }
     local handler = Turret.fireModes[fireMode] or Turret.fireModes.projectile

@@ -666,6 +666,8 @@ local function newWeaponConfig(def, mod)
         ejectAnglesDeg = def and def.ejectAnglesDeg or nil,
         ejectBend = def and def.ejectBend or nil,
         spreadDeg = def and def.spreadDeg or nil,
+        angleInaccuracy = def and def.angleInaccuracy or nil,
+        targetScatterRadius = def and def.targetScatterRadius or nil,
         projectileSpeed = def and def.projectileSpeed or nil,
         projectileRange = def and def.projectileRange or nil,
         blastRadius = def and def.blastRadius or nil,
@@ -908,6 +910,8 @@ function Inventory:computeBuild(feverActive)
                 wCfg.ejectAnglesDeg = wCfg.ejectAnglesDeg or def.ejectAnglesDeg
                 wCfg.ejectBend = wCfg.ejectBend or def.ejectBend
                 wCfg.spreadDeg = wCfg.spreadDeg or def.spreadDeg
+                if wCfg.angleInaccuracy == nil then wCfg.angleInaccuracy = def.angleInaccuracy end
+                if wCfg.targetScatterRadius == nil then wCfg.targetScatterRadius = def.targetScatterRadius end
                 wCfg.projectileSpeed = wCfg.projectileSpeed or def.projectileSpeed
                 wCfg.projectileRange = wCfg.projectileRange or def.projectileRange
                 wCfg.blastRadius = wCfg.blastRadius or def.blastRadius
