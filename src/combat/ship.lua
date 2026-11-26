@@ -495,6 +495,31 @@ local function setBlendedColor(g, r, gg, b, a, flash, alpha)
     g.setColor(br, bg, bb, a * alpha)
 end
 
+local SERAPH_CENTER_OUTLINE = {
+    0, -24.5, 3.4, -22.5, 7.6, -3.5, 4.6, 4.5, 4.2, 16.5, 1.8, 17.5,
+    0, 15.2, -1.8, 17.5, -4.2, 16.5, -4.6, 4.5, -7.6, -3.5, -3.4, -22.5,
+}
+local SERAPH_CENTER_FILLS = {
+    { 0, -24.5, 3.4, -22.5, 7.6, -3.5, 4.6, 4.5, -4.6, 4.5, -7.6, -3.5, -3.4, -22.5 },
+    { -4.6, 4.5, 4.6, 4.5, 4.2, 15.2, -4.2, 15.2 },
+    { 0, 15.2, 4.2, 15.2, 4.2, 16.5, 1.8, 17.5 },
+    { -4.2, 15.2, 0, 15.2, -1.8, 17.5, -4.2, 16.5 },
+}
+local SERAPH_WING_RIGHT = { 9.8, -1.8, 22.5, 11.8, 20.2, 15.5, 7.0, 13.0, 6.4, 5.2 }
+local SERAPH_WING_LEFT = { -9.8, -1.8, -6.4, 5.2, -7.0, 13.0, -20.2, 15.5, -22.5, 11.8 }
+
+local function drawSeraphPlates(g, mode)
+    if mode == "fill" then
+        for _, part in ipairs(SERAPH_CENTER_FILLS) do
+            g.polygon("fill", part)
+        end
+    else
+        g.polygon("line", SERAPH_CENTER_OUTLINE)
+    end
+    g.polygon(mode, SERAPH_WING_LEFT)
+    g.polygon(mode, SERAPH_WING_RIGHT)
+end
+
 function Ship.drawChassis(chassisId, x, y, angle, scale, time, opts)
     opts = opts or {}
     local g = love.graphics
@@ -511,69 +536,52 @@ function Ship.drawChassis(chassisId, x, y, angle, scale, time, opts)
     if drawScale ~= 1 then
         g.scale(drawScale, drawScale)
     end
+    g.setLineJoin("bevel")
 
     if locked then
         -- Dark mystery silhouette for locked ??? chassis
         g.setColor(0.05, 0.08, 0.13, 0.92 * blinkAlpha)
-        g.polygon("fill", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
+        drawSeraphPlates(g, "fill")
         g.setLineWidth(1.2 / math.max(1, drawScale * 0.45))
         g.setColor(0.32, 0.56, 0.70, 0.72 * blinkAlpha)
-        g.polygon("line", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
-        g.setColor(0.24, 0.44, 0.56, 0.35 * blinkAlpha)
-        g.line(0, -18, 0, 14)
-        g.line(-8, 3, -17.5, 11)
-        g.line(8, 3, 17.5, 11)
+        drawSeraphPlates(g, "line")
         g.pop()
         return
     end
 
-    -- Soft cyan ambient aura behind the Option A Solid Silhouette hull.
-    for s = 2, 1, -1 do
-        local glowAlpha = (0.04 + 0.065 * blinkFlash) * (3 - s) * blinkAlpha
-        setBlendedColor(g, 0.50, 0.91, 1, glowAlpha, blinkFlash, 1)
-        g.push()
-        g.scale(1 + s * 0.08)
-        g.polygon("fill", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, 0, 17)
-        g.polygon("fill", 0, -26, 0, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
-        g.pop()
+    -- 1. Additive sky-cyan outer bloom (#38dcff) around the segmented plates.
+    g.setBlendMode("add")
+    local bloomPulse = 0.92 + 0.08 * pulse
+    for _, layer in ipairs({
+        { width = 9.0, alpha = 0.085 },
+        { width = 5.0, alpha = 0.17 },
+        { width = 2.3, alpha = 0.30 },
+    }) do
+        local layerAlpha = (layer.alpha * bloomPulse + 0.08 * blinkFlash) * blinkAlpha
+        setBlendedColor(g, 0.220, 0.863, 1.0, layerAlpha, blinkFlash, 1)
+        g.setLineWidth(layer.width)
+        drawSeraphPlates(g, "line")
     end
+    g.push()
+    g.scale(1.05)
+    setBlendedColor(g, 0.220, 0.863, 1.0, (0.06 + 0.06 * blinkFlash) * blinkAlpha, blinkFlash, 1)
+    drawSeraphPlates(g, "fill")
+    g.pop()
+    g.setBlendMode("alpha")
 
-    -- 1. Main hull (two-tone directional shading: lit right ice-white, shaded left cool-steel).
-    setBlendedColor(g, 0.894, 0.933, 0.969, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 0, -26, 5, -13, 7, -3, 8, 12, 5, 17, 0, 17)
-    g.polygon("fill", 7, -3, 20, 9, 20, 14, 8, 12)
+    -- 2. Luminous solid plates: ice-white center spear (#edfaff) + pale-cyan delta wings (#d6f6ff).
+    setBlendedColor(g, 0.929, 0.980, 1.0, 1, blinkFlash * 0.75, blinkAlpha)
+    for _, part in ipairs(SERAPH_CENTER_FILLS) do
+        g.polygon("fill", part)
+    end
+    setBlendedColor(g, 0.839, 0.965, 1.0, 1, blinkFlash * 0.75, blinkAlpha)
+    g.polygon("fill", SERAPH_WING_LEFT)
+    g.polygon("fill", SERAPH_WING_RIGHT)
 
-    setBlendedColor(g, 0.624, 0.702, 0.780, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 0, -26, 0, 17, -5, 17, -8, 12, -7, -3, -5, -13)
-    g.polygon("fill", -7, -3, -8, 12, -20, 14, -20, 9)
-
-    -- 2. Wing cyan energy stripes & center spine seam.
-    g.setLineWidth(1.6)
-    setBlendedColor(g, 0.173, 0.812, 1, 0.95, blinkFlash, blinkAlpha)
-    g.line(-8, 3, -17.5, 11)
-    g.line(8, 3, 17.5, 11)
-
-    g.setLineWidth(0.75)
-    setBlendedColor(g, 0.424, 0.506, 0.592, 0.9, blinkFlash, blinkAlpha)
-    g.line(0, -2, 0, 14)
-
-    -- 3. Cockpit canopy & glowing visor glint.
-    setBlendedColor(g, 0.051, 0.106, 0.173, 1, blinkFlash * 0.72, blinkAlpha)
-    g.polygon("fill", 0, -18, 3, -10, 2, -4, -2, -4, -3, -10)
-    setBlendedColor(g, 0.561, 0.953, 1, 0.95 * pulse, blinkFlash, blinkAlpha)
-    g.polygon("fill", 0, -16.5, 1.6, -10.5, 0, -8.5)
-
-    -- 4. Twin plasma exhaust bars & wingtip emitter dots.
-    setBlendedColor(g, 0.435, 0.941, 1, 0.84 + 0.16 * pulse, blinkFlash, blinkAlpha)
-    g.rectangle("fill", -5.2, 15.6, 4, 2.6, 0.6, 0.6)
-    g.rectangle("fill", 1.2, 15.6, 4, 2.6, 0.6, 0.6)
-    g.circle("fill", -20, 11.5, 1.5)
-    g.circle("fill", 20, 11.5, 1.5)
-
-    -- 5. Crisp outer silhouette outline.
-    g.setLineWidth(0.8 + blinkFlash * 0.6)
-    setBlendedColor(g, 1, 1, 1, 0.85, blinkFlash, blinkAlpha)
-    g.polygon("line", 0, -26, 5, -13, 7, -3, 20, 9, 20, 14, 8, 12, 5, 17, -5, 17, -8, 12, -20, 14, -20, 9, -7, -3, -5, -13)
+    -- 3. Crisp anti-aliased edge highlight around all 3 plates.
+    g.setLineWidth(0.75 + blinkFlash * 0.5)
+    setBlendedColor(g, 1, 1, 1, 0.76, blinkFlash, blinkAlpha)
+    drawSeraphPlates(g, "line")
 
     g.pop()
 end
@@ -622,17 +630,17 @@ function Ship:draw(time)
     g.translate(self.x, self.y)
     g.rotate(self.angle)
 
-    -- Twin thrusters aligned with the Option A exhaust ports (x = +-3.2, y = 17).
+    -- Twin thrusters aligned with the Delta Seraph tail tabs (x = +-3.0, y = 16.8).
     if boost > 0 then
         local trail = (86 + math.sin(t * 96) * 14) * boost
         g.setColor(0.14, 0.57, 1, boost * 0.20 * blinkAlpha)
         g.ellipse("fill", 0, 22 + trail * 0.30, 15, 13 + trail * 0.62)
         for _, side in ipairs({ -1, 1 }) do
-            local nx = side * 3.2
+            local nx = side * 3.0
             g.setColor(0.20, 0.72, 1, boost * 0.88 * blinkAlpha)
-            g.polygon("fill", nx - 3.6, 16.5, nx, 22 + trail, nx + 3.6, 16.5)
+            g.polygon("fill", nx - 3.6, 16.8, nx, 22 + trail, nx + 3.6, 16.8)
             g.setColor(0.82, 0.99, 1, boost * blinkAlpha)
-            g.polygon("fill", nx - 1.8, 16.5, nx, 19 + trail * 0.56, nx + 1.8, 16.5)
+            g.polygon("fill", nx - 1.8, 16.8, nx, 19 + trail * 0.56, nx + 1.8, 16.8)
             g.setColor(0.48, 0.90, 1, boost * 0.65 * blinkAlpha)
             g.setLineWidth(1.6)
             g.line(side * 10, 18, side * 11, 25 + trail * 0.66)
@@ -642,13 +650,13 @@ function Ship:draw(time)
         g.setColor(0.18, 0.74, 1, 0.14 * blinkAlpha)
         g.ellipse("fill", 0, 22 + flame * 0.25, 12, flame * 0.75 + 7)
         for _, side in ipairs({ -1, 1 }) do
-            local nx = side * 3.2
+            local nx = side * 3.0
             g.setColor(0.16, 0.62, 1, 0.78 * blinkAlpha)
-            g.polygon("fill", nx - 2.6, 16.5, nx, 17 + flame, nx + 2.6, 16.5)
+            g.polygon("fill", nx - 2.6, 16.8, nx, 17 + flame, nx + 2.6, 16.8)
             g.setColor(0.48, 0.96, 1, 0.92 * blinkAlpha)
-            g.polygon("fill", nx - 1.7, 16.5, nx, 17 + flame * 0.68, nx + 1.7, 16.5)
+            g.polygon("fill", nx - 1.7, 16.8, nx, 17 + flame * 0.68, nx + 1.7, 16.8)
             g.setColor(0.96, 1, 1, blinkAlpha)
-            g.polygon("fill", nx - 1.0, 16.5, nx, 16 + flame * 0.42, nx + 1.0, 16.5)
+            g.polygon("fill", nx - 1.0, 16.8, nx, 16 + flame * 0.42, nx + 1.0, 16.8)
         end
     end
     g.pop()
