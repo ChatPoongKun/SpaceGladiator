@@ -13,8 +13,6 @@ TitleScreen.__index = TitleScreen
 TitleScreen.GAME_VERSION = "v0.1.0"
 TitleScreen.TITLE_TOP = "SPACE"
 TitleScreen.TITLE_MAIN = "GLADIATOR"
-TitleScreen.EYEBROW = "DEEP SPACE ARENA"
-TitleScreen.TAGLINE = "INERTIAL COMBAT SYSTEM"
 
 TitleScreen.INTRO_FULL_DURATION = 1.25
 TitleScreen.INTRO_QUICK_DURATION = 0.42
@@ -294,8 +292,6 @@ end
 
 local function buildMeshes()
     local deep = Theme.colors.bgOverlay
-    local acc = Theme.colors.accent
-    local bright = Theme.colors.accentBright
     local p = MENU_PALETTE
     return {
         -- Left-to-right readability scrim (keeps live ship combat and planet bright)
@@ -388,21 +384,39 @@ local function buildMeshes()
         menuActivePlateMesh = createActivePlateMesh(MENU_WIDTH, ROW_H),
         menuActiveInnerGlowMesh = createActiveInnerGlowMesh(MENU_WIDTH, ROW_H),
         menuTriangleMesh = createTriangleMesh(TRI_W, ROW_H),
-        -- Symmetrical glowing accent rule under the centered title
-        centerRule = Theme.createGradientMesh({
-            { pos = 0.00, acc[1],    acc[2],    acc[3],    0.00 },
-            { pos = 0.22, acc[1],    acc[2],    acc[3],    0.52 },
-            { pos = 0.50, bright[1], bright[2], bright[3], 0.95 },
-            { pos = 0.78, acc[1],    acc[2],    acc[3],    0.52 },
-            { pos = 1.00, acc[1],    acc[2],    acc[3],    0.00 },
-        }, true),
-        -- Specular shimmer highlight band
-        shimmerBand = Theme.createGradientMesh({
-            { pos = 0.00, 1.0, 1.0, 1.0, 0.00 },
-            { pos = 0.42, bright[1], bright[2], bright[3], 0.65 },
-            { pos = 0.50, 1.0, 1.0, 1.0, 0.98 },
-            { pos = 0.58, bright[1], bright[2], bright[3], 0.65 },
-            { pos = 1.00, 1.0, 1.0, 1.0, 0.00 },
+        -- Symmetrical icy-blue 2D feathered optical plumes & wing fade for the centered hero title
+        titleRuleAura = createSoftBeam2DMesh({
+            { pos = 0.00, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.00 },
+            { pos = 0.18, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.06 },
+            { pos = 0.36, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.20 },
+            { pos = 0.50, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.34 },
+            { pos = 0.64, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.20 },
+            { pos = 0.82, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.06 },
+            { pos = 1.00, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.00 },
+        }, SOFT_GAUSS_Y, false),
+        titleRuleSoft = createSoftBeam2DMesh({
+            { pos = 0.00, p.iceDeep[1],   p.iceDeep[2],   p.iceDeep[3],   0.00 },
+            { pos = 0.14, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.08 },
+            { pos = 0.34, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.34 },
+            { pos = 0.50, p.iceBright[1], p.iceBright[2], p.iceBright[3], 0.62 },
+            { pos = 0.66, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.34 },
+            { pos = 0.86, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.08 },
+            { pos = 1.00, p.iceDeep[1],   p.iceDeep[2],   p.iceDeep[3],   0.00 },
+        }, SOFT_GAUSS_Y, false),
+        titleRuleCore = createSoftBeam2DMesh({
+            { pos = 0.00, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.00 },
+            { pos = 0.16, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.16 },
+            { pos = 0.36, p.iceBright[1], p.iceBright[2], p.iceBright[3], 0.62 },
+            { pos = 0.50, 0.96,           0.99,           1.00,           1.00 },
+            { pos = 0.64, p.iceBright[1], p.iceBright[2], p.iceBright[3], 0.62 },
+            { pos = 0.84, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.16 },
+            { pos = 1.00, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.00 },
+        }, SOFT_GAUSS_Y, false),
+        titleWingFadeL = Theme.createGradientMesh({
+            { pos = 0.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.00 },
+            { pos = 0.22, p.railLine[1], p.railLine[2], p.railLine[3], 0.07 },
+            { pos = 0.62, p.railLine[1], p.railLine[2], p.railLine[3], 0.20 },
+            { pos = 1.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.32 },
         }, true),
     }
 end
@@ -461,10 +475,6 @@ local function drawTrackedText(font, text, cx, y, tracking, align)
         cursorX = cursorX + font:getWidth(ch) + tracking
     end
     return totalW, x
-end
-
-local function drawDiamond(x, y, r)
-    love.graphics.polygon("fill", x, y - r, x + r, y, x, y + r, x - r, y)
 end
 
 local function drawMenuTickIcon(ix, cy, focus, alpha)
@@ -723,6 +733,7 @@ end
 function TitleScreen:_drawHeroTitle(fonts, width, logoP, ruleP, launchP)
     local g = love.graphics
     local c = Theme.colors
+    local p = MENU_PALETTE
     local m = self.meshes
 
     local logoAlpha = logoP
@@ -732,7 +743,7 @@ function TitleScreen:_drawHeroTitle(fonts, width, logoP, ruleP, launchP)
         local easeOut = Theme.easeOutCubic(launchP)
         logoAlpha = logoAlpha * (1 - Theme.smoothstep(0.06, 0.95, launchP))
         launchScale = 1 + 0.075 * easeOut
-        -- Brief cyan flare peaking near t = 0.25 of launch
+        -- Brief icy-blue flare peaking near t = 0.25 of launch
         launchFlare = math.sin(Theme.clamp(launchP / 0.55, 0, 1) * math.pi)
     end
     if logoAlpha <= 0.002 then return end
@@ -744,117 +755,209 @@ function TitleScreen:_drawHeroTitle(fonts, width, logoP, ruleP, launchP)
 
     local heroFont = fonts.titleHero or fonts.menuTitle
     local subFont = fonts.titleSub or fonts.menuTitle
-    local microFont = fonts.titleMicro or fonts.menuSmall
 
     local extraTrack = (1 - logoP) * 14
     local shimmerPhase = (self.elapsed % TitleScreen.SHIMMER_PERIOD) / TitleScreen.SHIMMER_DURATION
     local shimmerActive = shimmerPhase >= 0 and shimmerPhase <= 1
-    local breathe = 0.86 + 0.14 * math.sin(self.elapsed * 2.1)
+    local breathe = 0.88 + 0.12 * math.sin(self.elapsed * 2.1)
 
     g.push("all")
     g.translate(cx, centerY)
     g.scale(launchScale, launchScale)
     g.translate(-cx, -centerY)
 
-    -- 1. Eyebrow line with symmetrical hairline rails and diamond pips
-    local eyebrowY = 98 + py
-    local eyebrowAlpha = logoAlpha * ruleP
-    if eyebrowAlpha > 0.01 then
-        local eyTrack = 5.5 + extraTrack * 0.25
-        local eyW = measureTrackedText(microFont, TitleScreen.EYEBROW, eyTrack)
-        local halfGap = eyW * 0.5 + 22
-        local wingLen = 96 * ruleP
-        Theme.setColor(c.accent, 0.42 * eyebrowAlpha)
-        g.setLineWidth(1)
-        g.line(cx - halfGap - wingLen, eyebrowY + 7, cx - halfGap, eyebrowY + 7)
-        g.line(cx + halfGap, eyebrowY + 7, cx + halfGap + wingLen, eyebrowY + 7)
-        Theme.setColor(c.accentBright, 0.82 * eyebrowAlpha)
-        drawDiamond(cx - halfGap + 4, eyebrowY + 7, 2.4)
-        drawDiamond(cx + halfGap - 4, eyebrowY + 7, 2.4)
-        Theme.setColor(c.accentBright, 0.78 * eyebrowAlpha)
-        drawTrackedText(microFont, TitleScreen.EYEBROW, cx, eyebrowY, eyTrack, "center")
-    end
-
-    -- 2. Upper title word: "SPACE"
-    local topTrack = 17 + extraTrack * 0.85
-    local topY = 122 + py + (1 - logoP) * -8
-    -- Subtle dark drop shadow
-    Theme.setColor(c.bgDeep, 0.75 * logoAlpha)
-    drawTrackedText(subFont, TitleScreen.TITLE_TOP, cx, topY + 2, topTrack, "center")
-    -- Soft cyan additive glow
-    g.setBlendMode("add")
-    Theme.setColor(c.accent, (0.26 * breathe + 0.30 * launchFlare) * logoAlpha)
-    drawTrackedText(subFont, TitleScreen.TITLE_TOP, cx, topY, topTrack, "center")
-    g.setBlendMode("alpha")
-    -- Crisp ice-white core
-    Theme.setColor(c.textPrimary, 0.92 * logoAlpha)
-    drawTrackedText(subFont, TitleScreen.TITLE_TOP, cx, topY, topTrack, "center")
-
-    -- 3. Hero title word: "GLADIATOR"
-    local mainTrack = 9.5 + extraTrack * 0.65
-    local mainY = 160 + py + (1 - logoP) * 6
-    -- Crisp dark depth shadow
-    Theme.setColor(c.bgDeep, 0.85 * logoAlpha)
-    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY + 4, mainTrack, "center")
-    Theme.setColor(c.bgDeep, 0.50 * logoAlpha)
-    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY + 2, mainTrack, "center")
-    -- Multi-pass additive cyan halo bloom
-    g.setBlendMode("add")
-    local haloAlpha = (0.14 * breathe + 0.24 * launchFlare) * logoAlpha
-    Theme.setColor(c.accent, haloAlpha)
-    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx - 2, mainY, mainTrack, "center")
-    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx + 2, mainY, mainTrack, "center")
-    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY - 2, mainTrack, "center")
-    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY + 2, mainTrack, "center")
-    Theme.setColor(c.accentCool, (0.10 * breathe + 0.16 * launchFlare) * logoAlpha)
-    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY, mainTrack, "center")
-    g.setBlendMode("alpha")
-    -- Bright platinum-white core text (subtle 0.6px horizontal fill for commanding display weight)
-    Theme.setColor(c.textHero, 0.42 * logoAlpha)
-    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx + 0.6, mainY, mainTrack, "center")
-    Theme.setColor(c.textHero, logoAlpha)
-    local mainW = drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY, mainTrack, "center")
-
-    -- 4. Symmetrical glowing lower accent rule + specular light sweep
-    local ruleY = 264 + py
-    local ruleFullW = math.max(460, mainW * 0.92)
-    local ruleW = ruleFullW * ruleP
-    if ruleW > 4 then
-        local ruleX = cx - ruleW * 0.5
-        -- Soft glow strip behind rule
-        g.setBlendMode("add")
-        Theme.drawGradientRect(m.centerRule, ruleX, ruleY - 3, ruleW, 7, (0.28 * breathe + 0.35 * launchFlare) * logoAlpha)
-        g.setBlendMode("alpha")
-        -- Core hairline
-        Theme.drawGradientRect(m.centerRule, ruleX, ruleY, ruleW, 1.5, 0.92 * logoAlpha)
-        -- Center diamond emblem
-        Theme.setColor(c.accentBright, 0.95 * logoAlpha)
-        drawDiamond(cx, ruleY + 0.75, 3.4)
-        -- End bracket ticks
-        Theme.setColor(c.accent, 0.55 * logoAlpha * ruleP)
-        g.setLineWidth(1)
-        g.line(ruleX + 8, ruleY - 4, ruleX + 3, ruleY + 0.75, ruleX + 8, ruleY + 5.5)
-        g.line(ruleX + ruleW - 8, ruleY - 4, ruleX + ruleW - 3, ruleY + 0.75, ruleX + ruleW - 8, ruleY + 5.5)
-
-        -- Periodic specular glint sweeping across the rule
-        if shimmerActive and launchP == 0 then
-            local sweepW = 110
-            local sweepX = ruleX - sweepW + (ruleW + sweepW) * Theme.easeOutCubic(shimmerPhase)
-            local clipL = math.max(ruleX, sweepX)
-            local clipR = math.min(ruleX + ruleW, sweepX + sweepW)
-            if clipR > clipL then
-                g.setBlendMode("add")
-                Theme.drawGradientRect(m.shimmerBand, clipL, ruleY - 2, clipR - clipL, 5.5, 0.85 * logoAlpha)
-                g.setBlendMode("alpha")
+    -- 1. Subtle dotted orbital crown arc echoing the left menu quadrant
+    local crownAlpha = logoAlpha * ruleP
+    if crownAlpha > 0.01 then
+        local arcCx = cx
+        local arcCy = 355 + py
+        local arcR = 270
+        local minAng = math.rad(-116)
+        local maxAng = math.rad(-64)
+        local span = maxAng - minAng
+        local stepAng = span / 54
+        local drift = (self.elapsed * 0.06) % (stepAng * 10)
+        local nDots = 64
+        for i = -10, nDots do
+            local ang = minAng + i * stepAng + drift
+            if ang >= minAng and ang <= maxAng then
+                local edgeFade = Theme.smoothstep(minAng, minAng + span * 0.18, ang)
+                    * (1 - Theme.smoothstep(maxAng - span * 0.18, maxAng, ang))
+                local dx = arcCx + math.cos(ang) * arcR
+                local dy = arcCy + math.sin(ang) * arcR
+                if i % 10 == 0 then
+                    Theme.setColor(p.iceBright, 0.36 * edgeFade * crownAlpha)
+                    g.circle("fill", dx, dy, 1.2)
+                else
+                    Theme.setColor(p.railLine, 0.18 * edgeFade * crownAlpha)
+                    g.circle("fill", dx, dy, 0.85)
+                end
             end
         end
     end
 
-    -- 5. Subtle micro-tagline under accent rule
-    local tagAlpha = logoAlpha * ruleP * 0.78
-    if tagAlpha > 0.01 then
-        Theme.setColor(c.textSecondary, tagAlpha)
-        drawTrackedText(microFont, TitleScreen.TAGLINE, cx, ruleY + 15, 5.2, "center")
+    -- 2. Upper wordmark: "SPACE" + symmetrical chamfered telemetry wings & inward micro-triangles
+    local topTrack = 18 + extraTrack * 0.85
+    local topY = 112 + py + (1 - logoP) * -8
+    local spaceW = measureTrackedText(subFont, TitleScreen.TITLE_TOP, topTrack)
+    if crownAlpha > 0.01 then
+        local wingY = topY + subFont:getHeight() * 0.5 + 1
+        local halfSpace = spaceW * 0.5 + 24
+        local innerSpan = 64 * ruleP
+        local outerSpan = 52 * ruleP
+
+        -- Tiny inward-pointing ice-white micro-triangles flanking "SPACE"
+        Theme.setColor(p.iceWhite, 0.88 * crownAlpha)
+        g.polygon("fill", cx - halfSpace - 6, wingY - 4, cx - halfSpace, wingY, cx - halfSpace - 6, wingY + 4)
+        g.polygon("fill", cx + halfSpace + 6, wingY - 4, cx + halfSpace, wingY, cx + halfSpace + 6, wingY + 4)
+
+        g.setBlendMode("add")
+        Theme.drawRadialHalo(m.menuFlareHalo, cx - halfSpace - 3, wingY, 9, 7, 0.44 * crownAlpha)
+        Theme.drawRadialHalo(m.menuFlareHalo, cx + halfSpace + 3, wingY, 9, 7, 0.44 * crownAlpha)
+        g.setBlendMode("alpha")
+
+        -- Symmetrical 45-degree chamfered telemetry wing rails
+        local lx0 = cx - halfSpace - 12
+        local lx1 = lx0 - innerSpan
+        local lx2 = lx1 - 8 * ruleP
+        local wy2 = wingY + 8 * ruleP
+
+        local rx0 = cx + halfSpace + 12
+        local rx1 = rx0 + innerSpan
+        local rx2 = rx1 + 8 * ruleP
+
+        g.setLineWidth(1)
+        Theme.setColor(p.railLine, 0.34 * crownAlpha)
+        g.line(lx0, wingY, lx1, wingY, lx2, wy2)
+        g.line(rx0, wingY, rx1, wingY, rx2, wy2)
+
+        if outerSpan > 2 then
+            Theme.drawGradientRect(m.titleWingFadeL, lx2 - outerSpan, wy2 - 0.5, outerSpan, 1, crownAlpha)
+            Theme.drawGradientRect(m.menuDivider, rx2, wy2 - 0.5, outerSpan, 1, crownAlpha)
+        end
+
+        -- Luminous node pips flanking "SPACE"
+        g.setBlendMode("add")
+        Theme.drawRadialHalo(m.menuFlareHalo, lx0, wingY, 4.5, 4.5, 0.48 * crownAlpha)
+        Theme.drawRadialHalo(m.menuFlareHalo, rx0, wingY, 4.5, 4.5, 0.48 * crownAlpha)
+        g.setBlendMode("alpha")
+        Theme.setColor(p.iceWhite, 0.90 * crownAlpha)
+        g.circle("fill", lx0, wingY, 1.4)
+        g.circle("fill", rx0, wingY, 1.4)
+    end
+
+    -- Subtle dark drop shadow
+    Theme.setColor(c.bgDeep, 0.78 * logoAlpha)
+    drawTrackedText(subFont, TitleScreen.TITLE_TOP, cx, topY + 2, topTrack, "center")
+    -- Soft icy-blue additive bloom
+    g.setBlendMode("add")
+    Theme.setColor(p.iceGlow, (0.34 * breathe + 0.32 * launchFlare) * logoAlpha)
+    drawTrackedText(subFont, TitleScreen.TITLE_TOP, cx, topY, topTrack, "center")
+    g.setBlendMode("alpha")
+    -- Crisp glacier-white core
+    g.setColor(0.86, 0.95, 1.00, 0.95 * logoAlpha)
+    drawTrackedText(subFont, TitleScreen.TITLE_TOP, cx, topY, topTrack, "center")
+
+    -- 3. Hero wordmark: "GLADIATOR"
+    local mainTrack = 10 + extraTrack * 0.65
+    local mainY = 152 + py + (1 - logoP) * 6
+    -- Crisp dark depth shadow
+    Theme.setColor(c.bgDeep, 0.85 * logoAlpha)
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY + 4, mainTrack, "center")
+    Theme.setColor(c.bgDeep, 0.52 * logoAlpha)
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY + 2, mainTrack, "center")
+    -- Multi-pass icy-blue additive halo bloom (matching left menu palette)
+    g.setBlendMode("add")
+    local outerHaloAlpha = (0.16 * breathe + 0.22 * launchFlare) * logoAlpha
+    Theme.setColor(p.iceDeep, outerHaloAlpha)
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx - 2.5, mainY, mainTrack, "center")
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx + 2.5, mainY, mainTrack, "center")
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY - 2.5, mainTrack, "center")
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY + 2.5, mainTrack, "center")
+    local innerHaloAlpha = (0.18 * breathe + 0.24 * launchFlare) * logoAlpha
+    Theme.setColor(p.iceGlow, innerHaloAlpha)
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx - 1.2, mainY, mainTrack, "center")
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx + 1.2, mainY, mainTrack, "center")
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY - 1.2, mainTrack, "center")
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY + 1.2, mainTrack, "center")
+    g.setBlendMode("alpha")
+    -- Bright platinum-white core text
+    Theme.setColor(p.iceWhite, 0.44 * logoAlpha)
+    drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx + 0.65, mainY, mainTrack, "center")
+    Theme.setColor(p.iceWhite, logoAlpha)
+    local mainW = drawTrackedText(heroFont, TitleScreen.TITLE_MAIN, cx, mainY, mainTrack, "center")
+
+    -- 4. Signature chamfered telemetry horizon rail & 2D soft-feathered anamorphic flare
+    local ruleY = 252 + py
+    local ruleFullW = math.max(520, mainW * 0.96)
+    local ruleW = ruleFullW * ruleP
+    if ruleW > 8 then
+        local centerHalf = ruleW * 0.27
+        local halfW = ruleW * 0.5
+        local stepDx = 8 * ruleP
+        local stepDy = 6 * ruleP
+        local shoulderY = ruleY - stepDy
+        local lStepX = cx - centerHalf
+        local lOutX = lStepX - stepDx
+        local lEndX = cx - halfW
+        local rStepX = cx + centerHalf
+        local rOutX = rStepX + stepDx
+        local rEndX = cx + halfW
+
+        -- Chamfered outer shoulder hairlines + fading tails
+        g.setLineWidth(1)
+        Theme.setColor(p.railLine, 0.36 * logoAlpha * ruleP)
+        g.line(lStepX, ruleY, lOutX, shoulderY, math.min(lOutX, lEndX + 42 * ruleP), shoulderY)
+        g.line(rStepX, ruleY, rOutX, shoulderY, math.max(rOutX, rEndX - 42 * ruleP), shoulderY)
+        local tailW = math.min(48 * ruleP, math.max(0, lOutX - lEndX))
+        if tailW > 1 then
+            Theme.drawGradientRect(m.titleWingFadeL, lEndX, shoulderY - 0.5, tailW, 1, logoAlpha * ruleP)
+            Theme.drawGradientRect(m.menuDivider, rEndX - tailW, shoulderY - 0.5, tailW, 1, logoAlpha * ruleP)
+        end
+
+        -- 3 micro slanted parallelogram accents tucked under the outer shoulders
+        if ruleP > 0.35 then
+            local stripeA = 0.34 * logoAlpha * Theme.smoothstep(0.35, 0.85, ruleP)
+            local sw, sh, skew, stride = 4.5, 5.5, 5.5, 8.5
+            local sy = shoulderY + 4
+            g.setColor(0.36, 0.48, 0.60, stripeA)
+            for i = 0, 2 do
+                local lx = lOutX - 18 - i * stride
+                g.polygon("fill", lx, sy, lx - sw, sy, lx - sw - skew, sy + sh, lx - skew, sy + sh)
+                local rx = rOutX + 18 + i * stride
+                g.polygon("fill", rx, sy, rx + sw, sy, rx + sw + skew, sy + sh, rx + skew, sy + sh)
+            end
+        end
+
+        -- 2D soft-feathered horizontal anamorphic plume centered on (cx, ruleY)
+        g.setBlendMode("add")
+        Theme.drawGradientRect(m.titleRuleAura, cx - ruleW * 0.59, ruleY - 17, ruleW * 1.18, 34, (0.60 * breathe + 0.35 * launchFlare) * logoAlpha)
+        Theme.drawGradientRect(m.titleRuleSoft, cx - ruleW * 0.51, ruleY - 5.5, ruleW * 1.02, 11, (0.78 * breathe + 0.35 * launchFlare) * logoAlpha)
+        Theme.drawGradientRect(m.titleRuleCore, cx - ruleW * 0.47, ruleY - 1.4, ruleW * 0.94, 2.8, 0.94 * logoAlpha)
+
+        -- Central starburst pinpoint
+        Theme.drawRadialHalo(m.menuFlareHalo, cx, ruleY, 26, 14, (0.58 * breathe + 0.30 * launchFlare) * logoAlpha)
+        Theme.drawRadialHalo(m.menuFlareCore, cx, ruleY, 8, 4.5, 0.94 * logoAlpha)
+        Theme.drawGradientRect(m.menuVertStreak, cx - 1.6, ruleY - 10, 3.2, 20, 0.56 * logoAlpha)
+
+        -- Glowing node pips at both 45-degree step joints
+        Theme.drawRadialHalo(m.menuFlareHalo, lStepX, ruleY, 5, 5, 0.50 * logoAlpha * ruleP)
+        Theme.drawRadialHalo(m.menuFlareHalo, rStepX, ruleY, 5, 5, 0.50 * logoAlpha * ruleP)
+        g.setBlendMode("alpha")
+        Theme.setColor(p.iceWhite, 0.90 * logoAlpha * ruleP)
+        g.circle("fill", lStepX, ruleY, 1.5)
+        g.circle("fill", rStepX, ruleY, 1.5)
+
+        -- Periodic 2D soft specular glint sweeping across the central span
+        if shimmerActive and launchP == 0 then
+            local sweepP = Theme.easeOutCubic(shimmerPhase)
+            local sweepFade = math.sin(shimmerPhase * math.pi)
+            local gx = (cx - centerHalf) + (centerHalf * 2) * sweepP
+            g.setBlendMode("add")
+            Theme.drawGradientRect(m.menuStreak, gx - 60, ruleY - 3, 120, 6, 0.82 * sweepFade * logoAlpha)
+            Theme.drawRadialHalo(m.menuFlareCore, gx, ruleY, 6, 3.5, 0.75 * sweepFade * logoAlpha)
+            g.setBlendMode("alpha")
+        end
     end
 
     g.pop()
