@@ -419,16 +419,19 @@ function EnemyFire:draw()
             g.setColor(1, 0.97, 0.85, fade)
             g.circle("fill", shot.x, shot.y, profile.radius * 0.56)
         elseif profile == bullet then
-            -- VE1B: Plasma Comet Orb (coral halo + amber orb + cream-white core + additive wake)
-            local orbTrail = math.min(16, profile.radius + length * shot.age)
+            -- VE1B Orb + VE1A Tapered Solar Needle Tail
+            local px, py = -dy, dx
+            local orbTrail = math.min(28, profile.radius + length * shot.age)
             local otX, otY = shot.x - dx * orbTrail, shot.y - dy * orbTrail
             g.setBlendMode("add")
-            g.setLineWidth(5.2)
-            g.setColor(r, green, b, 0.28 * fade)
-            g.line(otX, otY, shot.x, shot.y)
-            g.setLineWidth(2.2)
-            g.setColor(1.0, 0.68, 0.36, 0.62 * fade)
-            g.line(otX, otY, shot.x, shot.y)
+            g.setColor(r, green, b, 0.30 * fade)
+            g.polygon("fill", otX, otY, shot.x + px * 4.4, shot.y + py * 4.4, shot.x - px * 4.4, shot.y - py * 4.4)
+            g.setColor(1.0, 0.62, 0.28, 0.78 * fade)
+            g.polygon("fill", otX, otY, shot.x + px * 2.6, shot.y + py * 2.6, shot.x - px * 2.6, shot.y - py * 2.6)
+            local coreLen = orbTrail * 0.62
+            local ctX, ctY = shot.x - dx * coreLen, shot.y - dy * coreLen
+            g.setColor(1.0, 0.94, 0.76, 0.88 * fade)
+            g.polygon("fill", ctX, ctY, shot.x + px * 1.3, shot.y + py * 1.3, shot.x - px * 1.3, shot.y - py * 1.3)
             g.setColor(r, green, b, 0.32 * fade)
             g.circle("fill", shot.x, shot.y, profile.radius * 2.15)
             g.setColor(1.0, 0.67, 0.36, 0.82 * fade)
