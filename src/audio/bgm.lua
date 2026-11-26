@@ -38,6 +38,42 @@ function Bgm.hasTrack(level)
     return level ~= nil and tracks[level] ~= nil
 end
 
+function Bgm.getTrackPath(level)
+    return level and Bgm.LEVEL_PATHS[level] or nil
+end
+
+function Bgm.getDuration(level)
+    local lv = level or currentLevel
+    local track = lv and tracks[lv] or nil
+    if track and track.getDuration then
+        local ok, dur = pcall(track.getDuration, track, "seconds")
+        if ok and type(dur) == "number" and dur > 0 then
+            return dur
+        end
+    end
+    return nil
+end
+
+function Bgm.getPosition(level)
+    local lv = level or currentLevel
+    local track = lv and tracks[lv] or nil
+    if track and track.tell then
+        local ok, pos = pcall(track.tell, track, "seconds")
+        if ok and type(pos) == "number" and pos >= 0 then
+            return pos
+        end
+    end
+    return 0
+end
+
+function Bgm.setPitch(pitch, level)
+    local lv = level or currentLevel
+    local track = lv and tracks[lv] or nil
+    if track and track.setPitch then
+        track:setPitch(math.max(0.35, pitch or 1))
+    end
+end
+
 function Bgm.getVolume()
     return volume
 end
@@ -60,12 +96,18 @@ function Bgm.playForLevel(level, opts)
 
     if currentLevel and currentLevel ~= level then
         local prev = tracks[currentLevel]
-        if prev and prev.stop then prev:stop() end
+        if prev then
+            if prev.setPitch then prev:setPitch(1) end
+            if prev.stop then prev:stop() end
+        end
         playing = false
         paused = false
     end
 
     if currentLevel == level and playing and not opts.restart then
+        if opts.pitch ~= nil and track.setPitch then
+            track:setPitch(math.max(0.35, opts.pitch))
+        end
         if track.isPlaying and not track:isPlaying() and track.play then
             track:play()
         end
@@ -78,6 +120,15 @@ function Bgm.playForLevel(level, opts)
 
     if track.setLooping then track:setLooping(true) end
     if track.setVolume then track:setVolume(volume) end
+    if track.setPitch then track:setPitch(math.max(0.35, opts.pitch or 1)) end
+    if opts.seek ~= nil and track.seek then
+        local pos = math.max(0, opts.seek)
+        local dur = Bgm.getDuration(level)
+        if dur and dur > 0 then
+            pos = pos % dur
+        end
+        pcall(track.seek, track, pos, "seconds")
+    end
     if track.play then track:play() end
 
     currentLevel = level
@@ -113,6 +164,7 @@ end
 
 function Bgm.stop()
     for _, track in pairs(tracks) do
+        if track.setPitch then track:setPitch(1) end
         if track.stop then track:stop() end
     end
     currentLevel = nil

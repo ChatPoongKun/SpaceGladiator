@@ -49,6 +49,11 @@ local function now()
     return os.clock()
 end
 
+function Sfx.assetPath(asset)
+    if not asset then return nil end
+    return "assets/audio/" .. asset .. ".wav"
+end
+
 function Sfx.load()
     if not (love and love.audio) then return end
     pools = {}
@@ -58,7 +63,7 @@ function Sfx.load()
         local asset, volume, basePitch, voices = cue[1], cue[2], cue[3] or 1, cue[4] or 1
         local base = loaded[asset]
         if not base then
-            base = love.audio.newSource("assets/audio/" .. asset .. ".wav", "static")
+            base = love.audio.newSource(Sfx.assetPath(asset), "static")
             loaded[asset] = base
         end
         local list = {}
@@ -76,6 +81,21 @@ function Sfx.getCues()
     return cues
 end
 
+function Sfx.getCueSpec(name)
+    local cue = name and cues[name] or nil
+    if not cue then return nil end
+    return {
+        name = name,
+        asset = cue[1],
+        path = Sfx.assetPath(cue[1]),
+        volume = cue[2] or 0.6,
+        basePitch = cue[3] or 1.0,
+        voices = cue[4] or 1,
+        minInterval = cue[5] or 0,
+        jitter = cue[6] or 0,
+    }
+end
+
 function Sfx.setListener(fn)
     listener = fn
 end
@@ -88,27 +108,41 @@ function Sfx.isMuted()
     return muted
 end
 
-local function playCue(name, pitchScale, notify)
+local function playCue(name, pitchScale, notify, opts)
     if muted then return end
-    if notify and listener then listener(name) end
     local pool = pools[name]
-    if not pool then return end
-    local cue = pool.cue
-    local minInterval = cue[5] or 0
-    local t = now()
-    if minInterval > 0 and lastPlayed[name] and (t - lastPlayed[name]) < minInterval then
-        return
+    local cue = (pool and pool.cue) or cues[name]
+    if not cue then return end
+
+    if pool then
+        local minInterval = cue[5] or 0
+        local t = now()
+        if minInterval > 0 and lastPlayed[name] and (t - lastPlayed[name]) < minInterval then
+            return
+        end
+        lastPlayed[name] = t
     end
-    lastPlayed[name] = t
+
+    local effectiveScale = pitchScale or 1
+    local basePitch = cue[3] or 1
+    local jitter = (opts and opts.noJitter) and 0 or (cue[6] or 0)
+    local offset = jitter > 0 and ((math.random() * 2 - 1) * jitter) or 0
+    local pitch
+    if opts and opts.exactPitch then
+        pitch = math.max(0.35, opts.exactPitch * effectiveScale)
+    else
+        pitch = math.max(0.35, (basePitch + offset) * effectiveScale)
+    end
+
+    if notify and listener then
+        listener(name, effectiveScale, pitch)
+    end
+    if not pool then return end
 
     local list = pool.list
     local source = list[pool.cursor]
     pool.cursor = (pool.cursor % #list) + 1
 
-    local basePitch = cue[3] or 1
-    local jitter = cue[6] or 0
-    local offset = jitter > 0 and ((math.random() * 2 - 1) * jitter) or 0
-    local pitch = math.max(0.35, (basePitch + offset) * (pitchScale or 1))
     source:setPitch(pitch)
     source:stop()
     source:play()
@@ -122,14 +156,25 @@ function Sfx.playWithPitchScale(name, pitchScale)
     playCue(name, pitchScale, false)
 end
 
+function Sfx.playReplay(name, recordedPitch, speedPitchScale)
+    playCue(name, speedPitchScale or 1, false, {
+        exactPitch = recordedPitch,
+        noJitter = true,
+    })
+end
+
 function Sfx.stop(opts)
     local except = opts and opts.except or nil
     for name, pool in pairs(pools) do
         if not (except and except[name]) then
+            lastPlayed[name] = nil
             for _, source in ipairs(pool.list) do
                 source:stop()
             end
         end
+    end
+    if not except then
+        lastPlayed = {}
     end
 end
 
