@@ -885,7 +885,7 @@ local function positionAt(enemy, fraction)
 end
 
 local deathPalettes = {
-    [1] = { { 1.0, 0.42, 0.18 }, { 1.0, 0.88, 0.56 }, { 0.72, 0.24, 0.28 } },
+    [1] = { { 1.0, 0.588, 0.471 }, { 1.0, 0.910, 0.820 }, { 0.729, 0.176, 0.275 } },
     [2] = { { 1.0, 0.24, 0.62 }, { 1.0, 0.78, 0.92 }, { 0.68, 0.22, 0.36 } },
     [3] = { { 1.0, 0.78, 0.28 }, { 1.0, 0.96, 0.74 }, { 1.0, 0.36, 0.22 } },
 }
@@ -1091,9 +1091,14 @@ end
 
 -- Opaque vertex-colored gradient meshes for enemy hulls (cached lazily on first draw).
 local hullMeshes
+local spearScale = 0.28
 
 local function vtx(x, y, c)
     return { x, y, 0, 0, c[1], c[2], c[3], 1 }
+end
+
+local function vtxA(x, y, c)
+    return { x, y, 0, 0, c[1], c[2], c[3], c[4] == nil and 1 or c[4] }
 end
 
 local function fanMesh(g, cx, cy, cc, rim, rc)
@@ -1111,6 +1116,16 @@ local function circleMesh(g, cx, cy, r, segments, cc, rc)
     for i = 0, segments do
         local a = i * step
         verts[#verts + 1] = vtx(cx + math.cos(a) * r, cy + math.sin(a) * r, rc)
+    end
+    return g.newMesh(verts, "fan", "static")
+end
+
+local function radialGlowMesh(g, cx, cy, r, segments, cc, rc)
+    local verts = { vtxA(cx, cy, cc) }
+    local step = 2 * math.pi / segments
+    for i = 0, segments do
+        local a = i * step
+        verts[#verts + 1] = vtxA(cx + math.cos(a) * r, cy + math.sin(a) * r, rc)
     end
     return g.newMesh(verts, "fan", "static")
 end
@@ -1133,17 +1148,111 @@ local function gradPolyMesh(g, pointsAndColors)
     return g.newMesh(verts, "fan", "static")
 end
 
+local function pushTri(verts, p1, c1, p2, c2, p3, c3)
+    verts[#verts + 1] = vtxA(p1[1], p1[2], c1)
+    verts[#verts + 1] = vtxA(p2[1], p2[2], c2)
+    verts[#verts + 1] = vtxA(p3[1], p3[2], c3)
+end
+
+local function pushQuad(verts, p1, c1, p2, c2, p3, c3, p4, c4)
+    pushTri(verts, p1, c1, p2, c2, p3, c3)
+    pushTri(verts, p1, c1, p3, c3, p4, c4)
+end
+
+local function buildSpearMesh(g, p0y, p1x, p1y, p2x, p2y, p3x, p3y, notchR, notchY, colorAtY)
+    local function evalCubic(t, a, b, c, d)
+        local u = 1 - t
+        return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d
+    end
+
+    local function bezierXAtY(targetY)
+        if targetY <= p0y then return 0 end
+        if targetY >= p3y then return p3x end
+        local lo, hi = 0, 1
+        for _ = 1, 12 do
+            local mid = (lo + hi) * 0.5
+            if evalCubic(mid, p0y, p1y, p2y, p3y) < targetY then
+                lo = mid
+            else
+                hi = mid
+            end
+        end
+        return evalCubic((lo + hi) * 0.5, 0, p1x, p2x, p3x)
+    end
+
+    local verts = {}
+    local notchTop = notchY - notchR
+    local upperSlices, notchSlices, tailSlices = 8, 6, 3
+
+    for side = -1, 1, 2 do
+        -- 1. Upper concave blade (y: p0y -> notchTop)
+        for i = 0, upperSlices - 1 do
+            local y0 = p0y + (notchTop - p0y) * (i / upperSlices)
+            local y1 = p0y + (notchTop - p0y) * ((i + 1) / upperSlices)
+            local x0, x1 = bezierXAtY(y0) * side, bezierXAtY(y1) * side
+            local c0, c1 = colorAtY(y0), colorAtY(y1)
+            pushQuad(verts, { 0, y0 }, c0, { x0, y0 }, c0, { x1, y1 }, c1, { 0, y1 }, c1)
+        end
+
+        -- 2. Rear crescent notch flank (a: -pi/2 -> 0)
+        for i = 0, notchSlices - 1 do
+            local a0 = -math.pi * 0.5 + (math.pi * 0.5) * (i / notchSlices)
+            local a1 = -math.pi * 0.5 + (math.pi * 0.5) * ((i + 1) / notchSlices)
+            local ax0, ay0 = notchR * math.cos(a0) * side, notchY + notchR * math.sin(a0)
+            local ax1, ay1 = notchR * math.cos(a1) * side, notchY + notchR * math.sin(a1)
+            local bx0, bx1 = bezierXAtY(ay0) * side, bezierXAtY(ay1) * side
+            local c0, c1 = colorAtY(ay0), colorAtY(ay1)
+            pushQuad(verts, { ax0, ay0 }, c0, { bx0, ay0 }, c0, { bx1, ay1 }, c1, { ax1, ay1 }, c1)
+        end
+
+        -- 3. Wingtip tail (y: notchY -> p3y)
+        local corner = { notchR * side, notchY }
+        local cc = colorAtY(notchY)
+        for i = 0, tailSlices - 1 do
+            local y0 = notchY + (p3y - notchY) * (i / tailSlices)
+            local y1 = notchY + (p3y - notchY) * ((i + 1) / tailSlices)
+            local x0, x1 = bezierXAtY(y0) * side, bezierXAtY(y1) * side
+            pushTri(verts, corner, cc, { x0, y0 }, colorAtY(y0), { x1, y1 }, colorAtY(y1))
+        end
+    end
+
+    return g.newMesh(verts, "triangles", "static")
+end
+
+local function buildSpearTrailMesh(g)
+    local topColor = { 1.0, 0.471, 0.278, 0.82 }
+    local botColor = { 0.851, 0.149, 0.306, 0.0 }
+    local verts = {}
+    pushQuad(verts, { -0.5, 0 }, topColor, { 0.5, 0 }, topColor, { 0.5, 1 }, botColor, { -0.5, 1 }, botColor)
+    return g.newMesh(verts, "triangles", "static")
+end
+
+local function buildSpearPlumeMesh(g)
+    local cTop = { 1.0, 0.969, 0.839, 0.95 }
+    local cMid = { 1.0, 0.431, 0.251, 0.65 }
+    local cTip = { 1.0, 0.165, 0.333, 0.0 }
+    local verts = {}
+    pushQuad(verts, { -1, 0 }, cTop, { 1, 0 }, cTop, { 0.55, 0.45 }, cMid, { -0.55, 0.45 }, cMid)
+    pushTri(verts, { -0.55, 0.45 }, cMid, { 0.55, 0.45 }, cMid, { 0, 1 }, cTip)
+    return g.newMesh(verts, "triangles", "static")
+end
+
 local function getHullMeshes(g)
     if hullMeshes then return hullMeshes end
     if not g.newMesh then return nil end
 
-    -- Kind 1: WEDGE (TRACER)
-    local wDark = { 0.085, 0.028, 0.055 }
-    local wWarm = { 0.44, 0.14, 0.08 }
-    local wCoreRim = { 1, 0.42, 0.16 }
-    local wCoreMid = { 1, 0.94, 0.72 }
-    local wLHi, wLLo = { 0.30, 0.12, 0.18 }, { 0.15, 0.055, 0.095 }
-    local wRHi, wRLo = { 0.46, 0.16, 0.23 }, { 0.25, 0.085, 0.135 }
+    -- Kind 1: WEDGE (SPEAR — Nova Drift flat-gradient concave spearhead)
+    local s = spearScale
+    local backingColor = { 0.729, 0.176, 0.275, 0.88 }
+    local function spearBodyColor(y)
+        local t = math.max(0, math.min(1, (y - (-68 * s)) / (104 * s)))
+        if t <= 0.48 then
+            local k = t / 0.48
+            return { 1.0, 1.0 - 0.090 * k, 1.0 - 0.180 * k, 1.0 }
+        end
+        local k = (t - 0.48) / 0.52
+        return { 1.0, 0.910 - 0.322 * k, 0.820 - 0.349 * k, 1.0 }
+    end
 
     -- Kind 2: EQUILATERAL (BEAMCASTER)
     local eDark = { 0.085, 0.032, 0.075 }
@@ -1160,12 +1269,15 @@ local function getHullMeshes(g)
 
     hullMeshes = {
         [1] = {
-            underframe = fanMesh(g, 0, -1, wWarm, { 0, -12, -9, 9, 0, 6, 9, 9 }, wDark),
-            core = fanMesh(g, 0, -2, wCoreMid, { 0, -9, -2.5, 0, 0, 5, 2.5, 0 }, wCoreRim),
-            leftMain = gradPolyMesh(g, { { -2.2, -16.5, wLHi }, { -11.5, 10, wLLo }, { -7.5, 11, wLLo }, { -4.2, 4.5, wLHi } }),
-            leftInner = gradPolyMesh(g, { { -2.2, -16.5, wLHi }, { -4.2, 4.5, wLLo }, { -2.4, -4, wLHi } }),
-            rightMain = gradPolyMesh(g, { { 2.2, -16.5, wRHi }, { 11.5, 10, wRLo }, { 7.5, 11, wRLo }, { 4.2, 4.5, wRHi } }),
-            rightInner = gradPolyMesh(g, { { 2.2, -16.5, wRHi }, { 4.2, 4.5, wRLo }, { 2.4, -4, wRHi } }),
+            bloom = radialGlowMesh(g, 0, -0.5, 22, 24, { 1.0, 0.420, 0.290, 0.22 }, { 1.0, 0.420, 0.290, 0.0 }),
+            backing = buildSpearMesh(g, -73 * s, 11 * s, -30 * s, 24 * s, 4 * s, 37 * s, 39 * s, 15 * s, 29 * s,
+                function() return backingColor end),
+            body = buildSpearMesh(g, -68 * s, 10 * s, -27 * s, 22 * s, 5 * s, 33.5 * s, 36 * s, 15 * s, 26.5 * s,
+                spearBodyColor),
+            orbHalo = radialGlowMesh(g, 0, 31 * s, 7.5 * s, 18, { 1.0, 0.439, 0.302, 0.62 }, { 1.0, 0.439, 0.302, 0.0 }),
+            orb = circleMesh(g, 0, 31 * s, 5.0 * s, 16, { 1.0, 0.992, 0.961 }, { 1.0, 0.955, 0.895 }),
+            trailUnit = buildSpearTrailMesh(g),
+            plumeUnit = buildSpearPlumeMesh(g),
         },
         [2] = {
             underframe = fanMesh(g, 0, -8, eGlow, { 0, -14, -16, 9, 16, 9 }, eDark),
@@ -1202,59 +1314,56 @@ function Enemies.drawHull(kind, aimed, time, opts)
     local meshes = getHullMeshes(g)
 
     if kind == 1 then
-        -- WEDGE: TRACER (split obsidian pincer interceptor + opaque gradient core)
+        -- WEDGE: SPEAR (Nova Drift flat-gradient concave spearhead + rear notch core orb)
+        local s = spearScale
+        local bloomPulse = aimed and 1.15 or (0.85 + 0.15 * pulse)
+        if meshes then
+            g.setColor(1, 1, 1, bloomPulse)
+            g.draw(meshes[1].bloom)
+        else
+            g.setColor(1, 0.420, 0.290, 0.14 * bloomPulse)
+            g.circle("fill", 0, -0.5, 19)
+        end
+
         if thrust > 0.05 then
-            local len = (9 + 6 * thrust) * flicker
-            g.setColor(1, 0.42, 0.18, 0.72 * thrust)
-            g.polygon("fill", -3.4, 6, 0, 6 + len, 3.4, 6)
-            g.setColor(1, 0.95, 0.78, 0.92 * thrust)
-            g.polygon("fill", -1.4, 6, 0, 6 + len * 0.55, 1.4, 6)
+            local len = (9 + 11 * thrust) * flicker
+            if meshes then
+                g.setColor(1, 1, 1, thrust)
+                g.draw(meshes[1].trailUnit, -33 * s, 34 * s, 0, 3 * s, len)
+                g.draw(meshes[1].trailUnit, 33 * s, 34 * s, 0, 3 * s, len)
+                g.draw(meshes[1].plumeUnit, 0, 28 * s, 0, 7 * s, len)
+            else
+                g.setColor(1, 0.471, 0.278, 0.65 * thrust)
+                g.rectangle("fill", -34.5 * s, 34 * s, 3 * s, len * 0.7)
+                g.rectangle("fill", 31.5 * s, 34 * s, 3 * s, len * 0.7)
+                g.setColor(1, 0.431, 0.251, 0.72 * thrust)
+                g.polygon("fill", -7 * s, 28 * s, 0, 28 * s + len, 7 * s, 28 * s)
+                g.setColor(1, 0.969, 0.839, 0.92 * thrust)
+                g.polygon("fill", -3 * s, 28 * s, 0, 28 * s + len * 0.5, 3 * s, 28 * s)
+            end
         end
 
         if meshes then
+            g.setColor(1, aimed and 1.15 or 1, aimed and 1.15 or 1, 1)
+            g.draw(meshes[1].backing)
             g.setColor(1, 1, 1, 1)
-            g.draw(meshes[1].underframe)
-            g.setColor(1, aimed and 1 or (0.88 + 0.12 * pulse), aimed and 0.92 or 1, 1)
-            g.draw(meshes[1].core)
+            g.draw(meshes[1].body)
+            g.setColor(1, 1, 1, aimed and 1 or (0.75 + 0.25 * pulse))
+            g.draw(meshes[1].orbHalo)
             g.setColor(1, 1, 1, 1)
-            g.draw(meshes[1].leftMain)
-            g.draw(meshes[1].leftInner)
-            g.draw(meshes[1].rightMain)
-            g.draw(meshes[1].rightInner)
+            g.draw(meshes[1].orb)
         else
-            g.setColor(0.18, 0.06, 0.07, 1)
-            g.polygon("fill", 0, -12, -9, 9, 0, 6)
-            g.polygon("fill", 0, -12, 0, 6, 9, 9)
-            g.setColor(1, aimed and 0.72 or 0.58, aimed and 0.44 or 0.26, 1)
-            g.polygon("fill", 0, -9, -2.5, 0, 0, 5, 2.5, 0)
-            g.setColor(0.22, 0.09, 0.14, 1)
-            g.polygon("fill", -2.2, -16.5, -11.5, 10, -7.5, 11, -4.2, 4.5)
-            g.polygon("fill", -2.2, -16.5, -4.2, 4.5, -2.4, -4)
-            g.setColor(0.37, 0.12, 0.18, 1)
-            g.polygon("fill", 2.2, -16.5, 11.5, 10, 7.5, 11, 4.2, 4.5)
-            g.polygon("fill", 2.2, -16.5, 4.2, 4.5, 2.4, -4)
+            g.setColor(0.729, 0.176, 0.275, 0.88)
+            g.polygon("fill", 0, -73 * s, 37 * s, 39 * s, 15 * s, 29 * s, 0, 14 * s, -15 * s, 29 * s, -37 * s, 39 * s)
+            g.setColor(1, 0.86, 0.76, 1)
+            g.polygon("fill", 0, -68 * s, 18 * s, 12 * s, -18 * s, 12 * s)
+            g.polygon("fill", -18 * s, 12 * s, -33.5 * s, 36 * s, -15 * s, 26.5 * s, 0, 11.5 * s)
+            g.polygon("fill", 18 * s, 12 * s, 33.5 * s, 36 * s, 15 * s, 26.5 * s, 0, 11.5 * s)
+            g.setColor(1, 0.439, 0.302, 0.55)
+            g.circle("fill", 0, 31 * s, 7.5 * s)
+            g.setColor(1, 0.992, 0.961, 1)
+            g.circle("fill", 0, 31 * s, 5.0 * s)
         end
-        g.setColor(1, 0.97, 0.84, 1)
-        g.circle("fill", 0, -2, 1.5)
-
-        -- Crisp vermilion/coral outlines & leading-edge speculars
-        g.setLineWidth(1.1)
-        if aimed then
-            g.setColor(1, 0.66, 0.48, 1)
-        else
-            g.setColor(1, 0.30, 0.32, 1)
-        end
-        g.line(-2.2, -16.5, -11.5, 10, -7.5, 11, -4.2, 4.5, -2.4, -4, -2.2, -16.5)
-        if aimed then
-            g.setColor(1, 0.78, 0.58, 1)
-        else
-            g.setColor(1, 0.42, 0.39, 1)
-        end
-        g.line(2.2, -16.5, 11.5, 10, 7.5, 11, 4.2, 4.5, 2.4, -4, 2.2, -16.5)
-        g.setLineWidth(0.75)
-        g.setColor(1, 0.72, 0.64, 0.82)
-        g.line(-2.2, -15.5, -10.5, 9)
-        g.line(2.2, -15.5, 10.5, 9)
 
     elseif kind == 2 then
         -- EQUILATERAL: BEAMCASTER (tuning-fork emitter rails + opaque gradient laser orb)
