@@ -229,7 +229,7 @@ function ReplayExport.mixAudioToWav(clip, wavPath, baseDir)
         if spec and ev.playbackTime >= 0 and ev.playbackTime < duration then
             local minInterval = spec.minInterval or 0
             local prev = lastCueTime[ev.cue]
-            if minInterval <= 0 or not prev or (ev.playbackTime - prev) >= minInterval then
+            if ev.sustained or minInterval <= 0 or not prev or (ev.playbackTime - prev) >= minInterval then
                 lastCueTime[ev.cue] = ev.playbackTime
                 local voices = math.max(1, spec.voices or 1)
                 local slots = voiceSlots[ev.cue]
@@ -251,6 +251,10 @@ function ReplayExport.mixAudioToWav(clip, wavPath, baseDir)
                     basePitch = basePitch,
                     startTime = ev.playbackTime,
                     speed = ev.speed or 1.0,
+                    sustained = ev.sustained == true,
+                    sustainedDuration = ev.sustainedDuration,
+                    fadeOut = ev.fadeOut,
+                    loop = ev.loop ~= false,
                 }
                 slots[cursor] = item
                 voiceCursor[ev.cue] = (cursor % voices) + 1
@@ -283,13 +287,38 @@ function ReplayExport.mixAudioToWav(clip, wavPath, baseDir)
             local vol = item.volume
             local srcPos = 0
             local outIdx = startFrame
-            while outIdx <= maxOutFrame and srcPos < srcMax do
-                local i0 = math.floor(srcPos)
-                local frac = srcPos - i0
-                local s = srcSamples[i0] + (srcSamples[i0 + 1] - srcSamples[i0]) * frac
-                mixBuf[outIdx] = mixBuf[outIdx] + s * vol
-                srcPos = srcPos + step
-                outIdx = outIdx + 1
+            if item.sustained then
+                local sustainDur = math.max(0, item.sustainedDuration or 0)
+                local fadeDur = math.max(0, item.fadeOut or Sfx.SUSTAINED_FADE_OUT or 0.08)
+                local fadeStartFrame = startFrame + math.floor(sustainDur * sampleRate)
+                local fadeFrames = math.floor(fadeDur * sampleRate)
+                local endFrame = math.min(maxOutFrame, fadeStartFrame + fadeFrames - 1)
+                local loopSrc = item.loop ~= false
+                while outIdx <= endFrame do
+                    if not loopSrc and srcPos >= srcMax then break end
+                    local pos = loopSrc and (srcPos % srcMax) or srcPos
+                    local i0 = math.floor(pos)
+                    local frac = pos - i0
+                    local i1 = i0 + 1
+                    if i1 > srcMax then i1 = loopSrc and 0 or srcMax end
+                    local s = srcSamples[i0] + (srcSamples[i1] - srcSamples[i0]) * frac
+                    local gain = 1.0
+                    if outIdx >= fadeStartFrame and fadeFrames > 0 then
+                        gain = math.max(0, 1.0 - (outIdx - fadeStartFrame) / fadeFrames)
+                    end
+                    mixBuf[outIdx] = mixBuf[outIdx] + s * vol * gain
+                    srcPos = srcPos + step
+                    outIdx = outIdx + 1
+                end
+            else
+                while outIdx <= maxOutFrame and srcPos < srcMax do
+                    local i0 = math.floor(srcPos)
+                    local frac = srcPos - i0
+                    local s = srcSamples[i0] + (srcSamples[i0 + 1] - srcSamples[i0]) * frac
+                    mixBuf[outIdx] = mixBuf[outIdx] + s * vol
+                    srcPos = srcPos + step
+                    outIdx = outIdx + 1
+                end
             end
         end
     end

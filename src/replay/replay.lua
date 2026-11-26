@@ -255,14 +255,35 @@ function Replay:recordPointEvent(category, points, x, y, fever, basePoints)
     }
 end
 
-function Replay:recordSfxEvent(cue, pitchScale, pitch)
+function Replay:recordSfxEvent(cue, pitchScale, pitch, meta)
     if not cue then return end
-    self.sfxEvents[#self.sfxEvents + 1] = {
+    if meta and meta.action == "fadeOut" then
+        for i = #self.sfxEvents, 1, -1 do
+            local ev = self.sfxEvents[i]
+            if ev.sustained and ev.endTime == nil and ((meta.id and ev.sustainedId == meta.id) or (not meta.id and ev.cue == cue)) then
+                ev.endTime = self.stageTime
+                if meta.fadeOut ~= nil then
+                    ev.fadeOut = meta.fadeOut
+                end
+                return
+            end
+        end
+        return
+    end
+    local entry = {
         time = self.stageTime,
         cue = cue,
         pitchScale = pitchScale or 1.0,
         pitch = pitch,
     }
+    if meta and meta.action == "start" then
+        entry.sustained = true
+        entry.sustainedId = meta.id
+        entry.duration = meta.duration
+        entry.fadeOut = meta.fadeOut
+        entry.loop = meta.loop ~= false
+    end
+    self.sfxEvents[#self.sfxEvents + 1] = entry
 end
 
 local function buildCaps()
@@ -582,7 +603,28 @@ function Replay:extractClip(window)
     local clipSfx = {}
     for i = 1, #self.sfxEvents do
         local ev = self.sfxEvents[i]
-        if ev.time >= window.clipStart - 0.02 and ev.time <= window.clipEnd + 0.02 then
+        if ev.sustained then
+            local rawEnd = ev.endTime or (ev.duration and (ev.time + ev.duration)) or ev.time
+            local evEnd = math.max(ev.time, rawEnd)
+            if evEnd >= window.clipStart - 0.02 and ev.time <= window.clipEnd + 0.02 then
+                local clampedStart = math.max(window.clipStart, math.min(window.clipEnd, ev.time))
+                local clampedEnd = math.max(clampedStart, math.min(window.clipEnd, evEnd))
+                local pbTime, speed = Replay.mapSourceTime(window, clampedStart)
+                local endPbTime = Replay.mapSourceTime(window, clampedEnd)
+                clipSfx[#clipSfx + 1] = {
+                    sourceTime = clampedStart,
+                    playbackTime = pbTime,
+                    speed = speed,
+                    cue = ev.cue,
+                    pitchScale = ev.pitchScale or 1.0,
+                    pitch = ev.pitch,
+                    sustained = true,
+                    sustainedDuration = math.max(0, endPbTime - pbTime),
+                    fadeOut = ev.fadeOut,
+                    loop = ev.loop ~= false,
+                }
+            end
+        elseif ev.time >= window.clipStart - 0.02 and ev.time <= window.clipEnd + 0.02 then
             local pbTime, speed = Replay.mapSourceTime(window, ev.time)
             clipSfx[#clipSfx + 1] = {
                 sourceTime = ev.time,
@@ -807,7 +849,13 @@ function Replay:updatePlayback(dt, width, height)
         local ev = sfxEvents[self.nextSfxIndex]
         if ev.playbackTime >= prevPb - 0.05 then
             local speedScale = Replay.slowMoPitchScale(ev.speed)
-            if Sfx.playReplay then
+            if ev.sustained and Sfx.playReplaySustained then
+                Sfx.playReplaySustained(ev.cue, ev.pitch, speedScale, {
+                    duration = ev.sustainedDuration or 0,
+                    fadeOut = ev.fadeOut,
+                    loop = ev.loop ~= false,
+                })
+            elseif Sfx.playReplay then
                 Sfx.playReplay(ev.cue, ev.pitch, speedScale)
             elseif Sfx.playWithPitchScale then
                 Sfx.playWithPitchScale(ev.cue, (ev.pitchScale or 1.0) * speedScale)
@@ -816,6 +864,10 @@ function Replay:updatePlayback(dt, width, height)
             end
         end
         self.nextSfxIndex = self.nextSfxIndex + 1
+    end
+
+    if Sfx.update then
+        Sfx.update(dt)
     end
 
     if self.playbackTime >= clip.playbackDuration then

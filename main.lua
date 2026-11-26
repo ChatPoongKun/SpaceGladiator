@@ -85,8 +85,8 @@ local function setScreen(nextScreen)
         end
     end
     if screen == "playing" and replay then
-        Sfx.setListener(function(cue, pitchScale, pitch)
-            if screen == "playing" and replay then replay:recordSfxEvent(cue, pitchScale, pitch) end
+        Sfx.setListener(function(cue, pitchScale, pitch, meta)
+            if screen == "playing" and replay then replay:recordSfxEvent(cue, pitchScale, pitch, meta) end
         end)
     else
         Sfx.setListener(nil)
@@ -713,6 +713,11 @@ local function dispatchRequestedTests()
         love.event.quit(0)
         return true
     end
+    if testFlags.sfx then
+        require("tests.sfx")
+        love.event.quit(0)
+        return true
+    end
     if testFlags.fullscreen then
         require("tests.fullscreen_arena")
         love.event.quit(0)
@@ -754,6 +759,7 @@ function love.load(args)
         if arg == "--test-inventory" then testFlags.inventory = true end
         if arg == "--test-armory" then testFlags.armory = true end
         if arg == "--test-replay" then testFlags.replay = true end
+        if arg == "--test-sfx" then testFlags.sfx = true end
         if arg == "--test-fullscreen" then testFlags.fullscreen = true end
         if arg == "--test-background" then testFlags.background = true end
         if arg == "--test-title" then testFlags.title = true end
@@ -880,6 +886,66 @@ local function updateHudProximity(dt)
     }, width, height)
 end
 
+local function updateBuildTriggers(dt, worldX, worldY)
+    if not currentBuild then return end
+    wrapTriggerCooldown = math.max(0, wrapTriggerCooldown - dt)
+    shockwaveCooldown = math.max(0, shockwaveCooldown - dt)
+
+    -- On-dodge triggers & dodge battery recharge
+    if (gladiator.evasionCount or 0) > lastEvasionCount then
+        lastEvasionCount = gladiator.evasionCount
+        if (currentBuild.onDodgeBattery or 0) > 0 then
+            ship:rechargeBattery(currentBuild.onDodgeBattery)
+        end
+        for _, wCfg in ipairs(currentBuild.weaponModules or {}) do
+            if wCfg.triggerOnDodge then
+                turret:fireTriggered(wCfg.weaponIndex, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
+                    free = wCfg.autoBatteryZero,
+                })
+            end
+        end
+    end
+
+    -- On-wrap triggers
+    if (ship.wrapEvents or 0) > lastWrapEvents then
+        lastWrapEvents = ship.wrapEvents
+        if wrapTriggerCooldown <= 0 then
+            for _, wCfg in ipairs(currentBuild.weaponModules or {}) do
+                if wCfg.triggerOnWrap then
+                    turret:fireTriggered(wCfg.weaponIndex, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
+                        free = true, areaMult = wCfg.areaMult,
+                    })
+                    wrapTriggerCooldown = wCfg.wrapTriggerCooldown or 1.5
+                end
+            end
+        end
+    end
+
+    -- On-hit triggers (counter fire + shockwave bullet clear)
+    if (ship.damageCount or 0) > lastDamageCount then
+        lastDamageCount = ship.damageCount
+        if currentBuild.shockwaveOnHit and shockwaveCooldown <= 0 and enemies and enemies.fire and enemies.fire.items then
+            local rSq = (currentBuild.shockwaveRadius or 180) ^ 2
+            for bi = #enemies.fire.items, 1, -1 do
+                local b = enemies.fire.items[bi]
+                local bdx, bdy = (b.x or 0) - ship.x, (b.y or 0) - ship.y
+                if bdx * bdx + bdy * bdy <= rSq then
+                    table.remove(enemies.fire.items, bi)
+                end
+            end
+            shockwaveCooldown = currentBuild.shockwaveCooldown or 4.0
+        end
+        for _, wCfg in ipairs(currentBuild.weaponModules or {}) do
+            if wCfg.triggerOnHit and (ship.battery or 0) >= (wCfg.hitTriggerBattery or 15) then
+                ship.battery = ship.battery - (wCfg.hitTriggerBattery or 15)
+                turret:fireTriggered(wCfg.weaponIndex, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
+                    radialCount = wCfg.radialCount or 6,
+                })
+            end
+        end
+    end
+end
+
 function love.update(dt)
     local isFrontendScreen = (screen == "title" or screen == "armory" or screen == "settings" or screen == "results")
     if not focused and not testMode and not isFrontendScreen then return end
@@ -907,6 +973,7 @@ function love.update(dt)
         end
         return
     end
+    if Sfx.update then Sfx.update(dt) end
     local _, _, bgW, bgH = Display.viewportRect()
     local bgScale = Display.scale or 1
     if not ship then
@@ -1049,6 +1116,7 @@ function love.update(dt)
     enemies:update(dt, ship, turret.angle, camera, width, height)
     processPlayerDamageFeedback()
     if ship:isDestroyed() then
+        if turret and turret.stopActiveBeams then turret:stopActiveBeams() end
         setScreen("gameOver")
         return
     end
@@ -1084,64 +1152,7 @@ function love.update(dt)
         end
     end
 
-    if currentBuild then
-        wrapTriggerCooldown = math.max(0, wrapTriggerCooldown - dt)
-        shockwaveCooldown = math.max(0, shockwaveCooldown - dt)
-
-        -- On-dodge triggers & dodge battery recharge
-        if (gladiator.evasionCount or 0) > lastEvasionCount then
-            lastEvasionCount = gladiator.evasionCount
-            if (currentBuild.onDodgeBattery or 0) > 0 then
-                ship:rechargeBattery(currentBuild.onDodgeBattery)
-            end
-            for _, wCfg in ipairs(currentBuild.weaponModules or {}) do
-                if wCfg.triggerOnDodge then
-                    turret:fireTriggered(wCfg.weaponIndex, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
-                        free = wCfg.autoBatteryZero,
-                    })
-                end
-            end
-        end
-
-        -- On-wrap triggers
-        if (ship.wrapEvents or 0) > lastWrapEvents then
-            lastWrapEvents = ship.wrapEvents
-            if wrapTriggerCooldown <= 0 then
-                for _, wCfg in ipairs(currentBuild.weaponModules or {}) do
-                    if wCfg.triggerOnWrap then
-                        turret:fireTriggered(wCfg.weaponIndex, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
-                            free = true, areaMult = wCfg.areaMult,
-                        })
-                        wrapTriggerCooldown = wCfg.wrapTriggerCooldown or 1.5
-                    end
-                end
-            end
-        end
-
-        -- On-hit triggers (counter fire + shockwave bullet clear)
-        if (ship.damageCount or 0) > lastDamageCount then
-            lastDamageCount = ship.damageCount
-            if currentBuild.shockwaveOnHit and shockwaveCooldown <= 0 and enemies and enemies.fire and enemies.fire.items then
-                local rSq = (currentBuild.shockwaveRadius or 180) ^ 2
-                for bi = #enemies.fire.items, 1, -1 do
-                    local b = enemies.fire.items[bi]
-                    local bdx, bdy = (b.x or 0) - ship.x, (b.y or 0) - ship.y
-                    if bdx * bdx + bdy * bdy <= rSq then
-                        table.remove(enemies.fire.items, bi)
-                    end
-                end
-                shockwaveCooldown = currentBuild.shockwaveCooldown or 4.0
-            end
-            for _, wCfg in ipairs(currentBuild.weaponModules or {}) do
-                if wCfg.triggerOnHit and (ship.battery or 0) >= (wCfg.hitTriggerBattery or 15) then
-                    ship.battery = ship.battery - (wCfg.hitTriggerBattery or 15)
-                    turret:fireTriggered(wCfg.weaponIndex, ship, worldX, worldY, enemies, camera, width, height, wCfg, {
-                        radialCount = wCfg.radialCount or 6,
-                    })
-                end
-            end
-        end
-    end
+    updateBuildTriggers(dt, worldX, worldY)
 end
 
 local function drawHud()

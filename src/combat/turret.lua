@@ -214,6 +214,25 @@ local function removeChannelBeams(turret, channel)
     end
 end
 
+local function releaseChannelSfx(channel, fadeOut)
+    if not channel or not channel.sfxHandle then return end
+    local handle = channel.sfxHandle
+    channel.sfxHandle = nil
+    if Sfx.stopSustained then
+        Sfx.stopSustained(handle, fadeOut)
+    end
+end
+
+function Turret:stopActiveBeams(fadeOut)
+    if not self.activeBeams then return end
+    for ci = #self.activeBeams, 1, -1 do
+        local ch = self.activeBeams[ci]
+        releaseChannelSfx(ch, fadeOut)
+        removeChannelBeams(self, ch)
+        table.remove(self.activeBeams, ci)
+    end
+end
+
 local function evaluateBeamChannel(turret, channel, ship, enemies, frameFraction, camera, width, height, dealDamage)
     turret.beams = turret.beams or {}
     removeChannelBeams(turret, channel)
@@ -331,7 +350,17 @@ function Turret.fireModes.beam(turret, ship, targetX, targetY, enemies, frameFra
         }
         turret.activeBeams = turret.activeBeams or {}
         turret.activeBeams[#turret.activeBeams + 1] = channel
-        if spec.fireSfx ~= "" then Sfx.play(spec.fireSfx) end
+        if spec.fireSfx ~= "" then
+            if Sfx.startSustained then
+                channel.sfxHandle = Sfx.startSustained(spec.fireSfx, {
+                    duration = spec.beamDuration,
+                    fadeOut = Sfx.SUSTAINED_FADE_OUT,
+                    loop = true,
+                })
+            else
+                Sfx.play(spec.fireSfx)
+            end
+        end
         return evaluateBeamChannel(turret, channel, ship, enemies, frameFraction, camera, width, height, true)
     end
     local offsets = buildOffsets(spec.baseShotCount, spec.extraCount, spec.baseSpreadRad, spec.extraSpreadRad)
@@ -702,10 +731,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
     local eps = 1e-9
 
     if ship and ship.isDestroyed and ship:isDestroyed() and #self.activeBeams > 0 then
-        for ci = #self.activeBeams, 1, -1 do
-            removeChannelBeams(self, self.activeBeams[ci])
-            table.remove(self.activeBeams, ci)
-        end
+        self:stopActiveBeams()
     end
 
     -- Split at per-weapon shot times so held fire keeps each weapon's independent cadence at any frame rate.
@@ -769,6 +795,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                 ch.elapsed = ch.elapsed + step
                 ch.tickTimer = ch.tickTimer - step
                 if ch.elapsed >= ch.duration - eps then
+                    releaseChannelSfx(ch)
                     removeChannelBeams(self, ch)
                     table.remove(self.activeBeams, ci)
                 else
@@ -955,6 +982,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
 end
 
 function Turret:clearEffects()
+    self:stopActiveBeams(0)
     self.missiles = {}
     self.explosions = {}
     self.beams = {}
@@ -967,6 +995,11 @@ end
 
 function Turret:beginStageClear()
     self.burstQueue = {}
+    if self.activeBeams then
+        for _, ch in ipairs(self.activeBeams) do
+            releaseChannelSfx(ch)
+        end
+    end
     self.activeBeams = {}
     if self.beams then
         for _, b in ipairs(self.beams) do
@@ -987,6 +1020,11 @@ end
 function Turret:updateEffects(dt, camera, width, height)
     dt = math.max(0, dt or 0)
     if dt <= 0 then return end
+    if self.activeBeams then
+        for _, ch in ipairs(self.activeBeams) do
+            releaseChannelSfx(ch)
+        end
+    end
     self.activeBeams = {}
     if self.beams then
         for _, b in ipairs(self.beams) do
