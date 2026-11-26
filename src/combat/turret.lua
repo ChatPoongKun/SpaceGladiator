@@ -576,29 +576,63 @@ function Turret:drawEffects(camera, width, height)
         end
         local speed = missile.speed > 0 and missile.speed or 1
         local dx, dy = missile.vx / speed, missile.vy / speed
-        g.setLineWidth(3)
-        g.setColor(1, 0.42, 0.12, 0.45 * fade)
         if missile.targetScreenX then
+            g.setLineWidth(3)
+            g.setColor(1, 0.42, 0.12, 0.45 * fade)
             local trail = math.min(32, missile.speed * math.min(0.03, missile.age))
             if trail > 0 then
                 g.line(missile.x, missile.y, missile.x - dx * trail, missile.y - dy * trail)
             end
-        else
-            local trail = math.min(24, missile.distance or 0)
-            if trail > 0 then
-                g.line(missile.x, missile.y, missile.x - dx * trail, missile.y - dy * trail)
-            end
-        end
-        g.setLineWidth(2)
-        g.setColor(1, 0.87, 0.46, fade)
-        g.line(missile.x - dx * 6, missile.y - dy * 6, missile.x, missile.y)
-        if missile.targetScreenX then
+            g.setLineWidth(2)
+            g.setColor(1, 0.87, 0.46, fade)
+            g.line(missile.x - dx * 6, missile.y - dy * 6, missile.x, missile.y)
             g.setColor(1, 0.34, 0.20, fade)
             g.polygon("fill", missile.x + dx * 7, missile.y + dy * 7,
                 missile.x - dx * 5 - dy * 4, missile.y - dy * 5 + dx * 4,
                 missile.x - dx * 5 + dy * 4, missile.y - dy * 5 - dx * 4)
         else
-            g.circle("fill", missile.x, missile.y, 2)
+            -- VP1B: Electric Twin-Facet Dart (pure-white diamond core + electric-blue/cyan tapered wake)
+            local px, py = -dy, dx
+            local mx, my = missile.x, missile.y
+            local trail = math.min(24, missile.distance or 0)
+            g.setBlendMode("add")
+            if trail > 0 then
+                g.setColor(0.141, 0.549, 1.0, 0.34 * fade)
+                g.polygon("fill",
+                    mx + dx * 6.5, my + dy * 6.5,
+                    mx + px * 3.8, my + py * 3.8,
+                    mx - dx * trail, my - dy * trail,
+                    mx - px * 3.8, my - py * 3.8)
+                local innerTrail = trail * 0.72
+                g.setColor(0.220, 0.863, 1.0, 0.78 * fade)
+                g.polygon("fill",
+                    mx + dx * 6.5, my + dy * 6.5,
+                    mx + px * 2.1, my + py * 2.1,
+                    mx - dx * innerTrail, my - dy * innerTrail,
+                    mx - px * 2.1, my - py * 2.1)
+                g.setLineWidth(1.5)
+                g.setColor(0.220, 0.863, 1.0, 0.82 * fade)
+                g.line(mx, my, mx - dx * trail, my - dy * trail)
+            else
+                g.setColor(0.141, 0.549, 1.0, 0.42 * fade)
+                g.circle("fill", mx, my, 5.5)
+            end
+            g.setBlendMode("alpha")
+            g.setColor(1, 1, 1, fade)
+            g.polygon("fill",
+                mx + dx * 6.8, my + dy * 6.8,
+                mx + px * 2.3, my + py * 2.3,
+                mx - dx * 4.5, my - dy * 4.5,
+                mx - px * 2.3, my - py * 2.3)
+            g.setLineWidth(1.2)
+            g.line(mx - dx * 6, my - dy * 6, mx, my)
+            g.setLineWidth(0.8)
+            g.setColor(0.56, 0.96, 1.0, 0.85 * fade)
+            g.polygon("line",
+                mx + dx * 6.8, my + dy * 6.8,
+                mx + px * 2.3, my + py * 2.3,
+                mx - dx * 4.5, my - dy * 4.5,
+                mx - px * 2.3, my - py * 2.3)
         end
     end
     local beamList = (self.beams and #self.beams > 0) and self.beams or (self.beam and { self.beam } or {})
@@ -610,13 +644,56 @@ function Turret:drawEffects(camera, width, height)
             if exit then x, y = beam.x + beam.dx * exit, beam.y + beam.dy * exit end
         end
         if x then
+            -- VP3A: 3-Tier Snap-Taper Beam + Muzzle Ring + 4-Point Impact Starburst
             local alpha = math.max(0, 1 - beam.age / beamLifetime)
-            g.setColor(0.12, 0.82, 1, alpha * 0.4)
-            g.setLineWidth(6)
+            local taper = 0.28 + 0.72 * (alpha ^ 0.75)
+            g.setBlendMode("add")
+            g.setColor(0.141, 0.549, 1.0, 0.30 * alpha)
+            g.setLineWidth(14.0 * taper)
             g.line(beam.x, beam.y, x, y)
-            g.setColor(0.76, 0.98, 1, alpha)
-            g.setLineWidth(2)
+            g.setColor(0.220, 0.863, 1.0, 0.78 * alpha)
+            g.setLineWidth(6.2 * taper)
             g.line(beam.x, beam.y, x, y)
+            g.setColor(1.0, 1.0, 1.0, 0.98 * alpha)
+            g.setLineWidth(2.4 * taper)
+            g.line(beam.x, beam.y, x, y)
+
+            -- Muzzle ring flash
+            local muzzleR = 5.5 + (1 - alpha) * 9.0
+            g.setLineWidth(math.max(0.7, 1.8 * alpha))
+            g.setColor(0.220, 0.863, 1.0, 0.85 * alpha)
+            g.circle("line", beam.x, beam.y, muzzleR)
+            g.setColor(1.0, 1.0, 1.0, 0.92 * alpha)
+            g.circle("fill", beam.x, beam.y, 3.5 * alpha)
+
+            -- 4-point starburst impact flare when hitting an enemy
+            if beam.hitX then
+                local rLong = 24.0 * (0.40 + 0.60 * alpha)
+                local rShort = math.max(0.8, 2.8 * alpha)
+                local dLong = rLong * 0.7071
+                local dShort = rShort * 0.7071
+                local function drawStar(scale, r, green, b, a)
+                    local rl, rs = rLong * scale, rShort * scale
+                    local dl, ds = dLong * scale, dShort * scale
+                    g.setColor(r, green, b, a)
+                    -- 45-degree rotated crossed convex diamonds
+                    g.polygon("fill",
+                        x + dl, y + dl,
+                        x + ds, y - ds,
+                        x - dl, y - dl,
+                        x - ds, y + ds)
+                    g.polygon("fill",
+                        x + dl, y - dl,
+                        x + ds, y + ds,
+                        x - dl, y + dl,
+                        x - ds, y - ds)
+                end
+                drawStar(1.25, 0.220, 0.863, 1.0, 0.55 * alpha)
+                drawStar(1.00, 0.93, 0.98, 1.0, 0.95 * alpha)
+                g.setColor(1.0, 1.0, 1.0, alpha)
+                g.circle("fill", x, y, 4.2 * alpha)
+            end
+            g.setBlendMode("alpha")
         end
     end
     for _, explosion in ipairs(self.explosions) do

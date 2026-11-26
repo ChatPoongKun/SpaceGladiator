@@ -577,11 +577,62 @@ function EnemyFire:draw()
             g.circle("line", shot.x, shot.y, profile.radius)
             g.setColor(1, 0.97, 0.85, fade)
             g.circle("fill", shot.x, shot.y, profile.radius * 0.56)
+        elseif profile == bullet then
+            -- VE1B: Plasma Comet Orb (coral halo + amber orb + cream-white core + additive wake)
+            local orbTrail = math.min(16, profile.radius + length * shot.age)
+            local otX, otY = shot.x - dx * orbTrail, shot.y - dy * orbTrail
+            g.setBlendMode("add")
+            g.setLineWidth(5.2)
+            g.setColor(r, green, b, 0.28 * fade)
+            g.line(otX, otY, shot.x, shot.y)
+            g.setLineWidth(2.2)
+            g.setColor(1.0, 0.68, 0.36, 0.62 * fade)
+            g.line(otX, otY, shot.x, shot.y)
+            g.setColor(r, green, b, 0.32 * fade)
+            g.circle("fill", shot.x, shot.y, profile.radius * 2.15)
+            g.setColor(1.0, 0.67, 0.36, 0.82 * fade)
+            g.circle("fill", shot.x, shot.y, profile.radius * 1.22)
+            g.setBlendMode("alpha")
+            g.setLineWidth(1.0)
+            g.setColor(1.0, 0.62, 0.34, 0.85 * fade)
+            g.circle("line", shot.x, shot.y, profile.radius * 1.15)
+            g.setColor(1.0, 0.976, 0.902, fade)
+            g.circle("fill", shot.x, shot.y, profile.radius * 0.65)
+        elseif profile.isLaser then
+            -- VE2A Tapered Orchid-Magenta Lance Tail + VE2B Twin-Prong Diamond Bolt Head
+            local px, py = -dy, dx
+            local lanceTrail = math.min(profile.trail * 1.18, profile.radius + length * shot.age)
+            local ltX, ltY = shot.x - dx * lanceTrail, shot.y - dy * lanceTrail
+            g.setBlendMode("add")
+            g.setColor(r, green, b, 0.30 * fade)
+            g.polygon("fill", ltX, ltY, shot.x + px * 5.8, shot.y + py * 5.8, shot.x - px * 5.8, shot.y - py * 5.8)
+            g.setColor(r, math.min(1, green + 0.14), math.min(1, b + 0.08), 0.80 * fade)
+            g.polygon("fill", ltX, ltY, shot.x + px * 3.0, shot.y + py * 3.0, shot.x - px * 3.0, shot.y - py * 3.0)
+            local filX, filY = shot.x - dx * (lanceTrail * 0.65), shot.y - dy * (lanceTrail * 0.65)
+            g.setLineWidth(2.0)
+            g.setColor(1.0, 0.94, 1.0, 0.90 * fade)
+            g.line(filX, filY, shot.x, shot.y)
+            g.setColor(r, green, b, 0.36 * fade)
+            g.circle("fill", shot.x, shot.y, 8.5)
+            g.setBlendMode("alpha")
+
+            local tipX, tipY = shot.x + dx * 10.5, shot.y + dy * 10.5
+            local notchX, notchY = shot.x - dx * 5.5, shot.y - dy * 5.5
+            local shLX, shLY = shot.x - dx * 1.5 + px * 4.2, shot.y - dy * 1.5 + py * 4.2
+            local shRX, shRY = shot.x - dx * 1.5 - px * 4.2, shot.y - dy * 1.5 - py * 4.2
+            local prLX, prLY = shot.x - dx * 11.5 + px * 3.0, shot.y - dy * 11.5 + py * 3.0
+            local prRX, prRY = shot.x - dx * 11.5 - px * 3.0, shot.y - dy * 11.5 - py * 3.0
+            g.setColor(1.0, 0.97, 1.0, fade)
+            g.polygon("fill", tipX, tipY, shLX, shLY, prLX, prLY, notchX, notchY)
+            g.polygon("fill", tipX, tipY, notchX, notchY, prRX, prRY, shRX, shRY)
+            g.setLineWidth(1.0)
+            g.setColor(r, math.min(1, green + 0.12), math.min(1, b + 0.10), 0.92 * fade)
+            g.polygon("line", tipX, tipY, shLX, shLY, prLX, prLY, notchX, notchY, prRX, prRY, shRX, shRY)
         else
             g.setLineWidth(profile.radius * 1.8)
             g.setColor(r, green, b, 0.25 * fade)
             g.line(tailX, tailY, shot.x, shot.y)
-            g.setLineWidth(profile == laser and 3 or 1.5)
+            g.setLineWidth(1.5)
             g.setColor(r, green, b, 0.9 * fade)
             g.line(tailX, tailY, shot.x, shot.y)
             g.setColor(1, 0.85, 0.75, fade)

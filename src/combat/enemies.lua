@@ -1714,6 +1714,90 @@ function Enemies.drawHull(kind, aimed, time, opts)
     end
 end
 
+local function chargeNoise(idx, tick)
+    local v = math.sin(idx * 12.9898 + tick * 78.233) * 43758.5453
+    return (v - math.floor(v)) * 2 - 1
+end
+
+local function drawBoltthrowerLaserCharge(g, tel, time, seedOffset)
+    local isLock = tel.kind == "laser_lock"
+    local p = math.max(0, math.min(1, tel.progress or 0))
+    local intensity = isLock and (0.82 + 0.18 * p) or (0.30 + 0.50 * p)
+    local rate = isLock and 38 or 24
+    local tick = math.floor((time or 0) * rate) + (seedOffset or 0) * 13
+
+    g.push("all")
+    g.setBlendMode("add")
+    g.setLineJoin("bevel")
+
+    -- 1. Central core buildup inside Boltthrower's serrated jaw channel (0, -7).
+    local coreY = -7
+    g.setColor(1.0, 0.26, 0.62, 0.30 * intensity)
+    g.circle("fill", 0, coreY, 6.0 + 6.0 * intensity)
+    g.setColor(1.0, 0.58, 0.86, 0.78 * intensity)
+    g.circle("fill", 0, coreY, 2.8 + 2.6 * intensity)
+    local coreR = 1.4 + 1.6 * intensity + chargeNoise(1, tick) * 0.35
+    g.setColor(1.0, 0.97, 1.0, 0.98)
+    g.circle("fill", 0, coreY, math.max(1.0, coreR))
+
+    -- 2. Crackling center rail bolt (6-segment jagged arc from y=5 to y=-22.5).
+    local amp = 1.6 + 2.4 * intensity
+    local railPts = { 0, 5 }
+    for s = 1, 5 do
+        local fy = 5 + (-27.5) * (s / 6)
+        local fx = chargeNoise(10 + s, tick) * amp
+        railPts[#railPts + 1] = fx
+        railPts[#railPts + 1] = fy
+    end
+    railPts[#railPts + 1] = chargeNoise(19, tick) * 0.8
+    railPts[#railPts + 1] = -22.5
+    g.setLineWidth(3.2)
+    g.setColor(1.0, 0.28, 0.64, 0.48 * intensity)
+    g.line(railPts)
+    g.setLineWidth(1.2)
+    g.setColor(1.0, 0.96, 1.0, 0.95 * intensity)
+    g.line(railPts)
+
+    -- 3. Cross-jaw crackling sparks snapping from teeth into center channel.
+    local jawYs = { -18, -12, -5, 1 }
+    for idx, jy in ipairs(jawYs) do
+        local side = ((idx + tick) % 2 == 0) and 1 or -1
+        local startX = side * 3.8
+        local midX = startX * 0.45 + chargeNoise(30 + idx, tick) * 1.4
+        local midY = jy + chargeNoise(40 + idx, tick) * 1.8
+        local endX = chargeNoise(50 + idx, tick) * 1.2
+        local endY = coreY + (jy - coreY) * 0.35
+        g.setLineWidth(2.0)
+        g.setColor(1.0, 0.32, 0.68, 0.42 * intensity)
+        g.line(startX, jy, midX, midY, endX, endY)
+        g.setLineWidth(0.9)
+        g.setColor(1.0, 0.95, 1.0, 0.88 * intensity)
+        g.line(startX, jy, midX, midY, endX, endY)
+    end
+
+    if isLock then
+        for a = 1, 2 do
+            local side = a == 1 and -1 or 1
+            local mx1 = side * (1.5 + math.abs(chargeNoise(60 + a, tick)) * 2.5)
+            local mx2 = chargeNoise(70 + a, tick) * 3.4
+            g.setLineWidth(2.4)
+            g.setColor(1.0, 0.30, 0.68, 0.55)
+            g.line(0, -18, mx1, -23.5, mx2, -29.0)
+            g.setLineWidth(1.0)
+            g.setColor(1.0, 0.98, 1.0, 0.95)
+            g.line(0, -18, mx1, -23.5, mx2, -29.0)
+        end
+    end
+
+    -- 4. Collapsing charge ring centered in the channel.
+    local ringR = 14.0 - 10.0 * p
+    g.setLineWidth(1.1)
+    g.setColor(1.0, 0.72, 0.94, (0.35 + 0.55 * p))
+    g.circle("line", 0, coreY, ringR)
+
+    g.pop()
+end
+
 local function drawTelegraph(g, enemy, time)
     local tel = enemy.telegraph
     if not tel then return end
@@ -1824,7 +1908,7 @@ function Enemies:draw(time)
     for _, enemy in ipairs(self.items) do
         drawTelegraph(g, enemy, time)
     end
-    for _, enemy in ipairs(self.items) do
+    for idx, enemy in ipairs(self.items) do
         local thrust = 0
         if enemy.diving then
             thrust = 1.45
@@ -1838,6 +1922,10 @@ function Enemies:draw(time)
         g.translate(enemy.x, enemy.y)
         g.rotate(enemy.angle)
         Enemies.drawHull(enemy.kind, enemy.aimed, time, { thrust = thrust })
+        if enemy.kind == 2 and enemy.telegraph
+            and (enemy.telegraph.kind == "laser_track" or enemy.telegraph.kind == "laser_lock") then
+            drawBoltthrowerLaserCharge(g, enemy.telegraph, time, idx)
+        end
         if enemy.telegraph and enemy.telegraph.kind == "missile" then
             local mp = enemy.telegraph.progress or 0
             local alpha = 0.45 + 0.50 * mp
