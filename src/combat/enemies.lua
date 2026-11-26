@@ -16,7 +16,11 @@ local playerMaxPushSpeed = 260
 
 Enemies.spawnRate = 1 / 4
 Enemies.maxCount = 15
-Enemies.patrolDuration = 10
+Enemies.patrolDuration = math.huge
+Enemies.flybyPatrolDuration = 10
+Enemies.warpDuration = 0.90
+Enemies.edgeWarningDuration = 0.60
+Enemies.flybyEntrySpeed = 280
 Enemies.collisionMinSpeed = 60
 Enemies.collisionRefSpeed = 300
 Enemies.collisionSpeedExponent = 1.25
@@ -94,7 +98,13 @@ function Enemies.new(rng, gladiator)
         playerCombatPower = Ship.combatPower,
         deathParticles = {},
         deathBursts = {},
+        waveIndex = 0,
+        stageNumber = 1,
     }, Enemies)
+end
+
+function Enemies.isIntangible(enemy)
+    return enemy ~= nil and (enemy.phase == "warping" or enemy.phase == "edge_warning")
 end
 
 local function formationPosition(x, y, angle, right, forward)
@@ -152,16 +162,101 @@ function Enemies:spawn(ship, kindIndex, options)
     enemy.ai = nil
     enemy.aiDelay = options and options.aiDelay or 0
     enemy.collisionCooldown = 0
+    enemy.patrolDuration = options and options.patrolDuration or nil
+    enemy.entrySpeed = options and options.entrySpeed or entrySpeed
+    local warpTime = options and options.warpTime
+    local edgeWarningTime = options and options.edgeWarningTime
     local entryTime = options and options.entryTime
-    enemy.phase = entryTime and "entering" or "patrol"
-    enemy.phaseRemaining = entryTime or self.patrolDuration
+    if warpTime and warpTime > 0 then
+        enemy.phase = "warping"
+        enemy.phaseRemaining = warpTime
+        enemy.warpDuration = warpTime
+        enemy.vx, enemy.vy = 0, 0
+    elseif edgeWarningTime and edgeWarningTime > 0 then
+        enemy.phase = "edge_warning"
+        enemy.phaseRemaining = edgeWarningTime
+        enemy.edgeWarningDuration = edgeWarningTime
+        enemy.entryDuration = entryTime or 0.75
+        enemy.entryEdge = options and options.edge
+        enemy.vx, enemy.vy = 0, 0
+    elseif entryTime then
+        enemy.phase = "entering"
+        enemy.phaseRemaining = entryTime
+    else
+        enemy.phase = "patrol"
+        enemy.phaseRemaining = enemy.patrolDuration or self.patrolDuration
+    end
 
     self.items[#self.items + 1] = enemy
     return enemy
 end
 
-function Enemies:spawnSquad(ship)
-    if #self.items + squadSize > self.maxCount then return {} end
+local function safeWarpPoint(group, ship, anchorX, anchorY, occupied)
+    local margin = 95
+    local minX, maxX = margin, Arena.width - margin
+    local minY, maxY = margin, Arena.height - margin
+    local function isClear(px, py)
+        if (px - ship.x) ^ 2 + (py - ship.y) ^ 2 < 280 ^ 2 then return false end
+        for _, pt in ipairs(occupied or {}) do
+            if (px - pt.x) ^ 2 + (py - pt.y) ^ 2 < 90 ^ 2 then return false end
+        end
+        return true
+    end
+    if anchorX and anchorY then
+        local cx, cy = clamp(anchorX, minX, maxX), clamp(anchorY, minY, maxY)
+        if isClear(cx, cy) then return cx, cy end
+    end
+    local baseAngle = math.atan2(Arena.height * 0.5 - ship.y, Arena.width * 0.5 - ship.x) + (group.rng() - 0.5) * 0.7
+    local bestX, bestY, bestScore = clamp(Arena.width - ship.x, minX, maxX), clamp(Arena.height - ship.y, minY, maxY), -1
+    for attempt = 0, 11 do
+        local a = baseAngle + attempt * tau / 12
+        local dist = 310 + (attempt % 3) * 35
+        local px = clamp(ship.x + math.cos(a) * dist, minX, maxX)
+        local py = clamp(ship.y + math.sin(a) * dist, minY, maxY)
+        if isClear(px, py) then return px, py end
+        local minD = (px - ship.x) ^ 2 + (py - ship.y) ^ 2
+        for _, pt in ipairs(occupied or {}) do
+            minD = math.min(minD, (px - pt.x) ^ 2 + (py - pt.y) ^ 2)
+        end
+        if minD > bestScore then
+            bestX, bestY, bestScore = px, py, minD
+        end
+    end
+    return bestX, bestY
+end
+
+local function edgeStagingPose(group, edge, tAlong, speed, extraDist)
+    local view = group.view
+    local margin = entryMargin + (extraDist or 0)
+    local t = clamp(tAlong, 0.14, 0.86)
+    local x, y
+    if edge == 1 then
+        x, y = view.left - margin, view.top + t * (view.bottom - view.top)
+    elseif edge == 2 then
+        x, y = view.right + margin, view.top + t * (view.bottom - view.top)
+    elseif edge == 3 then
+        x, y = view.left + t * (view.right - view.left), view.top - margin
+    else
+        x, y = view.left + t * (view.right - view.left), view.bottom + margin
+    end
+    local angle = entryAngles[edge]
+    local entryTime = (margin + 56) / speed
+    return x, y, angle, entryTime
+end
+
+Enemies.waveThemes = {
+    bulwark_escort = true,
+    interceptor_pack = true,
+    crossfire_line = true,
+    spiral_siege = true,
+    pincer_assault = true,
+    classic = true,
+}
+
+local stage1Deck = { "bulwark_escort", "interceptor_pack", "crossfire_line" }
+local stage2Deck = { "bulwark_escort", "spiral_siege", "crossfire_line", "interceptor_pack", "pincer_assault" }
+
+local function spawnClassicSquad(self, ship)
     local lx, ly, edge = spawnPoint(self.rng, ship)
     local view = self.view
     if edge == 1 then lx = view.left - entryMargin
@@ -172,22 +267,103 @@ function Enemies:spawnSquad(ship)
     local fx, fy = math.sin(angle), -math.cos(angle)
     local vx, vy = fx * entrySpeed, fy * entrySpeed
     local entryTime = (entryMargin + wingTrail + self.types[3].radius) / entrySpeed
-    local wave = {entryAngle = angle}
+    local wave = { entryAngle = angle, theme = "classic" }
     local leader = self:spawn(ship, 3, {
         x = lx, y = ly, vx = vx, vy = vy, angle = angle, entryTime = entryTime, wave = wave,
     })
     wave.leader = leader
-    local squad = {leader}
-
+    local squad = { leader }
     for _, member in ipairs(formation) do
         local x, y = formationPosition(lx, ly, angle, member.right, member.forward)
         local aiDelay = member.slot == 1 and (member.kind == 1 and 0.55 or 0.35) or 0
-        local shipMember = self:spawn(ship, member.kind, {
+        squad[#squad + 1] = self:spawn(ship, member.kind, {
             x = x, y = y, vx = vx, vy = vy, angle = angle, entryTime = entryTime, wave = wave,
             slot = member.slot, aiDelay = aiDelay,
         })
-        squad[#squad + 1] = shipMember
     end
+    return squad
+end
+
+function Enemies:spawnSquad(ship, themeName)
+    if #self.items + squadSize > self.maxCount then return {} end
+    self.waveIndex = (self.waveIndex or 0) + 1
+    if themeName == "classic" then
+        return spawnClassicSquad(self, ship)
+    end
+    local deck = (self.stageNumber or 1) >= 2 and stage2Deck or stage1Deck
+    local theme = themeName
+    if not theme or not Enemies.waveThemes[theme] then
+        theme = deck[((self.waveIndex - 1) % #deck) + 1]
+    end
+
+    local wave = { theme = theme }
+    local squad = {}
+    local occupied = {}
+    local _, _, primaryEdge = spawnPoint(self.rng, ship)
+    local oppEdge = primaryEdge == 1 and 2 or (primaryEdge == 2 and 1 or (primaryEdge == 3 and 4 or 3))
+
+    local function addWarp(kind, ax, ay, slot, aiDelay)
+        local wx, wy = safeWarpPoint(self, ship, ax, ay, occupied)
+        occupied[#occupied + 1] = { x = wx, y = wy }
+        local e = self:spawn(ship, kind, {
+            x = wx, y = wy, warpTime = Enemies.warpDuration, wave = wave, slot = slot, aiDelay = aiDelay,
+        })
+        squad[#squad + 1] = e
+        return e
+    end
+
+    local function addEdge(kind, edge, tAlong, speed, extraDist, slot, aiDelay)
+        local ex, ey, angle, entryTime = edgeStagingPose(self, edge, tAlong, speed, extraDist)
+        local e = self:spawn(ship, kind, {
+            x = ex, y = ey, angle = angle, entrySpeed = speed, entryTime = entryTime,
+            edgeWarningTime = Enemies.edgeWarningDuration, edge = edge,
+            wave = wave, slot = slot, aiDelay = aiDelay,
+        })
+        squad[#squad + 1] = e
+        return e
+    end
+
+    if theme == "interceptor_pack" then
+        local baseT = 0.28 + self.rng() * 0.44
+        local offsets = {
+            { dt = 0, extra = 0, slot = 1, delay = 0 },
+            { dt = -0.14, extra = 34, slot = -1, delay = 0.25 },
+            { dt = 0.14, extra = 34, slot = 1, delay = 0.45 },
+            { dt = -0.24, extra = 68, slot = -1, delay = 0.65 },
+            { dt = 0.24, extra = 68, slot = 1, delay = 0.85 },
+        }
+        for _, spec in ipairs(offsets) do
+            addEdge(1, primaryEdge, baseT + spec.dt, Enemies.flybyEntrySpeed, spec.extra, spec.slot, spec.delay)
+        end
+    elseif theme == "crossfire_line" then
+        addWarp(2, Arena.width * 0.24, Arena.height * 0.26, -1, 0)
+        addWarp(2, Arena.width * 0.76, Arena.height * 0.28, 1, 0.35)
+        addWarp(2, Arena.width * 0.50, Arena.height * 0.76, -1, 0.65)
+        addEdge(1, primaryEdge, 0.32, 260, 0, -1, 0.15)
+        addEdge(1, oppEdge, 0.68, 260, 0, 1, 0.50)
+    elseif theme == "spiral_siege" then
+        addWarp(2, Arena.width * 0.26, Arena.height * 0.30, -1, 0)
+        addWarp(2, Arena.width * 0.74, Arena.height * 0.70, 1, 0.35)
+        addWarp(3, Arena.width * 0.50, Arena.height * 0.26, 1, 0.50)
+        addEdge(1, primaryEdge, 0.35, 260, 0, -1, 0.15)
+        addEdge(1, oppEdge, 0.65, 260, 0, 1, 0.55)
+    elseif theme == "pincer_assault" then
+        addWarp(3, Arena.width * 0.25, Arena.height * 0.50, -1, 0)
+        addWarp(2, Arena.width * 0.75, Arena.height * 0.30, 1, 0.30)
+        addWarp(2, Arena.width * 0.72, Arena.height * 0.72, -1, 0.60)
+        addEdge(1, 3, 0.38, 260, 0, -1, 0.20)
+        addEdge(1, 4, 0.62, 260, 0, 1, 0.55)
+    else
+        -- bulwark_escort
+        addWarp(3, Arena.width * 0.50, Arena.height * 0.44, 1, 0)
+        addWarp(2, Arena.width * 0.28, Arena.height * 0.34, -1, 0.30)
+        addEdge(1, primaryEdge, 0.28, 260, 0, -1, 0.10)
+        addEdge(1, primaryEdge, 0.50, 260, 28, 1, 0.40)
+        addEdge(1, primaryEdge, 0.72, 260, 56, -1, 0.70)
+    end
+
+    wave.leader = squad[1]
+    wave.entryAngle = squad[1] and squad[1].angle or entryAngles[primaryEdge]
     return squad
 end
 
@@ -620,7 +796,7 @@ end
 
 local function checkContact(group, enemy, enemyIndex, ship, x, y, motion, elapsed, step, gladiator)
     if ship:isDestroyed() then return false end
-    if ship:isInvulnerable() then
+    if Enemies.isIntangible(enemy) or ship:isInvulnerable() then
         enemy.contactRadius = nil
         enemy.nearMiss = nil
         return false
@@ -767,44 +943,48 @@ local function resolveEnemyEnemy(items, contacted)
     local moved = false
     for i = 1, count - 1 do
         local a = items[i]
-        for j = i + 1, count do
-            local b = items[j]
-            local minDist = (a.radius or 0) + (b.radius or 0)
-            local dx, dy = a.x - b.x, a.y - b.y
-            local distSq = dx * dx + dy * dy
-            if distSq < minDist * minDist then
-                local dist = math.sqrt(distSq)
-                local nx, ny
-                if dist > 1e-6 then
-                    nx, ny = dx / dist, dy / dist
-                else
-                    local fallback = (i * 1.7 + j * 2.3) % tau
-                    nx, ny = math.cos(fallback), math.sin(fallback)
-                end
-                local overlap = minDist - dist
-                local invA, invB = 1 / (a.mass or 1), 1 / (b.mass or 1)
-                local invSum = invA + invB
-                local shareA, shareB = invA / invSum, invB / invSum
-                a.x = a.x + nx * overlap * shareA
-                a.y = a.y + ny * overlap * shareA
-                b.x = b.x - nx * overlap * shareB
-                b.y = b.y - ny * overlap * shareB
+        if not Enemies.isIntangible(a) then
+            for j = i + 1, count do
+                local b = items[j]
+                if not Enemies.isIntangible(b) then
+                    local minDist = (a.radius or 0) + (b.radius or 0)
+                    local dx, dy = a.x - b.x, a.y - b.y
+                    local distSq = dx * dx + dy * dy
+                    if distSq < minDist * minDist then
+                        local dist = math.sqrt(distSq)
+                        local nx, ny
+                        if dist > 1e-6 then
+                            nx, ny = dx / dist, dy / dist
+                        else
+                            local fallback = (i * 1.7 + j * 2.3) % tau
+                            nx, ny = math.cos(fallback), math.sin(fallback)
+                        end
+                        local overlap = minDist - dist
+                        local invA, invB = 1 / (a.mass or 1), 1 / (b.mass or 1)
+                        local invSum = invA + invB
+                        local shareA, shareB = invA / invSum, invB / invSum
+                        a.x = a.x + nx * overlap * shareA
+                        a.y = a.y + ny * overlap * shareA
+                        b.x = b.x - nx * overlap * shareB
+                        b.y = b.y - ny * overlap * shareB
 
-                local pairKey = i * (count + 1) + j
-                if not contacted[pairKey] then
-                    contacted[pairKey] = true
-                    local avx, avy = (a.vx or 0) + (a.pushVx or 0), (a.vy or 0) + (a.pushVy or 0)
-                    local bvx, bvy = (b.vx or 0) + (b.pushVx or 0), (b.vy or 0) + (b.pushVy or 0)
-                    local relVn = (avx - bvx) * nx + (avy - bvy) * ny
-                    local targetSep = math.min(enemyMaxPushSpeed,
-                        enemyPushBase + math.max(0, -relVn) * collisionRestitution)
-                    if relVn < targetSep then
-                        local impulse = targetSep - relVn
-                        addEntityPush(a, nx * impulse * shareA, ny * impulse * shareA, enemyMaxPushSpeed)
-                        addEntityPush(b, -nx * impulse * shareB, -ny * impulse * shareB, enemyMaxPushSpeed)
+                        local pairKey = i * (count + 1) + j
+                        if not contacted[pairKey] then
+                            contacted[pairKey] = true
+                            local avx, avy = (a.vx or 0) + (a.pushVx or 0), (a.vy or 0) + (a.pushVy or 0)
+                            local bvx, bvy = (b.vx or 0) + (b.pushVx or 0), (b.vy or 0) + (b.pushVy or 0)
+                            local relVn = (avx - bvx) * nx + (avy - bvy) * ny
+                            local targetSep = math.min(enemyMaxPushSpeed,
+                                enemyPushBase + math.max(0, -relVn) * collisionRestitution)
+                            if relVn < targetSep then
+                                local impulse = targetSep - relVn
+                                addEntityPush(a, nx * impulse * shareA, ny * impulse * shareA, enemyMaxPushSpeed)
+                                addEntityPush(b, -nx * impulse * shareB, -ny * impulse * shareB, enemyMaxPushSpeed)
+                            end
+                        end
+                        moved = true
                     end
                 end
-                moved = true
             end
         end
     end
@@ -819,7 +999,8 @@ local function resolvePlayerEnemy(items, ship, contacted)
     for i = 1, #items do
         local enemy = items[i]
         local er = enemy.radius or 0
-        if enemy.x + er >= 0 and enemy.x - er <= Arena.width
+        if not Enemies.isIntangible(enemy)
+            and enemy.x + er >= 0 and enemy.x - er <= Arena.width
             and enemy.y + er >= 0 and enemy.y - er <= Arena.height then
             local minDist = shipRadius + er
             local dx = wrappedDelta(ship.x - enemy.x, Arena.width)
@@ -882,6 +1063,12 @@ local function resolveCollisions(items, ship, includePlayer)
     end
 end
 
+local deathPalettes = {
+    [1] = { { 1.0, 0.588, 0.471 }, { 1.0, 0.910, 0.820 }, { 0.729, 0.176, 0.275 } },
+    [2] = { { 1.0, 0.24, 0.62 }, { 1.0, 0.78, 0.92 }, { 0.68, 0.22, 0.36 } },
+    [3] = { { 1.0, 0.78, 0.28 }, { 1.0, 0.96, 0.74 }, { 1.0, 0.36, 0.22 } },
+}
+
 local function moveEnemyStep(group, enemy, enemyIndex, dt, ship, aimAngle, motion, elapsed)
     local definition = group.types[enemy.kind]
     local view = group.view
@@ -895,22 +1082,59 @@ local function moveEnemyStep(group, enemy, enemyIndex, dt, ship, aimAngle, motio
             if clearedExit(enemy, view, exit.edge) then return true end
             flyTo(enemy, step, exit.x, exit.y, enemy.maxSpeed, 0, 0)
             integrateEnemyPush(enemy, step)
-        else
+        elseif enemy.phase == "warping" then
+            step = math.min(remaining, enemy.phaseRemaining)
+            enemy.vx, enemy.vy = 0, 0
+            enemy.accelerating, enemy.braking = false, false
+            enemy.phaseRemaining = enemy.phaseRemaining - step
+            if enemy.phaseRemaining <= 1e-9 then
+                enemy.phase = "patrol"
+                enemy.phaseRemaining = enemy.patrolDuration or group.patrolDuration
+                enemy.angle = angleToShip(enemy, ship)
+                group.deathBursts = group.deathBursts or {}
+                local palette = deathPalettes[enemy.kind] or deathPalettes[1]
+                group.deathBursts[#group.deathBursts + 1] = {
+                    x = enemy.x, y = enemy.y, maxRadius = (enemy.radius or 20) * 2.1,
+                    age = 0, duration = 0.28, color = palette[1],
+                }
+                Sfx.play("warp_arrive", 1.15)
+            end
+        elseif enemy.phase == "edge_warning" then
+            step = math.min(remaining, enemy.phaseRemaining)
+            enemy.vx, enemy.vy = 0, 0
+            enemy.accelerating, enemy.braking = false, false
+            enemy.phaseRemaining = enemy.phaseRemaining - step
+            if enemy.phaseRemaining <= 1e-9 then
+                enemy.phase = "entering"
+                enemy.phaseRemaining = enemy.entryDuration or 0.75
+                local spd = enemy.entrySpeed or entrySpeed
+                enemy.vx = math.sin(enemy.angle) * spd
+                enemy.vy = -math.cos(enemy.angle) * spd
+            end
+        elseif enemy.phase == "entering" then
             step = math.min(remaining, enemy.phaseRemaining)
             if step > 0 then
-                if enemy.phase == "patrol" then
-                    patrol(group, enemy, step, ship, aimAngle, definition)
-                else
-                    local angle = enemy.angle
-                    pilot(enemy, step, math.sin(angle) * entrySpeed, -math.cos(angle) * entrySpeed, angle)
-                end
+                local angle = enemy.angle
+                local spd = enemy.entrySpeed or entrySpeed
+                pilot(enemy, step, math.sin(angle) * spd, -math.cos(angle) * spd, angle)
                 integrateEnemyPush(enemy, step)
             end
             enemy.phaseRemaining = enemy.phaseRemaining - step
             if enemy.phaseRemaining <= 1e-9 then
-                if enemy.phase == "entering" then
-                    enemy.phase, enemy.phaseRemaining = "patrol", group.patrolDuration
-                else
+                enemy.phase, enemy.phaseRemaining = "patrol", enemy.patrolDuration or group.patrolDuration
+            end
+        else
+            if enemy.phaseRemaining == math.huge then
+                patrol(group, enemy, step, ship, aimAngle, definition)
+                integrateEnemyPush(enemy, step)
+            else
+                step = math.min(remaining, enemy.phaseRemaining)
+                if step > 0 then
+                    patrol(group, enemy, step, ship, aimAngle, definition)
+                    integrateEnemyPush(enemy, step)
+                end
+                enemy.phaseRemaining = enemy.phaseRemaining - step
+                if enemy.phaseRemaining <= 1e-9 then
                     enemy.phase, enemy.goal, enemy.aimed = "departing", nil, false
                     enemy.telegraph, enemy.diving, enemy.ai = nil, false, nil
                     departureGoal(enemy, view)
@@ -959,23 +1183,27 @@ local function computeSeparation(items)
     end
     for i = 1, count - 1 do
         local a = items[i]
-        for j = i + 1, count do
-            local b = items[j]
-            local dx, dy = a.x - b.x, a.y - b.y
-            local minDist = a.radius + b.radius + 26
-            local distSq = dx * dx + dy * dy
-            if distSq < minDist * minDist then
-                local dist = math.sqrt(distSq)
-                local ux, uy
-                if dist > 1e-4 then
-                    ux, uy = dx / dist, dy / dist
-                else
-                    local fallback = (i * 1.7 + j * 2.3) % tau
-                    ux, uy = math.cos(fallback), math.sin(fallback)
+        if not Enemies.isIntangible(a) then
+            for j = i + 1, count do
+                local b = items[j]
+                if not Enemies.isIntangible(b) then
+                    local dx, dy = a.x - b.x, a.y - b.y
+                    local minDist = a.radius + b.radius + 26
+                    local distSq = dx * dx + dy * dy
+                    if distSq < minDist * minDist then
+                        local dist = math.sqrt(distSq)
+                        local ux, uy
+                        if dist > 1e-4 then
+                            ux, uy = dx / dist, dy / dist
+                        else
+                            local fallback = (i * 1.7 + j * 2.3) % tau
+                            ux, uy = math.cos(fallback), math.sin(fallback)
+                        end
+                        local push = (minDist - dist) / minDist * 86
+                        a.sepX, a.sepY = a.sepX + ux * push, a.sepY + uy * push
+                        b.sepX, b.sepY = b.sepX - ux * push, b.sepY - uy * push
+                    end
                 end
-                local push = (minDist - dist) / minDist * 86
-                a.sepX, a.sepY = a.sepX + ux * push, a.sepY + uy * push
-                b.sepX, b.sepY = b.sepX - ux * push, b.sepY - uy * push
             end
         end
     end
@@ -1034,12 +1262,6 @@ local function positionAt(enemy, fraction)
     local x, y = enemy.prevX or enemy.x, enemy.prevY or enemy.y
     return x + (enemy.x - x) * fraction, y + (enemy.y - y) * fraction
 end
-
-local deathPalettes = {
-    [1] = { { 1.0, 0.588, 0.471 }, { 1.0, 0.910, 0.820 }, { 0.729, 0.176, 0.275 } },
-    [2] = { { 1.0, 0.24, 0.62 }, { 1.0, 0.78, 0.92 }, { 0.68, 0.22, 0.36 } },
-    [3] = { { 1.0, 0.78, 0.28 }, { 1.0, 0.96, 0.74 }, { 1.0, 0.36, 0.22 } },
-}
 
 function Enemies:spawnDeathEffect(enemy)
     if not enemy then return end
@@ -1184,11 +1406,13 @@ function Enemies:hitArea(x, y, radius, fraction, viewOrCamera, width, height, da
     local hit = false
     for i = #self.items, 1, -1 do
         local enemy = self.items[i]
-        local ex, ey = positionAt(enemy, fraction or 1)
-        if ex >= left - eps and ex <= right + eps and ey >= top - eps and ey <= bottom + eps
-            and (ex - x) ^ 2 + (ey - y) ^ 2 <= (radius + enemy.radius) ^ 2 then
-            self:damage(i, damage)
-            hit = true
+        if not Enemies.isIntangible(enemy) then
+            local ex, ey = positionAt(enemy, fraction or 1)
+            if ex >= left - eps and ex <= right + eps and ey >= top - eps and ey <= bottom + eps
+                and (ex - x) ^ 2 + (ey - y) ^ 2 <= (radius + enemy.radius) ^ 2 then
+                self:damage(i, damage)
+                hit = true
+            end
         end
     end
     return hit
@@ -1213,7 +1437,7 @@ function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCa
 
     local nearest, hitIndex = math.huge, nil
     for i, enemy in ipairs(self.items) do
-        if enemy ~= excludeEnemy then
+        if enemy ~= excludeEnemy and not Enemies.isIntangible(enemy) then
             local startX, startY = positionAt(enemy, fStart)
             local endX, endY = positionAt(enemy, fEnd)
             local rx, ry = cx1 - startX, cy1 - startY
@@ -1906,62 +2130,128 @@ function Enemies:draw(time)
         end
     end
     for _, enemy in ipairs(self.items) do
-        drawTelegraph(g, enemy, time)
+        if not Enemies.isIntangible(enemy) then
+            drawTelegraph(g, enemy, time)
+        end
     end
     for idx, enemy in ipairs(self.items) do
-        local thrust = 0
-        if enemy.diving then
-            thrust = 1.45
-        elseif enemy.accelerating then
-            thrust = 1
-        elseif enemy.speed then
-            local spd = enemy:speed()
-            if spd > 18 then thrust = math.min(0.6, spd / math.max(1, enemy.maxSpeed or 200)) end
-        end
-        g.push()
-        g.translate(enemy.x, enemy.y)
-        g.rotate(enemy.angle)
-        Enemies.drawHull(enemy.kind, enemy.aimed, time, { thrust = thrust })
-        if enemy.kind == 2 and enemy.telegraph
-            and (enemy.telegraph.kind == "laser_track" or enemy.telegraph.kind == "laser_lock") then
-            drawBoltthrowerLaserCharge(g, enemy.telegraph, time, idx)
-        end
-        if enemy.telegraph and enemy.telegraph.kind == "missile" then
-            local mp = enemy.telegraph.progress or 0
-            local alpha = 0.45 + 0.50 * mp
-            local glowR = 4.5 + 3.5 * mp
-            for _, sx in ipairs({ -17, 17 }) do
-                g.setColor(1.0, 0.24, 0.26, alpha * 0.45)
-                g.circle("fill", sx, 3.5, glowR)
-                g.setColor(1.0, 0.72, 0.45, alpha)
-                g.circle("fill", sx, 3.5, 2.5)
+        if enemy.phase == "warping" then
+            local dur = enemy.warpDuration or Enemies.warpDuration
+            local p = clamp(1 - (enemy.phaseRemaining or 0) / math.max(1e-4, dur), 0, 1)
+            local palette = deathPalettes[enemy.kind] or deathPalettes[1]
+            local c = palette[1]
+            local ringR = 58 - (58 - (enemy.radius or 20)) * p
+            g.setLineWidth(1.6 + 1.4 * p)
+            g.setColor(c[1], c[2], c[3], 0.35 + 0.55 * p)
+            for seg = 0, 3 do
+                local a0 = (time or 0) * 3.8 + seg * (math.pi * 0.5)
+                g.arc("line", "open", enemy.x, enemy.y, ringR, a0, a0 + math.pi * 0.34)
             end
-        end
-        if (enemy.hitFlash or 0) > 0 then
-            local flashAlpha = math.min(1, enemy.hitFlash / 0.09)
-            local r = (enemy.radius or 20) * 1.15
-            g.setColor(1, 0.96, 0.88, 0.42 * flashAlpha)
-            g.circle("fill", 0, 0, r * 0.85)
-            g.setLineWidth(2.0)
-            g.setColor(1, 1, 1, 0.85 * flashAlpha)
-            g.circle("line", 0, 0, r)
-        end
-        g.pop()
-        if enemy.hp and enemy.maxHp and enemy.hp > 0 and enemy.hp < enemy.maxHp then
-            local ratio = math.max(0, math.min(1, enemy.hp / enemy.maxHp))
-            local bw = enemy.kind == 3 and 44 or (enemy.kind == 2 and 32 or 24)
-            local bh = 3.5
-            local bx = enemy.x - bw * 0.5
-            local by = enemy.y - (enemy.radius or 20) - 10
-            g.setColor(0.03, 0.04, 0.08, 0.82)
-            g.rectangle("fill", bx - 1, by - 1, bw + 2, bh + 2, 1.5, 1.5)
-            local fillG = enemy.kind == 3 and (0.45 + 0.35 * ratio) or (0.24 + 0.36 * ratio)
-            local fillB = enemy.kind == 3 and 0.20 or 0.28
-            g.setColor(1.0, fillG, fillB, 0.95)
-            g.rectangle("fill", bx, by, math.max(2, bw * ratio), bh, 1, 1)
-            g.setColor(1, 1, 1, 0.25)
-            g.setLineWidth(0.7)
-            g.rectangle("line", bx - 1, by - 1, bw + 2, bh + 2, 1.5, 1.5)
+            local dR = ringR * 0.72
+            g.push()
+            g.translate(enemy.x, enemy.y)
+            g.rotate(-(time or 0) * 2.4)
+            g.setLineWidth(1.1)
+            g.setColor(1, 0.92, 0.96, 0.30 + 0.55 * p)
+            g.polygon("line", 0, -dR, dR, 0, 0, dR, -dR, 0)
+            g.pop()
+
+            local def = Enemies.types[enemy.kind]
+            if def and def.vertices then
+                local sc = 0.45 + 0.55 * p
+                g.push()
+                g.translate(enemy.x, enemy.y)
+                g.rotate(enemy.angle)
+                g.scale(sc, sc)
+                g.setColor(c[1], c[2], c[3], 0.14 + 0.28 * p)
+                g.polygon("fill", def.vertices)
+                g.setLineWidth(1.3)
+                g.setColor(1, 0.95, 0.92, 0.38 + 0.55 * p)
+                g.polygon("line", def.vertices)
+                g.pop()
+            end
+            if p > 0.70 then
+                local flash = (p - 0.70) / 0.30
+                g.setColor(1, 0.96, 0.92, 0.75 * flash)
+                g.circle("fill", enemy.x, enemy.y, 4 + 10 * flash)
+            end
+        elseif enemy.phase == "edge_warning" then
+            local view = self.view
+            local ix = clamp(enemy.x, view.left + 22, view.right - 22)
+            local iy = clamp(enemy.y, view.top + 22, view.bottom - 22)
+            local dx, dy = math.sin(enemy.angle), -math.cos(enemy.angle)
+            local px, py = -dy, dx
+            local dur = enemy.edgeWarningDuration or Enemies.edgeWarningDuration
+            local p = clamp(1 - (enemy.phaseRemaining or 0) / math.max(1e-4, dur), 0, 1)
+            local pulse = 0.55 + 0.45 * math.sin((time or 0) * 24)
+            g.setLineWidth(1.3)
+            g.setColor(1.0, 0.34, 0.24, (0.30 + 0.30 * p) * pulse)
+            for d = 14, 74, 20 do
+                g.line(ix + dx * d, iy + dy * d, ix + dx * (d + 11), iy + dy * (d + 11))
+            end
+            local tipX, tipY = ix + dx * 10, iy + dy * 10
+            g.setLineWidth(2.2)
+            g.setColor(1.0, 0.48, 0.28, (0.65 + 0.35 * p) * pulse)
+            g.line(tipX - dx * 12 + px * 9, tipY - dy * 12 + py * 9, tipX, tipY, tipX - dx * 12 - px * 9, tipY - dy * 12 - py * 9)
+            local backX, backY = ix - dx * 2, iy - dy * 2
+            g.setLineWidth(1.5)
+            g.setColor(1.0, 0.85, 0.55, 0.70 * pulse)
+            g.line(backX - dx * 8 + px * 6, backY - dy * 8 + py * 6, backX, backY, backX - dx * 8 - px * 6, backY - dy * 8 - py * 6)
+        else
+            local thrust = 0
+            if enemy.diving then
+                thrust = 1.45
+            elseif enemy.accelerating then
+                thrust = 1
+            elseif enemy.speed then
+                local spd = enemy:speed()
+                if spd > 18 then thrust = math.min(0.6, spd / math.max(1, enemy.maxSpeed or 200)) end
+            end
+            g.push()
+            g.translate(enemy.x, enemy.y)
+            g.rotate(enemy.angle)
+            Enemies.drawHull(enemy.kind, enemy.aimed, time, { thrust = thrust })
+            if enemy.kind == 2 and enemy.telegraph
+                and (enemy.telegraph.kind == "laser_track" or enemy.telegraph.kind == "laser_lock") then
+                drawBoltthrowerLaserCharge(g, enemy.telegraph, time, idx)
+            end
+            if enemy.telegraph and enemy.telegraph.kind == "missile" then
+                local mp = enemy.telegraph.progress or 0
+                local alpha = 0.45 + 0.50 * mp
+                local glowR = 4.5 + 3.5 * mp
+                for _, sx in ipairs({ -17, 17 }) do
+                    g.setColor(1.0, 0.24, 0.26, alpha * 0.45)
+                    g.circle("fill", sx, 3.5, glowR)
+                    g.setColor(1.0, 0.72, 0.45, alpha)
+                    g.circle("fill", sx, 3.5, 2.5)
+                end
+            end
+            if (enemy.hitFlash or 0) > 0 then
+                local flashAlpha = math.min(1, enemy.hitFlash / 0.09)
+                local r = (enemy.radius or 20) * 1.15
+                g.setColor(1, 0.96, 0.88, 0.42 * flashAlpha)
+                g.circle("fill", 0, 0, r * 0.85)
+                g.setLineWidth(2.0)
+                g.setColor(1, 1, 1, 0.85 * flashAlpha)
+                g.circle("line", 0, 0, r)
+            end
+            g.pop()
+            if enemy.hp and enemy.maxHp and enemy.hp > 0 and enemy.hp < enemy.maxHp then
+                local ratio = math.max(0, math.min(1, enemy.hp / enemy.maxHp))
+                local bw = enemy.kind == 3 and 44 or (enemy.kind == 2 and 32 or 24)
+                local bh = 3.5
+                local bx = enemy.x - bw * 0.5
+                local by = enemy.y - (enemy.radius or 20) - 10
+                g.setColor(0.03, 0.04, 0.08, 0.82)
+                g.rectangle("fill", bx - 1, by - 1, bw + 2, bh + 2, 1.5, 1.5)
+                local fillG = enemy.kind == 3 and (0.45 + 0.35 * ratio) or (0.24 + 0.36 * ratio)
+                local fillB = enemy.kind == 3 and 0.20 or 0.28
+                g.setColor(1.0, fillG, fillB, 0.95)
+                g.rectangle("fill", bx, by, math.max(2, bw * ratio), bh, 1, 1)
+                g.setColor(1, 1, 1, 0.25)
+                g.setLineWidth(0.7)
+                g.rectangle("line", bx - 1, by - 1, bw + 2, bh + 2, 1.5, 1.5)
+            end
         end
     end
     g.pop()

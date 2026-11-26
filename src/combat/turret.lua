@@ -54,7 +54,8 @@ local function nearestEnemy(enemies, x, y, excludeX, excludeY, camera, width, he
     if not enemies or not enemies.items then return nil end
     local best, bestDistSq = nil, math.huge
     for _, enemy in ipairs(enemies.items) do
-        if enemy ~= excludeEnemy and (not enemies.isOnScreen or enemies:isOnScreen(enemy.x, enemy.y, camera, width, height)) then
+        local intangible = enemy.phase == "warping" or enemy.phase == "edge_warning"
+        if enemy ~= excludeEnemy and not intangible and (not enemies.isOnScreen or enemies:isOnScreen(enemy.x, enemy.y, camera, width, height)) then
             local dx, dy = enemy.x - x, enemy.y - y
             local dSq = dx * dx + dy * dy
             if dSq > 16 then

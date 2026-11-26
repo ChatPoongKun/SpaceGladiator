@@ -42,6 +42,8 @@ end
 function Stage:configureEnemies(enemies)
     if not enemies then return end
     enemies.squadsRemaining = self.totalSquads
+    enemies.stageNumber = self.number or 1
+    enemies.waveIndex = 0
     enemies.stageEnemiesDestroyed = 0
     enemies.stageEnemiesDeparted = 0
 end
