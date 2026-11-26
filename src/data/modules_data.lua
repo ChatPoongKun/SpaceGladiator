@@ -91,7 +91,7 @@ ModulesData.list = {
         impactStyle = "beam_impact",
         fireSfx = "laser",
         impactSfx = "impact_laser",
-        damage = 2,
+        damage = 8,
         shotCount = 1,
         fireInterval = 2.0,
         beamDuration = 1.0,
@@ -104,7 +104,7 @@ ModulesData.list = {
         shape = { { 0, 0 }, { 1, 0 }, { 2, 0 } },
         maxSockets = 3,
         weight = 35,
-        baseBatteryCost = 3,
+        baseBatteryCost = 20,
         description = "2초 간격으로 1초간 터렛 방향 지속 광선을 발사해 0.1초마다 피해 2를 줍니다. 일렬 3소켓 구조로 굴절·연발 조합에 특화됩니다.",
     },
     {
