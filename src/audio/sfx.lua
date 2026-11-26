@@ -122,10 +122,13 @@ function Sfx.playWithPitchScale(name, pitchScale)
     playCue(name, pitchScale, false)
 end
 
-function Sfx.stop()
-    for _, pool in pairs(pools) do
-        for _, source in ipairs(pool.list) do
-            source:stop()
+function Sfx.stop(opts)
+    local except = opts and opts.except or nil
+    for name, pool in pairs(pools) do
+        if not (except and except[name]) then
+            for _, source in ipairs(pool.list) do
+                source:stop()
+            end
         end
     end
 end

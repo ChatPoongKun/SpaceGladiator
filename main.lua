@@ -76,7 +76,13 @@ local function setScreen(nextScreen)
     input.boost, firing = false, false
     local preserveSfx = (screen == "gameOver" or screen == "stageClear"
         or screen == "warpSelect" or screen == "warping" or screen == "playing")
-    if not preserveSfx then Sfx.stop() end
+    if not preserveSfx then
+        if prevScreen == "gameOver" and screen == "results" then
+            Sfx.stop({ except = { ship_destroy = true } })
+        else
+            Sfx.stop()
+        end
+    end
     if screen == "playing" and replay then
         Sfx.setListener(function(cue)
             if screen == "playing" and replay then replay:recordSfxEvent(cue) end
