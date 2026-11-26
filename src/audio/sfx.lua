@@ -3,6 +3,7 @@ Sfx.SUSTAINED_FADE_OUT = 0.08
 local pools = {}
 local lastPlayed = {}
 local sustainedStates = {}
+local queuedStates = {}
 local nextSustainedId = 0
 local listener = nil
 local muted = false
@@ -63,6 +64,7 @@ function Sfx.load()
     pools = {}
     lastPlayed = {}
     sustainedStates = {}
+    queuedStates = {}
     nextSustainedId = 0
     local loaded = {}
     for name, cue in pairs(cues) do
@@ -135,6 +137,34 @@ local function stopSourceImmediately(source)
     if source.setLooping then source:setLooping(false) end
 end
 
+local function isSourcePlaying(source)
+    return source ~= nil and source.isPlaying ~= nil and source:isPlaying() == true
+end
+
+local function acquireOneShotSource(name, pool)
+    local list = pool.list
+    local activeState = sustainedStates[name]
+    local activeSrc = activeState and activeState.source or nil
+    local source = list[pool.cursor]
+    pool.cursor = (pool.cursor % #list) + 1
+    if activeSrc and source == activeSrc and #list > 1 then
+        source = list[pool.cursor]
+        pool.cursor = (pool.cursor % #list) + 1
+    end
+    if activeSrc and source == activeSrc then
+        sustainedStates[name] = nil
+    end
+    return source
+end
+
+local function playOneShotSource(source, cue, pitch)
+    if source.setLooping then source:setLooping(false) end
+    source:setVolume(cue[2] or 0.6)
+    source:setPitch(pitch)
+    source:stop()
+    source:play()
+end
+
 local function playCue(name, pitchScale, notify, opts)
     if muted then return end
     local pool = pools[name]
@@ -157,28 +187,91 @@ local function playCue(name, pitchScale, notify, opts)
     end
     if not pool then return end
 
-    local list = pool.list
-    local activeState = sustainedStates[name]
-    local activeSrc = activeState and activeState.source or nil
-    local source = list[pool.cursor]
-    pool.cursor = (pool.cursor % #list) + 1
-    if activeSrc and source == activeSrc and #list > 1 then
-        source = list[pool.cursor]
-        pool.cursor = (pool.cursor % #list) + 1
-    end
-    if activeSrc and source == activeSrc then
-        sustainedStates[name] = nil
-    end
+    local source = acquireOneShotSource(name, pool)
+    playOneShotSource(source, cue, pitch)
+end
 
-    if source.setLooping then source:setLooping(false) end
-    source:setVolume(cue[2] or 0.6)
-    source:setPitch(pitch)
-    source:stop()
-    source:play()
+local function startQueuedEntry(name, pool, cue, state, entry)
+    local effectiveScale, pitch = computePitch(cue, entry.pitchScale, entry.opts)
+    if entry.notify and listener then
+        listener(name, effectiveScale, pitch)
+    end
+    local source = acquireOneShotSource(name, pool)
+    playOneShotSource(source, cue, pitch)
+    lastPlayed[name] = now()
+    state.activeSource = source
+end
+
+local function advanceQueuedCue(name, state)
+    if isSourcePlaying(state.activeSource) then return end
+    state.activeSource = nil
+    if muted then
+        queuedStates[name] = nil
+        return
+    end
+    local pool = pools[name]
+    local cue = (pool and pool.cue) or cues[name]
+    if pool and cue and #state.queue > 0 then
+        local entry = table.remove(state.queue, 1)
+        startQueuedEntry(name, pool, cue, state, entry)
+    else
+        queuedStates[name] = nil
+    end
 end
 
 function Sfx.play(name, pitchScale)
     playCue(name, pitchScale, true)
+end
+
+function Sfx.playQueued(name, pitchScale)
+    if muted then return end
+    local pool = pools[name]
+    local cue = (pool and pool.cue) or cues[name]
+    if not cue then return end
+
+    if not pool then
+        local effectiveScale, pitch = computePitch(cue, pitchScale)
+        if listener then
+            listener(name, effectiveScale, pitch)
+        end
+        return
+    end
+
+    local state = queuedStates[name]
+    if not state then
+        state = { activeSource = nil, queue = {} }
+        queuedStates[name] = state
+    end
+    state.queue[#state.queue + 1] = {
+        pitchScale = pitchScale,
+        notify = true,
+    }
+    advanceQueuedCue(name, state)
+end
+
+function Sfx.stopCue(name)
+    if not name then return end
+    lastPlayed[name] = nil
+    local pool = pools[name]
+    if pool then
+        for _, source in ipairs(pool.list) do
+            source:stop()
+            if source.setLooping then source:setLooping(false) end
+        end
+    end
+    local sustained = sustainedStates[name]
+    if sustained then
+        stopSourceImmediately(sustained.source)
+        sustainedStates[name] = nil
+    end
+    local queued = queuedStates[name]
+    if queued then
+        if queued.activeSource then
+            queued.activeSource:stop()
+            if queued.activeSource.setLooping then queued.activeSource:setLooping(false) end
+        end
+        queuedStates[name] = nil
+    end
 end
 
 function Sfx.playWithPitchScale(name, pitchScale)
@@ -349,6 +442,9 @@ function Sfx.update(dt)
             end
         end
     end
+    for name, state in pairs(queuedStates) do
+        advanceQueuedCue(name, state)
+    end
 end
 
 function Sfx.stop(opts)
@@ -368,9 +464,19 @@ function Sfx.stop(opts)
             sustainedStates[name] = nil
         end
     end
+    for name, state in pairs(queuedStates) do
+        if not (except and except[name]) then
+            if state.activeSource then
+                state.activeSource:stop()
+                if state.activeSource.setLooping then state.activeSource:setLooping(false) end
+            end
+            queuedStates[name] = nil
+        end
+    end
     if not except then
         lastPlayed = {}
         sustainedStates = {}
+        queuedStates = {}
     end
 end
 

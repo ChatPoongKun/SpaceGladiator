@@ -236,8 +236,8 @@ function Ship:takeDamage(amount, knockX, knockY, knockMult)
         hitLayer = "hull"
         self.hull = math.max(0, self.hull - 1)
         self.hullDamageCount = (self.hullDamageCount or 0) + 1
-        Sfx.play("player_hit_hull")
         if self:isDestroyed() then
+            if Sfx.stopCue then Sfx.stopCue("player_hit_hull") end
             Sfx.play("ship_destroy")
             self.destructionAge = 0
             self.invulnTimer = 0
@@ -248,6 +248,11 @@ function Ship:takeDamage(amount, knockX, knockY, knockMult)
             self.boostRemaining, self.boostLevel = 0, 0
             self.lastHitLayer = hitLayer
             return hitLayer
+        end
+        if Sfx.playQueued then
+            Sfx.playQueued("player_hit_hull")
+        else
+            Sfx.play("player_hit_hull")
         end
     else
         Sfx.play("player_hit_armor")
