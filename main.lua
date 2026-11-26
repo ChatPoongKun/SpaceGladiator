@@ -3,6 +3,7 @@ local Arena = require("src.core.arena")
 local Display = require("src.core.display")
 local Starfield = require("src.visual.starfield")
 local StageBackground = require("src.visual.stage_background")
+local BattleScene = require("src.visual.battle_scene")
 local Camera = require("src.core.camera")
 local Turret = require("src.combat.turret")
 local Enemies = require("src.combat.enemies")
@@ -84,8 +85,8 @@ local function setScreen(nextScreen)
         end
     end
     if screen == "playing" and replay then
-        Sfx.setListener(function(cue)
-            if screen == "playing" and replay then replay:recordSfxEvent(cue) end
+        Sfx.setListener(function(cue, pitchScale, pitch)
+            if screen == "playing" and replay then replay:recordSfxEvent(cue, pitchScale, pitch) end
         end)
     else
         Sfx.setListener(nil)
@@ -433,8 +434,9 @@ end
 
 local function openReplay()
     local _, _, vpW, vpH = Display.viewportRect()
-    if replay and replay:openPlayback(vpW, vpH) then
+    if replay and replay:hasHighlight() then
         setScreen("replay")
+        replay:openPlayback(vpW, vpH, { focused = focused or testMode })
     end
 end
 
@@ -454,6 +456,7 @@ local function startReplayExport()
     replay.exportStatus = "MP4 인코딩 중..."
     replay.playing = false
     Sfx.stop()
+    Bgm.stop()
 end
 
 local function showResults(reason)
@@ -1014,15 +1017,11 @@ function love.update(dt)
             return
         end
         camera:update(dt, ship, width, height)
-        local surge = 1050 * ship.boostLevel
-        local vx, vy = ship:worldVelocity()
-        if stageBackground then
-            local bgBoost = 120 * ship.boostLevel
-            stageBackground:update(dt, (vx + ship.boostX * bgBoost) * bgScale, (vy + ship.boostY * bgBoost) * bgScale, bgW, bgH)
-        end
-        stars:update(dt, (120 + vx * 2.8 + ship.boostX * surge) * bgScale,
-            (-290 + vy * 2.8 + ship.boostY * surge) * bgScale,
-            ship.accelerating and 1 or 0, bgW, bgH, ship.boostLevel)
+        BattleScene.updateEnvironment(dt, {
+            ship = ship,
+            stageBackground = stageBackground,
+            stars = stars,
+        }, bgW, bgH, { scale = bgScale })
         local worldX, worldY = camera:screenToWorld(mouseX, mouseY, width, height)
         local activeWeapons = currentBuild and currentBuild.weaponModules or {}
         turret:update(dt, ship, worldX, worldY, firing, enemies, camera, width, height, activeWeapons)
@@ -1042,15 +1041,11 @@ function love.update(dt)
     ship:update(dt, input)
     input.boost = false
     camera:update(dt, ship, width, height)
-    local surge = 1050 * ship.boostLevel
-    local vx, vy = ship:worldVelocity()
-    if stageBackground then
-        local bgBoost = 120 * ship.boostLevel
-        stageBackground:update(dt, (vx + ship.boostX * bgBoost) * bgScale, (vy + ship.boostY * bgBoost) * bgScale, bgW, bgH)
-    end
-    stars:update(dt, (120 + vx * 2.8 + ship.boostX * surge) * bgScale,
-        (-290 + vy * 2.8 + ship.boostY * surge) * bgScale,
-        ship.accelerating and 1 or 0, bgW, bgH, ship.boostLevel)
+    BattleScene.updateEnvironment(dt, {
+        ship = ship,
+        stageBackground = stageBackground,
+        stars = stars,
+    }, bgW, bgH, { scale = bgScale })
     enemies:update(dt, ship, turret.angle, camera, width, height)
     processPlayerDamageFeedback()
     if ship:isDestroyed() then
@@ -1067,7 +1062,14 @@ function love.update(dt)
     gladiator:update(dt, ship)
     updateHudProximity(dt)
     if replay then
-        replay:recordFrame(dt, ship, camera, turret, enemies, gladiator, stage)
+        replay:recordFrame(dt, ship, camera, turret, enemies, gladiator, stage, {
+            stageBackground = stageBackground,
+            lowArmorAura = lowArmorAura,
+            hullFlashTimer = hullFlashTimer,
+            hullFlashDuration = hullFlashDuration,
+            bgmLevel = Bgm.getCurrentLevel(),
+            bgmPosition = Bgm.getPosition(),
+        })
     end
 
     -- Sync 1:1 Gladiator Coins and check stage completion (timer or all squads cleared)
@@ -1211,87 +1213,22 @@ local function drawHud()
     hud:draw(ship, width, height, time)
 end
 
-local function drawPlayer()
-    local g = love.graphics
-    g.push("all")
-    if ship:isDestroyed() then
-        ship:drawDestruction()
-    else
-        ship:drawBoostPulse()
-        turret:drawMount(ship, time, width)
-        ship:draw(time)
-    end
-    g.pop()
-end
-
 local function drawFlight()
-    love.graphics.push()
-    local originX, originY = camera:worldToScreen(0, 0, width, height)
-    love.graphics.translate(originX, originY)
-    love.graphics.scale(camera.zoom)
-    Arena.draw(ship.boostLevel, gladiator.feverAura)
-    enemies:draw(time)
-    gladiator:drawFeverWorld(ship, time)
-    drawPlayer()
-    turret:drawEffects(camera, width, height)
-    love.graphics.pop()
+    local sceneState = {
+        ship = ship,
+        camera = camera,
+        turret = turret,
+        enemies = enemies,
+        gladiator = gladiator,
+        lowArmorAura = lowArmorAura,
+        hullFlashTimer = hullFlashTimer,
+        hullFlashDuration = hullFlashDuration,
+    }
+    BattleScene.drawWorld(sceneState, width, height, time)
     if screen == "warpSelect" and warpGates then
         StageTransition.drawWarpGates(warpGates, ship, time, fonts, width, height)
     end
-    gladiator:drawFeverOverlay(width, height, time)
-    if lowArmorAura > 0 then
-        local g = love.graphics
-        local pulse = math.min(1.1, 0.55 + 0.45 * math.sin(time * 4.2) + 0.12 * math.max(0, math.sin(time * 8.4)))
-        g.push("all")
-        g.setColor(0.88, 0.05, 0.07, 0.11 * lowArmorAura * pulse)
-        g.rectangle("fill", 0, 0, width, height)
-        local bands = { 14, 30, 50, 74, 102 }
-        for idx, thickness in ipairs(bands) do
-            local alpha = (0.20 / idx) * lowArmorAura * pulse
-            g.setColor(0.95, 0.06, 0.08, alpha)
-            g.rectangle("fill", 0, 0, width, thickness)
-            g.rectangle("fill", 0, height - thickness, width, thickness)
-            g.rectangle("fill", 0, thickness, thickness, height - thickness * 2)
-            g.rectangle("fill", width - thickness, thickness, thickness, height - thickness * 2)
-        end
-        g.setLineWidth(2.0)
-        g.setColor(1.0, 0.18, 0.20, 0.52 * lowArmorAura * pulse)
-        g.rectangle("line", 4, 4, width - 8, height - 8)
-        local span = 28 + math.sin(time * 4.2) * 4
-        g.setLineWidth(2.5)
-        g.setColor(1.0, 0.22, 0.24, 0.72 * lowArmorAura * pulse)
-        for _, cx in ipairs({ 12, width - 12 }) do
-            local sx = cx == 12 and 1 or -1
-            for _, cy in ipairs({ 12, height - 12 }) do
-                local sy = cy == 12 and 1 or -1
-                g.line(cx + sx * span, cy, cx, cy, cx, cy + sy * span)
-            end
-        end
-        g.pop()
-    end
-    if hullFlashTimer > 0 and hullFlashDuration > 0 then
-        local g = love.graphics
-        local p = math.max(0, math.min(1, hullFlashTimer / hullFlashDuration))
-        g.push("all")
-        if p > 0.70 then
-            local peak = (p - 0.70) / 0.30
-            g.setColor(1.0, 0.94, 0.86, 0.56 * peak)
-            g.rectangle("fill", 0, 0, width, height)
-        end
-        g.setColor(0.95, 0.14, 0.10, 0.34 * p * p)
-        g.rectangle("fill", 0, 0, width, height)
-        for band = 1, 3 do
-            local thickness = band * 14
-            local alpha = (0.30 / band) * p
-            g.setColor(1.0, 0.20, 0.14, alpha)
-            g.rectangle("fill", 0, 0, width, thickness)
-            g.rectangle("fill", 0, height - thickness, width, thickness)
-            g.rectangle("fill", 0, thickness, thickness, height - thickness * 2)
-            g.rectangle("fill", width - thickness, thickness, thickness, height - thickness * 2)
-        end
-        g.pop()
-    end
-    gladiator:drawPopups(camera, width, height, fonts.small)
+    BattleScene.drawScreenEffects(sceneState, width, height, time, fonts)
     drawHud()
     if screen == "warpSelect" then
         local g = love.graphics
@@ -1377,26 +1314,23 @@ function love.draw()
         love.graphics.setScissor()
         return
     end
-    if stageBackground then
-        local tpx, tpy = 0, 0
-        if stageBackground.titleActive and titleScreen then
-            tpx, tpy = titleScreen:getBackgroundParallax()
-            local s = Display.scale or 1
-            tpx, tpy = tpx * s, tpy * s
-        end
-        local planetMask = stageBackground.titleActive and stageBackground:titlePlanetMask(bgW, bgH, tpx, tpy) or nil
-        stageBackground:draw(bgW, bgH, {
-            originX = vpX,
-            originY = vpY,
-            pullback = camera and camera.pullback or 0,
-            shake = camera and camera:shakeIntensity() or 0,
-            titleParallaxX = tpx,
-            titleParallaxY = tpy,
-        })
-        stars:draw({ transparent = true, originX = vpX, originY = vpY, excludeZone = planetMask })
-    else
-        stars:draw({ originX = vpX, originY = vpY })
+    local tpx, tpy = 0, 0
+    if stageBackground and stageBackground.titleActive and titleScreen then
+        tpx, tpy = titleScreen:getBackgroundParallax()
+        local s = Display.scale or 1
+        tpx, tpy = tpx * s, tpy * s
     end
+    local planetMask = (stageBackground and stageBackground.titleActive)
+        and stageBackground:titlePlanetMask(bgW, bgH, tpx, tpy) or nil
+    BattleScene.drawBackground({
+        stageBackground = stageBackground,
+        stars = stars,
+        camera = camera,
+    }, { x = vpX, y = vpY, w = bgW, h = bgH }, {
+        titleParallaxX = tpx,
+        titleParallaxY = tpy,
+        excludeZone = planetMask,
+    })
     love.graphics.push("all")
     Display.applyTransform()
     if ship then drawFlight() end
@@ -1725,6 +1659,10 @@ function love.focus(hasFocus)
     if not focused then
         input.boost, firing = false, false
         Sfx.stop()
+    end
+    if screen == "replay" and replay then
+        replay:setFocused(focused or testMode)
+        return
     end
     Bgm.syncScreen(screen, stage and stage.level or nil, { focused = focused or testMode })
 end

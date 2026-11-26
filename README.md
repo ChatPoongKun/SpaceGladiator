@@ -116,6 +116,7 @@ Space Gladiator/
 ### `src/visual/` — 배경 & 공간 연출
 | 파일 | Require 경로 | 역할 |
 | --- | --- | --- |
+| `src/visual/battle_scene.lua` | `src.visual.battle_scene` | 인게임·리플레이 공용 전투 씬/배경/오버레이 렌더러 및 확장 레이어 레지스트리 |
 | `src/visual/stage_background.lua` | `src.visual.stage_background` | 레벨 1~3 배경 이미지 + 성운 모션 셰이더, 속도 기반 패럴랙스, 워프 줌/흔들림 |
 | `src/visual/starfield.lua` | `src.visual.starfield` | 다층 별빛 패럴랙스 및 부스트/워프 시 별빛 스트리밍 연출 |
 
@@ -128,8 +129,8 @@ Space Gladiator/
 ### `src/replay/` — 하이라이트 리플레이
 | 파일 | Require 경로 | 역할 |
 | --- | --- | --- |
-| `src/replay/replay.lua` | `src.replay.replay` | FFI 구조체 기반 프레임 스냅샷 기록, 하이라이트 구간 자동 추출, 인게임 재생 UI |
-| `src/replay/replay_export.lua` | `src.replay.replay_export` | 오프라인 프레임 렌더링, SFX WAV 믹싱, FFmpeg MP4 인코딩 파이프라인 |
+| `src/replay/replay.lua` | `src.replay.replay` | 확장 가능한 레이어 스냅샷 기록, 하이라이트 구간 추출, 인게임 그래픽·SFX/BGM 연동 재생 |
+| `src/replay/replay_export.lua` | `src.replay.replay_export` | `BattleScene` 기반 오프라인 프레임 렌더링, `Sfx`/`Bgm` 기반 WAV 믹싱, FFmpeg MP4 내보내기 |
 
 ---
 
