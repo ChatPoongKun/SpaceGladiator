@@ -245,7 +245,9 @@ local function buildPartSpecRows(def, penaltyPct)
         local shotCount = def.shotCount or 1
         local burstCount = def.burstCount or 1
         local dmgStr
-        if burstCount > 1 and shotCount == 1 then
+        if (def.beamDuration or 0) > 0 and (def.beamTickInterval or 0) > 0 then
+            dmgStr = string.format("%s / %ss (%ss 지속)", formatNum(damage), formatNum(def.beamTickInterval), formatNum(def.beamDuration))
+        elseif burstCount > 1 and shotCount == 1 then
             dmgStr = string.format("%s x %d연발", formatNum(damage), burstCount)
         elseif burstCount > 1 then
             dmgStr = string.format("%s x %d발 (%d연발)", formatNum(damage), shotCount, burstCount)

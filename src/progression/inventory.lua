@@ -659,6 +659,8 @@ local function newWeaponConfig(def, mod)
         fireSfx = def and def.fireSfx or nil,
         impactSfx = def and def.impactSfx or nil,
         fireInterval = def and def.fireInterval or nil,
+        beamDuration = def and def.beamDuration or nil,
+        beamTickInterval = def and def.beamTickInterval or nil,
         damage = def and def.damage or nil,
         shotCount = def and def.shotCount or nil,
         burstCount = def and def.burstCount or nil,
@@ -903,6 +905,8 @@ function Inventory:computeBuild(feverActive)
                 wCfg.fireSfx = wCfg.fireSfx or def.fireSfx
                 wCfg.impactSfx = wCfg.impactSfx or def.impactSfx
                 wCfg.fireInterval = wCfg.fireInterval or def.fireInterval
+                if wCfg.beamDuration == nil then wCfg.beamDuration = def.beamDuration end
+                if wCfg.beamTickInterval == nil then wCfg.beamTickInterval = def.beamTickInterval end
                 wCfg.damage = wCfg.damage or def.damage
                 wCfg.shotCount = wCfg.shotCount or def.shotCount
                 wCfg.burstCount = wCfg.burstCount or def.burstCount

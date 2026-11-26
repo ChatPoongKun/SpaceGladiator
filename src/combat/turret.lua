@@ -114,7 +114,7 @@ function Turret.new(initialAngle)
         angle = (initialAngle or 0) % tau,
         weapon = nil, launchSide = 1, cooldown = 0, weaponCooldowns = {},
         missiles = {}, explosions = {}, salvoEmbers = {}, emberSeq = 0,
-        beams = {}, burstQueue = {},
+        beams = {}, activeBeams = {}, burstQueue = {},
         shotsFired = 0, shotsHit = 0,
     }, Turret)
 end
@@ -200,7 +200,137 @@ end
 
 Turret.fireModes = {}
 
+local function removeChannelBeams(turret, channel)
+    if not turret.beams then return end
+    for bi = #turret.beams, 1, -1 do
+        local b = turret.beams[bi]
+        if b.channel == channel then
+            if turret.beam == b then turret.beam = nil end
+            table.remove(turret.beams, bi)
+        end
+    end
+end
+
+local function evaluateBeamChannel(turret, channel, ship, enemies, frameFraction, camera, width, height, dealDamage)
+    turret.beams = turret.beams or {}
+    removeChannelBeams(turret, channel)
+    local baseAngle = channel.fixedAngle or turret.angle
+    local offsets = buildOffsets(channel.baseShotCount, channel.extraCount, channel.baseSpreadRad, channel.extraSpreadRad)
+    local primaryBeam = nil
+    local anyHit = false
+    local impactSpec = Turret.impactSpecs[channel.impactStyle] or Turret.impactSpecs.beam_impact
+    local rem = channel.duration - channel.elapsed
+    local beamAge = 0.008 + 0.010 * (0.5 + 0.5 * math.sin(channel.elapsed * 48))
+    if rem <= 0.08 then
+        beamAge = math.min(beamLifetime * 0.95, math.max(beamAge, (1 - math.max(0, rem) / 0.08) * beamLifetime))
+    end
+    for _, offset in ipairs(offsets) do
+        local a = (baseAngle + offset + sampleAngleJitter(turret, channel.angleInaccuracy)) % tau
+        local bdx, bdy = math.sin(a), -math.cos(a)
+        local bx, by = ship.x + bdx * muzzleLength, ship.y + bdy * muzzleLength
+        local hitX, hitY, hitEnemy
+        if enemies then
+            local entry, exit = camera:clipRay(bx, by, bdx, bdy, width, height)
+            if exit then
+                local t = frameFraction or 1
+                local sx, sy = bx + bdx * entry, by + bdy * entry
+                local ex, ey = bx + bdx * exit, by + bdy * exit
+                if dealDamage then
+                    hitX, hitY, _, hitEnemy = enemies:hitSegment(sx, sy, ex, ey, t, t, camera, width, height, channel.damage)
+                elseif enemies.findSegmentHit then
+                    hitX, hitY, _, _, hitEnemy = enemies:findSegmentHit(sx, sy, ex, ey, t, t, camera, width, height)
+                end
+            end
+        end
+        if hitX then
+            if dealDamage then
+                anyHit = true
+                turret.explosions[#turret.explosions + 1] = {
+                    x = hitX, y = hitY,
+                    radius = (impactSpec.radius or 28) * channel.areaMult,
+                    age = 0,
+                    lifetime = impactSpec.lifetime or beamImpactLifetime,
+                    colors = impactSpec.colors or beamImpactColors,
+                    style = channel.impactStyle,
+                    isSalvo = impactSpec.isSalvo == true,
+                    sparkAngle = impactSpec.isSalvo and (math.random() * tau) or nil,
+                }
+            end
+            if channel.bounces > 0 and enemies then
+                local nxt = nearestEnemy(enemies, hitX, hitY, hitX, hitY, camera, width, height, hitEnemy)
+                if nxt then
+                    local rdx, rdy = nxt.x - hitX, nxt.y - hitY
+                    local rlen = math.sqrt(rdx * rdx + rdy * rdy)
+                    if rlen > 0 then
+                        local rhx, rhy
+                        if dealDamage then
+                            rhx, rhy = enemies:hitSegment(hitX, hitY, nxt.x, nxt.y,
+                                frameFraction or 1, frameFraction or 1, camera, width, height, channel.damage, hitEnemy)
+                        elseif enemies.findSegmentHit then
+                            rhx, rhy = enemies:findSegmentHit(hitX, hitY, nxt.x, nxt.y,
+                                frameFraction or 1, frameFraction or 1, camera, width, height, hitEnemy)
+                        end
+                        if rhx then
+                            turret.beams[#turret.beams + 1] = {
+                                x = hitX, y = hitY, dx = rdx / rlen, dy = rdy / rlen,
+                                hitX = rhx, hitY = rhy, age = beamAge,
+                                style = channel.projectileStyle, sustained = true, channel = channel,
+                            }
+                        end
+                    end
+                end
+            end
+        end
+        local bObj = {
+            x = bx, y = by, dx = bdx, dy = bdy, hitX = hitX, hitY = hitY, age = beamAge,
+            style = channel.projectileStyle, sustained = true, channel = channel,
+        }
+        turret.beams[#turret.beams + 1] = bObj
+        if not primaryBeam then primaryBeam = bObj end
+    end
+    if primaryBeam then
+        turret.beam = primaryBeam
+    end
+    if dealDamage and anyHit then
+        if not channel.shot.hit then
+            channel.shot.hit = true
+            turret.shotsHit = turret.shotsHit + 1
+        end
+        if channel.impactSfx ~= "" then Sfx.play(channel.impactSfx) end
+    end
+    return primaryBeam
+end
+
 function Turret.fireModes.beam(turret, ship, targetX, targetY, enemies, frameFraction, camera, width, height, cfg, opts, spec)
+    if (spec.beamDuration or 0) > 0 then
+        local tickInterval = math.max(0.01, spec.beamTickInterval or 0.1)
+        local maxTicks = math.max(1, math.floor(spec.beamDuration / tickInterval + 1e-6))
+        local channel = {
+            elapsed = 0,
+            duration = spec.beamDuration,
+            tickInterval = tickInterval,
+            tickTimer = tickInterval,
+            ticksFired = 1,
+            maxTicks = maxTicks,
+            fixedAngle = opts and opts.angle or nil,
+            shot = { hit = false },
+            baseShotCount = spec.baseShotCount,
+            extraCount = spec.extraCount,
+            baseSpreadRad = spec.baseSpreadRad,
+            extraSpreadRad = spec.extraSpreadRad,
+            angleInaccuracy = spec.angleInaccuracy,
+            damage = spec.damage,
+            areaMult = spec.areaMult,
+            bounces = spec.bounces,
+            projectileStyle = spec.projectileStyle,
+            impactStyle = spec.impactStyle,
+            impactSfx = spec.impactSfx,
+        }
+        turret.activeBeams = turret.activeBeams or {}
+        turret.activeBeams[#turret.activeBeams + 1] = channel
+        if spec.fireSfx ~= "" then Sfx.play(spec.fireSfx) end
+        return evaluateBeamChannel(turret, channel, ship, enemies, frameFraction, camera, width, height, true)
+    end
     local offsets = buildOffsets(spec.baseShotCount, spec.extraCount, spec.baseSpreadRad, spec.extraSpreadRad)
     turret.beams = turret.beams or {}
     local primaryBeam = nil
@@ -455,6 +585,12 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
     local targetScatterRadius = (cfg and cfg.targetScatterRadius ~= nil) and cfg.targetScatterRadius
         or (def and def.targetScatterRadius)
         or 0
+    local beamDuration = (cfg and cfg.beamDuration ~= nil) and cfg.beamDuration
+        or (def and def.beamDuration)
+        or 0
+    local beamTickInterval = (cfg and cfg.beamTickInterval ~= nil) and cfg.beamTickInterval
+        or (def and def.beamTickInterval)
+        or 0.1
     local dx, dy = math.sin(baseAngle), -math.cos(baseAngle)
     local spec = {
         weapon = weapon,
@@ -476,6 +612,8 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
         baseSpreadRad = baseSpreadRad,
         angleInaccuracy = angleInaccuracy,
         targetScatterRadius = targetScatterRadius,
+        beamDuration = beamDuration,
+        beamTickInterval = beamTickInterval,
         burstIndex = opts.burstIndex or 1,
     }
     local handler = Turret.fireModes[fireMode] or Turret.fireModes.projectile
@@ -553,7 +691,15 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
 
     local activeWeapons = resolveActiveWeapons(self, weaponInput)
     self.weaponCooldowns = self.weaponCooldowns or {}
+    self.activeBeams = self.activeBeams or {}
     local eps = 1e-9
+
+    if ship and ship.isDestroyed and ship:isDestroyed() and #self.activeBeams > 0 then
+        for ci = #self.activeBeams, 1, -1 do
+            removeChannelBeams(self, self.activeBeams[ci])
+            table.remove(self.activeBeams, ci)
+        end
+    end
 
     -- Split at per-weapon shot times so held fire keeps each weapon's independent cadence at any frame rate.
     local remaining = dt
@@ -579,14 +725,53 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                 end
             end
         end
-        if self.beam then
+        if #self.activeBeams > 0 then
+            for _, ch in ipairs(self.activeBeams) do
+                local remDur = ch.duration - ch.elapsed
+                if remDur <= eps then
+                    step = 0
+                elseif remDur < step then
+                    step = remDur
+                end
+                if ch.ticksFired < ch.maxTicks then
+                    if ch.tickTimer <= eps then
+                        step = 0
+                    elseif ch.tickTimer < step then
+                        step = ch.tickTimer
+                    end
+                end
+            end
+        end
+        if self.beam and not self.beam.sustained then
             self.beam.age = self.beam.age + step
             if self.beam.age >= beamLifetime then self.beam = nil end
         end
         if self.beams then
             for bi = #self.beams, 1, -1 do
-                self.beams[bi].age = self.beams[bi].age + step
-                if self.beams[bi].age >= beamLifetime then table.remove(self.beams, bi) end
+                local b = self.beams[bi]
+                if not b.sustained then
+                    b.age = b.age + step
+                    if b.age >= beamLifetime then table.remove(self.beams, bi) end
+                end
+            end
+        end
+        if #self.activeBeams > 0 then
+            local beamFrac = dt > 0 and (dt - remaining + step) / dt or 0
+            for ci = #self.activeBeams, 1, -1 do
+                local ch = self.activeBeams[ci]
+                ch.elapsed = ch.elapsed + step
+                ch.tickTimer = ch.tickTimer - step
+                if ch.elapsed >= ch.duration - eps then
+                    removeChannelBeams(self, ch)
+                    table.remove(self.activeBeams, ci)
+                else
+                    local doTick = (ch.ticksFired < ch.maxTicks) and (ch.tickTimer <= eps)
+                    if doTick then
+                        ch.ticksFired = ch.ticksFired + 1
+                        ch.tickTimer = ch.tickTimer + ch.tickInterval
+                    end
+                    evaluateBeamChannel(self, ch, ship, enemies, beamFrac, camera, width, height, doTick)
+                end
             end
         end
         if self.burstQueue then
@@ -766,6 +951,7 @@ function Turret:clearEffects()
     self.missiles = {}
     self.explosions = {}
     self.beams = {}
+    self.activeBeams = {}
     self.beam = nil
     self.burstQueue = {}
     self.weaponCooldowns = {}
@@ -774,6 +960,13 @@ end
 
 function Turret:beginStageClear()
     self.burstQueue = {}
+    self.activeBeams = {}
+    if self.beams then
+        for _, b in ipairs(self.beams) do
+            b.sustained = nil
+            b.channel = nil
+        end
+    end
     for _, missile in ipairs(self.missiles) do
         if not missile.fading then
             local fadeSpan = missile.targetScreenX and 0.65 or 0.55
@@ -787,6 +980,13 @@ end
 function Turret:updateEffects(dt, camera, width, height)
     dt = math.max(0, dt or 0)
     if dt <= 0 then return end
+    self.activeBeams = {}
+    if self.beams then
+        for _, b in ipairs(self.beams) do
+            b.sustained = nil
+            b.channel = nil
+        end
+    end
     self.cooldown = math.max(0, self.cooldown - dt)
     if self.weaponCooldowns then
         for key, cd in pairs(self.weaponCooldowns) do
