@@ -691,4 +691,112 @@ function Ship:drawDestruction()
     end
 end
 
+local function lerpNumber(a, b, t)
+    return a + (b - a) * t
+end
+
+local function lerpAngle(a, b, t)
+    local tau = 2 * math.pi
+    local diff = (b - a + math.pi) % tau - math.pi
+    return (a + diff * t) % tau
+end
+
+local function lerpWrapped(a, b, extent, t)
+    local diff = b - a
+    if math.abs(diff) > extent * 0.5 then
+        if diff > 0 then
+            diff = diff - extent
+        else
+            diff = diff + extent
+        end
+    end
+    return (a + diff * t) % extent
+end
+
+function Ship:captureReplayState()
+    return {
+        x = self.x or 0,
+        y = self.y or 0,
+        vx = self.vx or 0,
+        vy = self.vy or 0,
+        wrapVx = self.wrapVx or 0,
+        wrapVy = self.wrapVy or 0,
+        knockVx = self.knockVx or 0,
+        knockVy = self.knockVy or 0,
+        angle = self.angle or 0,
+        chassisId = self.chassisId or "striker",
+        accelerating = self.accelerating == true,
+        braking = self.braking == true,
+        boostRemaining = self.boostRemaining or 0,
+        boostLevel = self.boostLevel or 0,
+        boostX = self.boostX or 0,
+        boostY = self.boostY or -1,
+        boostOriginX = self.boostOriginX or self.x or 0,
+        boostOriginY = self.boostOriginY or self.y or 0,
+        shield = self.shield or 0,
+        maxShield = self.maxShield or 0,
+        armor = self.armor or 0,
+        maxArmor = self.maxArmor or 0,
+        hull = self.hull or 0,
+        maxHull = self.maxHull or 3,
+        battery = self.battery or 0,
+        maxBattery = self.maxBattery or 0,
+        destructionAge = self.destructionAge or 0,
+        invulnTimer = self.invulnTimer or 0,
+        invulnDuration = self.invulnDuration or 0,
+        radius = self.radius or Ship.radius,
+        shieldMargin = self.shieldMargin or Ship.shieldMargin,
+        maxSpeed = self.maxSpeed or Ship.maxSpeed,
+        boostHold = self.boostHold or Ship.boostHold,
+        boostFalloff = self.boostFalloff or Ship.boostFalloff,
+        destructionDuration = self.destructionDuration or Ship.destructionDuration,
+    }
+end
+
+function Ship.buildReplayProxy(s0, s1, alpha)
+    if not s0 then return nil end
+    local t = alpha or 0
+    local nextS = s1 or s0
+    local invuln = (s0.invulnTimer or 0) > 0
+        and lerpNumber(s0.invulnTimer, nextS.invulnTimer or 0, t)
+        or 0
+    return setmetatable({
+        x = lerpWrapped(s0.x or 0, nextS.x or s0.x or 0, Arena.width, t),
+        y = lerpWrapped(s0.y or 0, nextS.y or s0.y or 0, Arena.height, t),
+        vx = lerpNumber(s0.vx or 0, nextS.vx or s0.vx or 0, t),
+        vy = lerpNumber(s0.vy or 0, nextS.vy or s0.vy or 0, t),
+        wrapVx = lerpNumber(s0.wrapVx or 0, nextS.wrapVx or s0.wrapVx or 0, t),
+        wrapVy = lerpNumber(s0.wrapVy or 0, nextS.wrapVy or s0.wrapVy or 0, t),
+        knockVx = lerpNumber(s0.knockVx or 0, nextS.knockVx or s0.knockVx or 0, t),
+        knockVy = lerpNumber(s0.knockVy or 0, nextS.knockVy or s0.knockVy or 0, t),
+        angle = lerpAngle(s0.angle or 0, nextS.angle or s0.angle or 0, t),
+        chassisId = s0.chassisId or "striker",
+        accelerating = s0.accelerating,
+        braking = s0.braking,
+        boostRemaining = lerpNumber(s0.boostRemaining or 0, nextS.boostRemaining or s0.boostRemaining or 0, t),
+        boostLevel = lerpNumber(s0.boostLevel or 0, nextS.boostLevel or s0.boostLevel or 0, t),
+        boostX = s0.boostX or 0,
+        boostY = s0.boostY or -1,
+        boostOriginX = s0.boostOriginX or s0.x or 0,
+        boostOriginY = s0.boostOriginY or s0.y or 0,
+        shield = lerpNumber(s0.shield or 0, nextS.shield or s0.shield or 0, t),
+        maxShield = s0.maxShield or 0,
+        armor = lerpNumber(s0.armor or 0, nextS.armor or s0.armor or 0, t),
+        maxArmor = s0.maxArmor or 0,
+        hull = s0.hull or 0,
+        maxHull = s0.maxHull or 3,
+        battery = lerpNumber(s0.battery or 0, nextS.battery or s0.battery or 0, t),
+        maxBattery = s0.maxBattery or 0,
+        destructionAge = lerpNumber(s0.destructionAge or 0, nextS.destructionAge or s0.destructionAge or 0, t),
+        invulnTimer = invuln,
+        invulnDuration = s0.invulnDuration or Ship.hitInvulnDuration,
+        radius = s0.radius or Ship.radius,
+        shieldMargin = s0.shieldMargin or Ship.shieldMargin,
+        maxSpeed = s0.maxSpeed or Ship.maxSpeed,
+        boostHold = s0.boostHold or Ship.boostHold,
+        boostFalloff = s0.boostFalloff or Ship.boostFalloff,
+        destructionDuration = s0.destructionDuration or Ship.destructionDuration,
+    }, Ship)
+end
+
 return Ship

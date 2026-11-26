@@ -23,11 +23,43 @@ function Camera:addShake(amplitude, duration)
 end
 
 function Camera:shakeIntensity()
+    if self.replayShakeIntensity ~= nil then
+        return self.replayShakeIntensity
+    end
     if (self.shakeDuration or 0) <= 0 or (self.shakeTimer or 0) <= 0 then
         return 0
     end
     local ratio = self.shakeTimer / self.shakeDuration
     return math.min(1, ((self.shakeAmp or 0) * ratio * ratio) / 16)
+end
+
+function Camera:captureReplayState()
+    return {
+        x = self.x or Arena.width * 0.5,
+        y = self.y or Arena.height * 0.5,
+        zoom = self.zoom or 1,
+        screenOffsetY = self.screenOffsetY or 0,
+        pullback = self.pullback or 0,
+        shakeIntensity = self:shakeIntensity(),
+    }
+end
+
+function Camera.buildReplayProxy(s0, s1, alpha, width, height)
+    if not s0 then return nil end
+    local t = alpha or 0
+    local nextS = s1 or s0
+    local pullback = (s0.pullback or 0) + ((nextS.pullback or s0.pullback or 0) - (s0.pullback or 0)) * t
+    local fit = math.min((width or Arena.width) / Arena.width, (height or Arena.height) / Arena.height)
+    local shake = (s0.shakeIntensity or 0) + ((nextS.shakeIntensity or s0.shakeIntensity or 0) - (s0.shakeIntensity or 0)) * t
+    local screenOffY = (s0.screenOffsetY or 0) + ((nextS.screenOffsetY or s0.screenOffsetY or 0) - (s0.screenOffsetY or 0)) * t
+    return setmetatable({
+        x = (s0.x or Arena.width * 0.5) + ((nextS.x or s0.x or Arena.width * 0.5) - (s0.x or Arena.width * 0.5)) * t,
+        y = (s0.y or Arena.height * 0.5) + ((nextS.y or s0.y or Arena.height * 0.5) - (s0.y or Arena.height * 0.5)) * t,
+        zoom = fit * (1 - 0.12 * pullback),
+        screenOffsetY = screenOffY,
+        pullback = pullback,
+        replayShakeIntensity = shake,
+    }, Camera)
 end
 
 function Camera:updateShake(dt, freezeDecay)

@@ -102,6 +102,8 @@ Turret.baseDamage = defaultProjectile.damage or 5
 Turret.inaccuracyRefDeg = 90
 Turret.aimLineWidthRatio = 0.30
 Turret.explosionLifetime = 0.45
+Turret.beamLifetime = beamLifetime
+Turret.defaultExplosionColors = explosionColors
 
 Turret.impactSpecs = {
     scatter_ring = { lifetime = nil, emitEmbers = false, isSalvo = false },
@@ -116,6 +118,7 @@ function Turret.new(initialAngle)
         missiles = {}, explosions = {}, salvoEmbers = {}, emberSeq = 0,
         beams = {}, activeBeams = {}, burstQueue = {},
         shotsFired = 0, shotsHit = 0,
+        nextProjectileId = 0,
     }, Turret)
 end
 
@@ -430,7 +433,9 @@ function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameF
             ty = spec.y + (ty - spec.y) * scale
             dist = maxRange
         end
+        turret.nextProjectileId = (turret.nextProjectileId or 0) + 1
         local missile = {
+            id = turret.nextProjectileId,
             x = spec.x, y = spec.y, startX = spec.x, startY = spec.y,
             owner = ship, angle = a, distance = 0, age = 0, shot = shot,
             blastRadius = baseBlastRadius * spec.areaMult,
@@ -493,7 +498,9 @@ function Turret.fireModes.projectile(turret, ship, targetX, targetY, enemies, fr
         local angle = (spec.baseAngle + offset + sampleAngleJitter(turret, spec.angleInaccuracy)) % tau
         local shotVx = math.sin(angle) * projSpeed + vx
         local shotVy = -math.cos(angle) * projSpeed + vy
+        turret.nextProjectileId = (turret.nextProjectileId or 0) + 1
         turret.missiles[#turret.missiles + 1] = {
+            id = turret.nextProjectileId,
             x = spec.x, y = spec.y, startX = spec.x, startY = spec.y,
             owner = ship, angle = angle, distance = 0, age = 0, shot = shot,
             vx = shotVx, vy = shotVy, speed = math.sqrt(shotVx ^ 2 + shotVy ^ 2),
@@ -1446,6 +1453,256 @@ function Turret:drawMount(ship, time, screenWidth)
     end
 
     g.pop()
+end
+
+local function copyTrail(trail)
+    if not trail or #trail == 0 then return nil end
+    local copy = {}
+    for i = 1, #trail do
+        local pt = trail[i]
+        copy[i] = { x = pt.x, y = pt.y }
+    end
+    return copy
+end
+
+local function lerpAngleTurret(a, b, t)
+    local diff = (b - a + math.pi) % tau - math.pi
+    return (a + diff * t) % tau
+end
+
+function Turret:captureReplayState(caps)
+    local missileCap = (caps and caps.missiles) or 256
+    local beamCap = (caps and caps.beams) or 64
+    local expCap = (caps and caps.explosions) or 256
+    local emberCap = (caps and caps.embers) or 256
+
+    local missiles = {}
+    local mList = self.missiles or {}
+    local mCnt = math.min(#mList, missileCap)
+    for i = 1, mCnt do
+        local src = mList[i]
+        missiles[i] = {
+            id = src.id,
+            x = src.x or 0,
+            y = src.y or 0,
+            vx = src.vx or 0,
+            vy = src.vy or 0,
+            speed = src.speed or 1,
+            age = src.age or 0,
+            lifetime = src.lifetime or Turret.missileLifetime,
+            distance = src.distance or 0,
+            fireMode = src.fireMode,
+            style = src.style,
+            targetScreenX = src.targetScreenX and 1 or nil,
+            fading = src.fading,
+            fadeStartAge = src.fadeStartAge,
+            fadeEndAge = src.fadeEndAge,
+            trail = copyTrail(src.trail),
+        }
+    end
+
+    local bList = (self.beams and #self.beams > 0) and self.beams or (self.beam and { self.beam } or {})
+    local beams = {}
+    local bCnt = math.min(#bList, beamCap)
+    for i = 1, bCnt do
+        local src = bList[i]
+        beams[i] = {
+            x = src.x or 0,
+            y = src.y or 0,
+            dx = src.dx or 0,
+            dy = src.dy or -1,
+            hitX = src.hitX,
+            hitY = src.hitY,
+            age = src.age or 0,
+            style = src.style,
+            sustained = src.sustained and true or nil,
+        }
+    end
+
+    local exList = self.explosions or {}
+    local explosions = {}
+    local exCnt = math.min(#exList, expCap)
+    for i = 1, exCnt do
+        local src = exList[i]
+        explosions[i] = {
+            x = src.x or 0,
+            y = src.y or 0,
+            radius = src.radius or 41,
+            age = src.age or 0,
+            lifetime = src.lifetime or Turret.explosionLifetime,
+            style = src.style,
+            colors = src.colors,
+            isSalvo = src.isSalvo == true,
+            sparkAngle = src.sparkAngle,
+        }
+    end
+
+    local emList = self.salvoEmbers or {}
+    local salvoEmbers = {}
+    local emCnt = math.min(#emList, emberCap)
+    for i = 1, emCnt do
+        local src = emList[i]
+        salvoEmbers[i] = {
+            x = src.x or 0,
+            y = src.y or 0,
+            vx = src.vx or 0,
+            vy = src.vy or 0,
+            drag = src.drag or 3.2,
+            age = src.age or 0,
+            lifetime = src.lifetime or 0.35,
+            size = src.size or 1.5,
+            r = src.r or 1,
+            g = src.g or 1,
+            b = src.b or 1,
+        }
+    end
+
+    return {
+        angle = self.angle or 0,
+        weapon = self.weapon,
+        missiles = missiles,
+        beams = beams,
+        explosions = explosions,
+        salvoEmbers = salvoEmbers,
+    }
+end
+
+function Turret.buildReplayProxy(s0, s1, alpha, dt)
+    if not s0 then return nil end
+    local t = alpha or 0
+    local nextS = s1 or s0
+    local step = math.max(0, dt or 0)
+
+    local nextMissilesById = {}
+    if s1 and s1.missiles then
+        for _, m in ipairs(s1.missiles) do
+            if m.id ~= nil then
+                nextMissilesById[m.id] = m
+            end
+        end
+    end
+
+    local missiles = {}
+    for _, m0 in ipairs(s0.missiles or {}) do
+        local m1 = m0.id ~= nil and nextMissilesById[m0.id] or nil
+        if m1 then
+            local spd = (m0.speed or 1) + ((m1.speed or m0.speed or 1) - (m0.speed or 1)) * t
+            missiles[#missiles + 1] = {
+                id = m0.id,
+                x = (m0.x or 0) + ((m1.x or m0.x or 0) - (m0.x or 0)) * t,
+                y = (m0.y or 0) + ((m1.y or m0.y or 0) - (m0.y or 0)) * t,
+                vx = (m0.vx or 0) + ((m1.vx or m0.vx or 0) - (m0.vx or 0)) * t,
+                vy = (m0.vy or 0) + ((m1.vy or m0.vy or 0) - (m0.vy or 0)) * t,
+                speed = spd,
+                age = (m0.age or 0) + ((m1.age or m0.age or 0) - (m0.age or 0)) * t,
+                lifetime = m0.lifetime,
+                distance = (m0.distance or 0) + ((m1.distance or m0.distance or 0) - (m0.distance or 0)) * t,
+                fireMode = m0.fireMode,
+                style = m0.style,
+                targetScreenX = m0.targetScreenX,
+                fading = m0.fading,
+                fadeStartAge = m0.fadeStartAge,
+                fadeEndAge = m0.fadeEndAge,
+                trail = copyTrail(m0.trail),
+            }
+        else
+            local age = (m0.age or 0) + step
+            local maxLife = m0.fadeEndAge or m0.lifetime or Turret.missileLifetime
+            if age < maxLife then
+                local vx = m0.vx or 0
+                local vy = m0.vy or 0
+                local spd = m0.speed or math.sqrt(vx * vx + vy * vy)
+                missiles[#missiles + 1] = {
+                    id = m0.id,
+                    x = (m0.x or 0) + vx * step,
+                    y = (m0.y or 0) + vy * step,
+                    vx = vx,
+                    vy = vy,
+                    speed = spd,
+                    age = age,
+                    lifetime = m0.lifetime,
+                    distance = (m0.distance or 0) + spd * step,
+                    fireMode = m0.fireMode,
+                    style = m0.style,
+                    targetScreenX = m0.targetScreenX,
+                    fading = m0.fading,
+                    fadeStartAge = m0.fadeStartAge,
+                    fadeEndAge = m0.fadeEndAge,
+                    trail = copyTrail(m0.trail),
+                }
+            end
+        end
+    end
+
+    local beams = {}
+    for _, b in ipairs(s0.beams or {}) do
+        local age = (b.age or 0) + step
+        if age < Turret.beamLifetime then
+            beams[#beams + 1] = {
+                x = b.x or 0,
+                y = b.y or 0,
+                dx = b.dx or 0,
+                dy = b.dy or -1,
+                hitX = b.hitX,
+                hitY = b.hitY,
+                age = age,
+                style = b.style,
+                sustained = b.sustained,
+            }
+        end
+    end
+
+    local explosions = {}
+    for _, ex in ipairs(s0.explosions or {}) do
+        local age = (ex.age or 0) + step
+        local life = ex.lifetime or Turret.explosionLifetime
+        if age < life then
+            explosions[#explosions + 1] = {
+                x = ex.x or 0,
+                y = ex.y or 0,
+                radius = ex.radius or 41,
+                age = age,
+                lifetime = life,
+                style = ex.style,
+                colors = ex.colors,
+                isSalvo = ex.isSalvo == true,
+                sparkAngle = ex.sparkAngle,
+            }
+        end
+    end
+
+    local salvoEmbers = {}
+    for _, em in ipairs(s0.salvoEmbers or {}) do
+        local age = (em.age or 0) + step
+        local life = em.lifetime or 0.35
+        if age < life then
+            local damp = step > 0 and math.exp(-(em.drag or 3.2) * step) or 1
+            local vx = (em.vx or 0) * damp
+            local vy = (em.vy or 0) * damp
+            salvoEmbers[#salvoEmbers + 1] = {
+                x = (em.x or 0) + vx * step,
+                y = (em.y or 0) + vy * step,
+                vx = vx,
+                vy = vy,
+                drag = em.drag or 3.2,
+                age = age,
+                lifetime = life,
+                size = em.size or 1.5,
+                r = em.r or 1,
+                g = em.g or 1,
+                b = em.b or 1,
+            }
+        end
+    end
+
+    return setmetatable({
+        angle = lerpAngleTurret(s0.angle or 0, nextS.angle or s0.angle or 0, t),
+        weapon = s0.weapon,
+        missiles = missiles,
+        beams = beams,
+        explosions = explosions,
+        salvoEmbers = salvoEmbers,
+    }, Turret)
 end
 
 return Turret

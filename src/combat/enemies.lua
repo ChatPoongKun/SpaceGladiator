@@ -103,6 +103,7 @@ end
 function Enemies.new(rng, gladiator)
     return setmetatable({
         items = {}, kills = 0, killsByKind = {},
+        nextEnemyId = 0,
         spawnAccumulator = 0.5, rng = rng or math.random,
         view = {left = 0, top = 0, right = Arena.width, bottom = Arena.height},
         fire = EnemyFire.new(),
@@ -205,6 +206,8 @@ function Enemies:spawn(ship, kindIndex, options)
         enemy.x, enemy.y = spawnPoint(self.rng, ship)
     end
     enemy.kind, enemy.radius = kind, definition.radius
+    self.nextEnemyId = (self.nextEnemyId or 0) + 1
+    enemy.id = self.nextEnemyId
     enemy.mass = definition.mass or 1.0
     enemy.combatPower = definition.combatPower
     enemy.maxHp = (options and options.maxHp) or definition.maxHp or 10
@@ -2575,6 +2578,235 @@ function Enemies:draw(time)
     end
     g.pop()
     self.fire:draw()
+end
+
+local function cloneTelegraph(tel)
+    if not tel then return nil end
+    return {
+        kind = tel.kind,
+        progress = tel.progress or 0,
+        angle = tel.angle,
+        dirX = tel.dirX,
+        dirY = tel.dirY,
+        locked = tel.locked,
+    }
+end
+
+local function lerpAngleEnemy(a, b, t)
+    local diff = (b - a + math.pi) % tau - math.pi
+    return (a + diff * t) % tau
+end
+
+function Enemies:captureReplayState(caps)
+    local enemyCap = (caps and caps.enemies) or 64
+    local burstCap = (caps and caps.deathBursts) or 64
+    local particleCap = (caps and caps.deathParticles) or 256
+
+    local items = {}
+    local eList = self.items or {}
+    local eCnt = math.min(#eList, enemyCap)
+    for i = 1, eCnt do
+        local src = eList[i]
+        items[i] = {
+            id = src.id,
+            kind = src.kind or 1,
+            x = src.x or 0,
+            y = src.y or 0,
+            vx = src.vx or 0,
+            vy = src.vy or 0,
+            maxSpeed = src.maxSpeed or 200,
+            angle = src.angle or 0,
+            radius = src.radius or 20,
+            aimed = src.aimed and true or false,
+            diving = src.diving and true or false,
+            accelerating = src.accelerating and true or false,
+            phase = src.phase or "patrol",
+            phaseRemaining = src.phaseRemaining or 0,
+            warpDuration = src.warpDuration,
+            edgeWarningDuration = src.edgeWarningDuration,
+            hp = src.hp,
+            maxHp = src.maxHp,
+            hitFlash = src.hitFlash or 0,
+            telegraph = cloneTelegraph(src.telegraph),
+        }
+    end
+
+    local bursts = {}
+    local bList = self.deathBursts or {}
+    local bCnt = math.min(#bList, burstCap)
+    for i = 1, bCnt do
+        local src = bList[i]
+        bursts[i] = {
+            x = src.x or 0,
+            y = src.y or 0,
+            maxRadius = src.maxRadius or 40,
+            age = src.age or 0,
+            duration = src.duration or 0.28,
+            color = src.color,
+        }
+    end
+
+    local particles = {}
+    local pList = self.deathParticles or {}
+    local pCnt = math.min(#pList, particleCap)
+    for i = 1, pCnt do
+        local src = pList[i]
+        particles[i] = {
+            x = src.x or 0,
+            y = src.y or 0,
+            vx = src.vx or 0,
+            vy = src.vy or 0,
+            drag = src.drag or 2.4,
+            age = src.age or 0,
+            lifetime = src.lifetime or 0.5,
+            size = src.size or 2.5,
+            shape = src.shape or "spark",
+            angle = src.angle or 0,
+            spin = src.spin or 0,
+            r = src.r or 1,
+            g = src.g or 1,
+            b = src.b or 1,
+        }
+    end
+
+    local view = self.view or { left = 0, top = 0, right = Arena.width, bottom = Arena.height }
+    return {
+        kills = self.kills or 0,
+        view = {
+            left = view.left or 0,
+            top = view.top or 0,
+            right = view.right or Arena.width,
+            bottom = view.bottom or Arena.height,
+        },
+        items = items,
+        deathBursts = bursts,
+        deathParticles = particles,
+        fire = self.fire and self.fire:captureReplayState(caps) or nil,
+    }
+end
+
+function Enemies.buildReplayProxy(s0, s1, alpha, dt)
+    if not s0 then return nil end
+    local t = alpha or 0
+    local step = math.max(0, dt or 0)
+    local nextItems = s1 and s1.items or {}
+    local byId = {}
+    for _, e in ipairs(nextItems) do
+        if e.id ~= nil then
+            byId[e.id] = e
+        end
+    end
+
+    local items = {}
+    for i, e0 in ipairs(s0.items or {}) do
+        local e1 = (e0.id ~= nil and byId[e0.id]) or nil
+        if not e1 then
+            local cand = nextItems[i]
+            if cand and cand.id == nil and cand.kind == e0.kind
+                and math.abs((cand.x or 0) - (e0.x or 0)) < 120
+                and math.abs((cand.y or 0) - (e0.y or 0)) < 120 then
+                e1 = cand
+            end
+        end
+        local ex, ey, ea = e0.x or 0, e0.y or 0, e0.angle or 0
+        local phaseRem = e0.phaseRemaining or 0
+        local hitFlash = e0.hitFlash or 0
+        local tel = cloneTelegraph(e0.telegraph)
+        if e1 then
+            ex = ex + ((e1.x or ex) - ex) * t
+            ey = ey + ((e1.y or ey) - ey) * t
+            ea = lerpAngleEnemy(ea, e1.angle or ea, t)
+            phaseRem = phaseRem + ((e1.phaseRemaining or phaseRem) - phaseRem) * t
+            hitFlash = hitFlash + ((e1.hitFlash or 0) - hitFlash) * t
+            if tel and e1.telegraph and e1.telegraph.kind == tel.kind then
+                tel.progress = (tel.progress or 0) + ((e1.telegraph.progress or tel.progress or 0) - (tel.progress or 0)) * t
+                if tel.angle and e1.telegraph.angle then
+                    tel.angle = lerpAngleEnemy(tel.angle, e1.telegraph.angle, t)
+                end
+                if tel.dirX and e1.telegraph.dirX then
+                    tel.dirX = tel.dirX + (e1.telegraph.dirX - tel.dirX) * t
+                    tel.dirY = (tel.dirY or 0) + ((e1.telegraph.dirY or tel.dirY or 0) - (tel.dirY or 0)) * t
+                end
+            end
+        end
+        items[i] = setmetatable({
+            id = e0.id,
+            kind = e0.kind or 1,
+            x = ex,
+            y = ey,
+            vx = e0.vx or 0,
+            vy = e0.vy or 0,
+            maxSpeed = e0.maxSpeed or 200,
+            angle = ea,
+            radius = e0.radius or 20,
+            aimed = e0.aimed == true,
+            diving = e0.diving == true,
+            accelerating = e0.accelerating == true,
+            phase = e0.phase or "patrol",
+            phaseRemaining = phaseRem,
+            warpDuration = e0.warpDuration,
+            edgeWarningDuration = e0.edgeWarningDuration,
+            hp = e0.hp,
+            maxHp = e0.maxHp,
+            hitFlash = hitFlash,
+            telegraph = tel,
+        }, Ship)
+    end
+
+    local bursts = {}
+    for _, b in ipairs(s0.deathBursts or {}) do
+        local age = (b.age or 0) + step
+        local dur = b.duration or 0.28
+        if age < dur then
+            bursts[#bursts + 1] = {
+                x = b.x or 0,
+                y = b.y or 0,
+                maxRadius = b.maxRadius or 40,
+                age = age,
+                duration = dur,
+                color = b.color,
+            }
+        end
+    end
+
+    local particles = {}
+    for _, p in ipairs(s0.deathParticles or {}) do
+        local age = (p.age or 0) + step
+        local life = p.lifetime or 0.5
+        if age < life then
+            local damp = step > 0 and math.exp(-(p.drag or 2.4) * step) or 1
+            local vx = (p.vx or 0) * damp
+            local vy = (p.vy or 0) * damp
+            particles[#particles + 1] = {
+                x = (p.x or 0) + vx * step,
+                y = (p.y or 0) + vy * step,
+                vx = vx,
+                vy = vy,
+                drag = p.drag or 2.4,
+                age = age,
+                lifetime = life,
+                size = p.size or 2.5,
+                shape = p.shape or "spark",
+                angle = (p.angle or 0) + (p.spin or 0) * step,
+                spin = p.spin or 0,
+                r = p.r or 1,
+                g = p.g or 1,
+                b = p.b or 1,
+            }
+        end
+    end
+
+    local fire = EnemyFire.buildReplayProxy(s0.fire, s1 and s1.fire, t, step)
+    local view = s0.view or { left = 0, top = 0, right = Arena.width, bottom = Arena.height }
+
+    return setmetatable({
+        items = items,
+        deathBursts = bursts,
+        deathParticles = particles,
+        view = view,
+        fire = fire,
+        kills = s0.kills or 0,
+    }, Enemies)
 end
 
 return Enemies

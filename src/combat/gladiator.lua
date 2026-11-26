@@ -720,4 +720,108 @@ function Gladiator:drawFeverOverlay(width, height, time)
     g.pop()
 end
 
+function Gladiator:captureReplayState(caps)
+    local burstCap = (caps and caps.bursts) or 16
+    local sparkCap = (caps and caps.sparks) or 256
+    local bursts = {}
+    local fbList = self.feverBursts or {}
+    local fbCnt = math.min(#fbList, burstCap)
+    for i = 1, fbCnt do
+        local src = fbList[i]
+        bursts[i] = {
+            x = src.x or 0,
+            y = src.y or 0,
+            age = src.age or 0,
+            duration = src.duration or 0.85,
+        }
+    end
+    local sparks = {}
+    local fsList = self.feverSparks or {}
+    local fsCnt = math.min(#fsList, sparkCap)
+    for i = 1, fsCnt do
+        local src = fsList[i]
+        sparks[i] = {
+            x = src.x or 0,
+            y = src.y or 0,
+            vx = src.vx or 0,
+            vy = src.vy or 0,
+            age = src.age or 0,
+            duration = src.duration or 0.4,
+            size = src.size or 2.5,
+            gold = src.gold and true or false,
+        }
+    end
+    return {
+        total = self.total or 0,
+        feverActive = self.feverActive == true,
+        feverDuration = self.feverDuration or 0,
+        feverPoints = self.feverPoints or 0,
+        feverAura = self.feverAura or 0,
+        feverFlash = self.feverFlash or 0,
+        feverCooldown = self.feverCooldown or 0,
+        feverBursts = bursts,
+        feverSparks = sparks,
+    }
+end
+
+function Gladiator.buildReplayProxy(s0, s1, alpha, dt, activePopups, srcTime)
+    if not s0 then return nil end
+    local t = alpha or 0
+    local nextS = s1 or s0
+    local step = math.max(0, dt or 0)
+    local function lerpVal(a, b)
+        return (a or 0) + ((b or a or 0) - (a or 0)) * t
+    end
+
+    local bursts = {}
+    for _, b in ipairs(s0.feverBursts or {}) do
+        local age = (b.age or 0) + step
+        local dur = b.duration or 0.85
+        if age < dur then
+            bursts[#bursts + 1] = {
+                x = b.x or 0,
+                y = b.y or 0,
+                age = age,
+                duration = dur,
+            }
+        end
+    end
+
+    local sparks = {}
+    local damp = step > 0 and math.max(0, 1 - step * 2.4) or 1
+    for _, sp in ipairs(s0.feverSparks or {}) do
+        local age = (sp.age or 0) + step
+        local dur = sp.duration or 0.4
+        if age < dur then
+            local vx = (sp.vx or 0) * damp
+            local vy = (sp.vy or 0) * damp
+            sparks[#sparks + 1] = {
+                x = (sp.x or 0) + (sp.vx or 0) * step,
+                y = (sp.y or 0) + (sp.vy or 0) * step,
+                vx = vx,
+                vy = vy,
+                age = age,
+                duration = dur,
+                size = sp.size or 2.5,
+                gold = sp.gold == true,
+            }
+        end
+    end
+
+    return setmetatable({
+        total = s0.total or 0,
+        feverActive = s0.feverActive == true,
+        feverDuration = lerpVal(s0.feverDuration, nextS.feverDuration),
+        feverPoints = lerpVal(s0.feverPoints, nextS.feverPoints),
+        feverAura = lerpVal(s0.feverAura, nextS.feverAura),
+        feverFlash = lerpVal(s0.feverFlash, nextS.feverFlash),
+        feverCooldown = lerpVal(s0.feverCooldown, nextS.feverCooldown),
+        feverBursts = bursts,
+        feverSparks = sparks,
+        popups = activePopups or {},
+        popupRise = Gladiator.popupRise,
+        elapsed = srcTime or 0,
+    }, Gladiator)
+end
+
 return Gladiator

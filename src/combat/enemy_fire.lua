@@ -6,10 +6,30 @@ EnemyFire.__index = EnemyFire
 
 local impactLifetime = 0.24
 local tau = 2 * math.pi
-local bullet = {speed = 440, lifetime = 1.65, radius = 3.5, damage = 6, trail = 15, color = {1, 0.45, 0.23}, replayKind = 1}
-local laser = {speed = 1150, lifetime = 0.95, radius = 4.5, damage = 14, trail = 56, color = {1, 0.24, 0.65}, isLaser = true, grazable = true, replayKind = 2}
-local curtain = {speed = 255, lifetime = 3.8, radius = 5.0, damage = 7, trail = 10, color = {1.0, 0.78, 0.24}, isOrb = true, grazable = true, replayKind = 4}
-local spiral = {speed = 210, lifetime = 4.2, radius = 5.0, damage = 6, trail = 10, color = {0.82, 0.34, 1.0}, isOrb = true, grazable = true, replayKind = 5}
+local bullet = {id = "bullet", speed = 440, lifetime = 1.65, radius = 3.5, damage = 6, trail = 15, color = {1, 0.45, 0.23}, replayKind = 1}
+local laser = {id = "laser", speed = 1150, lifetime = 0.95, radius = 4.5, damage = 14, trail = 56, color = {1, 0.24, 0.65}, isLaser = true, grazable = true, replayKind = 2}
+local curtain = {id = "curtain", speed = 255, lifetime = 3.8, radius = 5.0, damage = 7, trail = 10, color = {1.0, 0.78, 0.24}, isOrb = true, grazable = true, replayKind = 4}
+local spiral = {id = "spiral", speed = 210, lifetime = 4.2, radius = 5.0, damage = 6, trail = 10, color = {0.82, 0.34, 1.0}, isOrb = true, grazable = true, replayKind = 5}
+
+EnemyFire.impactLifetime = impactLifetime
+EnemyFire.profiles = {
+    bullet = bullet,
+    laser = laser,
+    curtain = curtain,
+    spiral = spiral,
+}
+EnemyFire.shotRenderers = {}
+
+function EnemyFire.registerProfile(id, profile)
+    if not id or type(profile) ~= "table" then return profile end
+    profile.id = id
+    EnemyFire.profiles[id] = profile
+    return profile
+end
+
+function EnemyFire.getProfile(id)
+    return id and EnemyFire.profiles[id] or nil
+end
 
 EnemyFire.railCount = 3
 EnemyFire.railInterval = 0.055
@@ -403,9 +423,12 @@ function EnemyFire:draw()
         local length = math.sqrt(shot.vx * shot.vx + shot.vy * shot.vy)
         local dx, dy = 0, 0
         if length > 0 then dx, dy = shot.vx / length, shot.vy / length end
-        local trail = math.min(profile.trail, profile.radius + length * shot.age)
+        local trail = math.min(profile.trail or 15, (profile.radius or 3.5) + length * shot.age)
         local tailX, tailY = shot.x - dx * trail, shot.y - dy * trail
-        if profile.isOrb then
+        local custom = profile.renderer or (profile.style and EnemyFire.shotRenderers[profile.style])
+        if custom then
+            custom(g, shot, r, green, b, fade, dx, dy, tailX, tailY, length)
+        elseif profile.isOrb then
             g.setLineWidth(profile.radius * 1.1)
             g.setColor(r, green, b, 0.20 * fade)
             g.line(tailX, tailY, shot.x, shot.y)
@@ -418,7 +441,7 @@ function EnemyFire:draw()
             g.circle("line", shot.x, shot.y, profile.radius)
             g.setColor(1, 0.97, 0.85, fade)
             g.circle("fill", shot.x, shot.y, profile.radius * 0.56)
-        elseif profile == bullet then
+        elseif profile == bullet or profile.id == "bullet" then
             -- VE1B Orb + VE1A Tapered Solar Needle Tail
             local px, py = -dy, dx
             local orbTrail = math.min(28, profile.radius + length * shot.age)
@@ -496,6 +519,97 @@ function EnemyFire:draw()
         g.circle("line", effect.x, effect.y, 4 + progress * effect.profile.radius * 4)
     end
     g.pop()
+end
+
+function EnemyFire:captureReplayState(caps)
+    local shotCap = (caps and caps.shots) or 512
+    local impactCap = (caps and caps.impacts) or 128
+
+    local shots = {}
+    local sList = self.shots or {}
+    local sCnt = math.min(#sList, shotCap)
+    for i = 1, sCnt do
+        local src = sList[i]
+        shots[i] = {
+            x = src.x or 0,
+            y = src.y or 0,
+            vx = src.vx or 0,
+            vy = src.vy or 0,
+            age = src.age or 0,
+            lifetime = src.lifetime or (src.profile and src.profile.lifetime) or 1.65,
+            profile = src.profile or bullet,
+            harmless = src.harmless,
+            harmlessStartAge = src.harmlessStartAge,
+            harmlessExpireAt = src.harmlessExpireAt,
+        }
+    end
+
+    local impacts = {}
+    local imList = self.impacts or {}
+    local imCnt = math.min(#imList, impactCap)
+    for i = 1, imCnt do
+        local src = imList[i]
+        impacts[i] = {
+            x = src.x or 0,
+            y = src.y or 0,
+            age = src.age or 0,
+            profile = src.profile or bullet,
+            shield = src.shield and true or false,
+            dissipate = src.dissipate and true or false,
+        }
+    end
+
+    return {
+        shots = shots,
+        impacts = impacts,
+    }
+end
+
+function EnemyFire.buildReplayProxy(s0, s1, alpha, dt)
+    if not s0 then
+        return setmetatable({ shots = {}, bursts = {}, impacts = {} }, EnemyFire)
+    end
+    local step = math.max(0, dt or 0)
+    local shots = {}
+    for _, s in ipairs(s0.shots or {}) do
+        local age = (s.age or 0) + step
+        local maxLife = s.harmlessExpireAt or s.lifetime or (s.profile and s.profile.lifetime) or 1.65
+        if age < maxLife then
+            shots[#shots + 1] = {
+                x = (s.x or 0) + (s.vx or 0) * step,
+                y = (s.y or 0) + (s.vy or 0) * step,
+                vx = s.vx or 0,
+                vy = s.vy or 0,
+                age = age,
+                lifetime = s.lifetime or maxLife,
+                profile = s.profile or bullet,
+                harmless = s.harmless,
+                harmlessStartAge = s.harmlessStartAge,
+                harmlessExpireAt = s.harmlessExpireAt,
+            }
+        end
+    end
+
+    local impacts = {}
+    for _, im in ipairs(s0.impacts or {}) do
+        local age = (im.age or 0) + step
+        if age < EnemyFire.impactLifetime then
+            impacts[#impacts + 1] = {
+                x = im.x or 0,
+                y = im.y or 0,
+                age = age,
+                profile = im.profile or bullet,
+                shield = im.shield == true,
+                dissipate = im.dissipate == true,
+            }
+        end
+    end
+
+    return setmetatable({
+        shots = shots,
+        bursts = {},
+        impacts = impacts,
+    }, EnemyFire)
 end
 
 return EnemyFire
