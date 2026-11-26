@@ -1254,12 +1254,7 @@ local function getHullMeshes(g)
         return { 1.0, 0.910 - 0.322 * k, 0.820 - 0.349 * k, 1.0 }
     end
 
-    -- Kind 2: EQUILATERAL (BEAMCASTER)
-    local eDark = { 0.085, 0.032, 0.075 }
-    local eGlow = { 0.48, 0.10, 0.28 }
-    local eLHi, eLLo = { 0.30, 0.11, 0.19 }, { 0.15, 0.055, 0.105 }
-    local eRHi, eRLo = { 0.45, 0.15, 0.23 }, { 0.24, 0.08, 0.14 }
-
+    -- Kind 2: EQUILATERAL (BOLTTHROWER — Nova Drift orchid-pink serrated pincer-jaws)
     -- Kind 3: OBTUSE (BULWARK-PRIME)
     local oDark = { 0.09, 0.035, 0.065 }
     local oAmber = { 0.52, 0.24, 0.09 }
@@ -1280,15 +1275,7 @@ local function getHullMeshes(g)
             plumeUnit = buildSpearPlumeMesh(g),
         },
         [2] = {
-            underframe = fanMesh(g, 0, -8, eGlow, { 0, -14, -16, 9, 16, 9 }, eDark),
-            orb = circleMesh(g, 0, -10, 3.4, 18, { 1, 1, 1 }, { 1, 0.20, 0.58 }),
-            leftRail = gradPolyMesh(g, { { -4, -23.5, eLHi }, { -9.5, -6, eLLo }, { -8, 13, eLLo }, { -4.5, 14, eLHi } }),
-            leftRailIn = gradPolyMesh(g, { { -4, -23.5, eLHi }, { -4.5, 14, eLLo }, { -3.2, -13, eLHi } }),
-            rightRail = gradPolyMesh(g, { { 4, -23.5, eRHi }, { 9.5, -6, eRLo }, { 8, 13, eRLo }, { 4.5, 14, eRHi } }),
-            rightRailIn = gradPolyMesh(g, { { 4, -23.5, eRHi }, { 4.5, 14, eRLo }, { 3.2, -13, eRHi } }),
-            leftWing = gradPolyMesh(g, { { -11.5, -3, eLHi }, { -21.5, 10.5, eLLo }, { -17.5, 14, eLLo }, { -10, 9.5, eLHi } }),
-            rightWing = gradPolyMesh(g, { { 11.5, -3, eRHi }, { 21.5, 10.5, eRLo }, { 17.5, 14, eRLo }, { 10, 9.5, eRHi } }),
-            bridge = gradPolyMesh(g, { { -4.5, 2, eLHi }, { 4.5, 2, eRHi }, { 3.5, 11, eRLo }, { -3.5, 11, eLLo } }),
+            bloom = radialGlowMesh(g, 0, -2, 30, 24, { 1.0, 0.294, 0.596, 0.24 }, { 1.0, 0.294, 0.596, 0.0 }),
         },
         [3] = {
             underframe = fanMesh(g, 0, 3, oAmber, { 0, -13, -26, 8, 0, 13, 26, 8 }, oDark),
@@ -1303,7 +1290,58 @@ local function getHullMeshes(g)
     return hullMeshes
 end
 
--- Nova Assault enemy hull renderer (Option 1: TRACER, BEAMCASTER, BULWARK-PRIME).
+local BOLT_JAW_RIGHT_RAIL = { 4.4, -23.5, 7.4, -19.8, 8.4, 6.0, 4.4, 9.0 }
+local BOLT_JAW_LEFT_RAIL = { -4.4, -23.5, -4.4, 9.0, -8.4, 6.0, -7.4, -19.8 }
+local BOLT_JAW_RIGHT_TEETH = {
+    { 4.6, -22.2, 4.6, -18.0, 2.6, -19.0, 2.6, -21.2 },
+    { 4.6, -15.6, 4.6, -11.4, 2.4, -12.4, 2.4, -14.6 },
+    { 4.6, -9.0, 4.6, -4.8, 2.4, -5.8, 2.4, -8.0 },
+    { 4.6, -2.4, 4.6, 1.8, 2.4, 0.8, 2.4, -1.4 },
+}
+local BOLT_JAW_LEFT_TEETH = {
+    { -4.6, -22.2, -2.6, -21.2, -2.6, -19.0, -4.6, -18.0 },
+    { -4.6, -15.6, -2.4, -14.6, -2.4, -12.4, -4.6, -11.4 },
+    { -4.6, -9.0, -2.4, -8.0, -2.4, -5.8, -4.6, -4.8 },
+    { -4.6, -2.4, -2.4, -1.4, -2.4, 0.8, -4.6, 1.8 },
+}
+local BOLT_JAW_RIGHT_OUTLINE = {
+    4.4, -23.5, 7.4, -19.8, 8.4, 6.0, 4.4, 9.0,
+    4.4, 1.8, 2.4, 0.8, 2.4, -1.4, 4.4, -2.4,
+    4.4, -4.8, 2.4, -5.8, 2.4, -8.0, 4.4, -9.0,
+    4.4, -11.4, 2.4, -12.4, 2.4, -14.6, 4.4, -15.6,
+    4.4, -18.0, 2.6, -19.0, 2.6, -21.2, 4.4, -22.2,
+}
+local BOLT_JAW_LEFT_OUTLINE = {
+    -4.4, -23.5, -4.4, -22.2, -2.6, -21.2, -2.6, -19.0,
+    -4.4, -18.0, -4.4, -15.6, -2.4, -14.6, -2.4, -12.4,
+    -4.4, -11.4, -4.4, -9.0, -2.4, -8.0, -2.4, -5.8,
+    -4.4, -4.8, -4.4, -2.4, -2.4, -1.4, -2.4, 0.8,
+    -4.4, 1.8, -4.4, 9.0, -8.4, 6.0, -7.4, -19.8,
+}
+local BOLT_TAIL_RIGHT = { 9.6, 3.8, 19.0, 15.6, 14.0, 22.0, 7.0, 17.8, 5.2, 10.6 }
+local BOLT_TAIL_LEFT = { -9.6, 3.8, -5.2, 10.6, -7.0, 17.8, -14.0, 22.0, -19.0, 15.6 }
+local BOLT_BRIDGE = { -2.8, 11.0, 2.8, 11.0, 4.6, 19.6, -4.6, 19.6 }
+
+local function drawBoltthrowerPlates(g, mode)
+    if mode == "fill" then
+        g.polygon("fill", BOLT_JAW_LEFT_RAIL)
+        for _, tooth in ipairs(BOLT_JAW_LEFT_TEETH) do
+            g.polygon("fill", tooth)
+        end
+        g.polygon("fill", BOLT_JAW_RIGHT_RAIL)
+        for _, tooth in ipairs(BOLT_JAW_RIGHT_TEETH) do
+            g.polygon("fill", tooth)
+        end
+    else
+        g.polygon("line", BOLT_JAW_LEFT_OUTLINE)
+        g.polygon("line", BOLT_JAW_RIGHT_OUTLINE)
+    end
+    g.polygon(mode, BOLT_TAIL_LEFT)
+    g.polygon(mode, BOLT_TAIL_RIGHT)
+    g.polygon(mode, BOLT_BRIDGE)
+end
+
+-- Nova Drift enemy hull renderer (SPEAR, BOLTTHROWER, BULWARK-PRIME).
 -- Drawn in local space centered at (0, 0), nose pointing up (-Y).
 function Enemies.drawHull(kind, aimed, time, opts)
     local g = love.graphics
@@ -1366,83 +1404,71 @@ function Enemies.drawHull(kind, aimed, time, opts)
         end
 
     elseif kind == 2 then
-        -- EQUILATERAL: BEAMCASTER (tuning-fork emitter rails + opaque gradient laser orb)
+        -- EQUILATERAL: BOLTTHROWER (serrated orchid-pink pincer-jaws + swept tail stabilizers)
+        g.push("all")
+
         if thrust > 0.05 then
             local len = (8 + 6 * thrust) * flicker
             for _, side in ipairs({ -1, 1 }) do
-                local nx = side * 7.5
-                g.setColor(1, 0.32, 0.54, 0.72 * thrust)
-                g.polygon("fill", nx - 3.0, 11, nx, 11 + len, nx + 3.0, 11)
-                g.setColor(1, 0.88, 0.95, 0.90 * thrust)
-                g.polygon("fill", nx - 1.2, 11, nx, 11 + len * 0.55, nx + 1.2, 11)
+                local nx = side * 4.8
+                g.setColor(1.0, 0.294, 0.596, 0.72 * thrust)
+                g.polygon("fill", nx - 2.6, 18.5, nx, 18.5 + len, nx + 2.6, 18.5)
+                g.setColor(1.0, 0.90, 0.98, 0.92 * thrust)
+                g.polygon("fill", nx - 1.1, 18.5, nx, 18.5 + len * 0.55, nx + 1.1, 18.5)
             end
         end
 
-        if meshes then
-            g.setColor(1, 1, 1, 1)
-            g.draw(meshes[2].underframe)
-            g.setLineWidth(0.9)
-            g.setColor(0.26, 0.08, 0.15, 1)
-            g.polygon("line", 0, -14, -16, 9, 16, 9)
-            g.setColor(1, 1, 1, 1)
-            g.draw(meshes[2].orb)
-            g.draw(meshes[2].leftRail)
-            g.draw(meshes[2].leftRailIn)
-            g.draw(meshes[2].rightRail)
-            g.draw(meshes[2].rightRailIn)
-            g.draw(meshes[2].leftWing)
-            g.draw(meshes[2].rightWing)
-            g.draw(meshes[2].bridge)
+        -- 1. Soft additive outer magenta-pink bloom (#ff4b98).
+        local bloomPulse = aimed and 1.18 or (0.88 + 0.12 * pulse)
+        if meshes and meshes[2] and meshes[2].bloom then
+            g.setColor(1, 1, 1, bloomPulse)
+            g.draw(meshes[2].bloom)
         else
-            g.setColor(0.16, 0.05, 0.12, 1)
-            g.polygon("fill", 0, -14, -16, 9, 16, 9)
-            g.setLineWidth(0.9)
-            g.setColor(0.26, 0.08, 0.15, 1)
-            g.polygon("line", 0, -14, -16, 9, 16, 9)
-            g.setColor(1, 0.23, 0.63, 1)
-            g.circle("fill", 0, -10, 3.4)
-            g.setColor(0.22, 0.085, 0.145, 1)
-            g.polygon("fill", -4, -23.5, -9.5, -6, -8, 13, -4.5, 14)
-            g.polygon("fill", -4, -23.5, -4.5, 14, -3.2, -13)
-            g.setColor(0.36, 0.11, 0.18, 1)
-            g.polygon("fill", 4, -23.5, 9.5, -6, 8, 13, 4.5, 14)
-            g.polygon("fill", 4, -23.5, 4.5, 14, 3.2, -13)
-            g.setColor(0.20, 0.08, 0.135, 1)
-            g.polygon("fill", -11.5, -3, -21.5, 10.5, -17.5, 14, -10, 9.5)
-            g.setColor(0.35, 0.11, 0.175, 1)
-            g.polygon("fill", 11.5, -3, 21.5, 10.5, 17.5, 14, 10, 9.5)
-            g.setColor(0.165, 0.05, 0.11, 1)
-            g.polygon("fill", -4.5, 2, 4.5, 2, 3.5, 11, -3.5, 11)
+            g.setColor(1.0, 0.294, 0.596, 0.18 * bloomPulse)
+            g.circle("fill", 0, -2, 26)
         end
 
-        g.setLineWidth(0.85)
-        g.setColor(1, 0.84, 0.94, 1)
-        g.circle("line", 0, -10, 3.4)
-        g.setColor(1, 1, 1, 1)
-        g.circle("fill", 0, -10, 1.5)
-        g.setLineWidth(1.2)
-        g.setColor(1, 0.55, 0.82, 0.92 * pulse)
-        g.line(0, -21, 0, -13)
+        g.setBlendMode("add")
+        g.setLineJoin("bevel")
+        local br, bg, bb = 1.0, aimed and 0.42 or 0.294, aimed and 0.52 or 0.596
+        for _, layer in ipairs({
+            { width = 7.5, alpha = 0.08 },
+            { width = 4.2, alpha = 0.16 },
+            { width = 2.0, alpha = 0.28 },
+        }) do
+            g.setColor(br, bg, bb, layer.alpha * bloomPulse)
+            g.setLineWidth(layer.width)
+            drawBoltthrowerPlates(g, "line")
+        end
 
-        -- Crisp crimson/coral outlines
-        g.setLineWidth(1.1)
-        if aimed then
-            g.setColor(1, 0.62, 0.50, 1)
-        else
-            g.setColor(1, 0.27, 0.40, 1)
+        -- Subtle pulsing laser charge filament down the open serrated jaw channel.
+        g.setLineWidth(1.4)
+        g.setColor(1.0, 0.65, 0.92, (aimed and 0.55 or 0.32) * pulse)
+        g.line(0, -19, 0, 3)
+        g.setBlendMode("alpha")
+
+        -- 2. Luminous pastel orchid-pink / rose solid plates.
+        g.setColor(0.961, 0.839, 1.0, 1)
+        g.polygon("fill", BOLT_JAW_LEFT_RAIL)
+        for _, tooth in ipairs(BOLT_JAW_LEFT_TEETH) do
+            g.polygon("fill", tooth)
         end
-        g.line(-4, -23.5, -9.5, -6, -8, 13, -4.5, 14, -3.2, -13, -4, -23.5)
-        g.polygon("line", -11.5, -3, -21.5, 10.5, -17.5, 14, -10, 9.5)
-        if aimed then
-            g.setColor(1, 0.72, 0.62, 1)
-        else
-            g.setColor(1, 0.37, 0.50, 1)
+        g.polygon("fill", BOLT_JAW_RIGHT_RAIL)
+        for _, tooth in ipairs(BOLT_JAW_RIGHT_TEETH) do
+            g.polygon("fill", tooth)
         end
-        g.line(4, -23.5, 9.5, -6, 8, 13, 4.5, 14, 3.2, -13, 4, -23.5)
-        g.polygon("line", 11.5, -3, 21.5, 10.5, 17.5, 14, 10, 9.5)
-        g.setLineWidth(0.85)
-        g.setColor(1, 0.44, 0.72, 0.9)
-        g.polygon("line", -4.5, 2, 4.5, 2, 3.5, 11, -3.5, 11)
+
+        g.setColor(1.0, 0.863, 0.961, 1)
+        g.polygon("fill", BOLT_TAIL_LEFT)
+        g.polygon("fill", BOLT_TAIL_RIGHT)
+        g.polygon("fill", BOLT_BRIDGE)
+
+        -- 3. Crisp anti-aliased edge highlight.
+        g.setLineWidth(0.75)
+        g.setColor(1.0, 0.96, 1.0, aimed and 0.95 or 0.78)
+        drawBoltthrowerPlates(g, "line")
+
+        g.pop()
 
     else
         -- OBTUSE: BULWARK-PRIME (obsidian + ceremonial gold command flying wing + opaque gradients)
