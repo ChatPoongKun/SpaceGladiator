@@ -2,3 +2,4 @@
 /hud-compact-preview.png
 /hud-damaged-preview.png
 /tests/
+*.backup*
