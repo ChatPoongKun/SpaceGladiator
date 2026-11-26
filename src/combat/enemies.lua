@@ -1591,7 +1591,7 @@ function Enemies:hitArea(x, y, radius, fraction, viewOrCamera, width, height, da
     return hit
 end
 
-function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCamera, width, height, damage, excludeEnemy)
+function Enemies:findSegmentHit(x1, y1, x2, y2, startFraction, endFraction, viewOrCamera, width, height, excludeEnemy)
     startFraction, endFraction = startFraction or 0, endFraction or 1
     local left, top, right, bottom = resolveView(self, viewOrCamera, width, height)
     local eps = 1e-6
@@ -1629,9 +1629,16 @@ function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCa
         end
     end
     if hitIndex then
-        local hitEnemy = self.items[hitIndex]
+        return x1 + dx * nearest, y1 + dy * nearest, nearest, hitIndex, self.items[hitIndex]
+    end
+end
+
+function Enemies:hitSegment(x1, y1, x2, y2, startFraction, endFraction, viewOrCamera, width, height, damage, excludeEnemy)
+    local hitX, hitY, nearest, hitIndex, hitEnemy = self:findSegmentHit(
+        x1, y1, x2, y2, startFraction, endFraction, viewOrCamera, width, height, excludeEnemy)
+    if hitIndex then
         local _, destroyed = self:damage(hitIndex, damage)
-        return x1 + dx * nearest, y1 + dy * nearest, nearest, hitEnemy, destroyed
+        return hitX, hitY, nearest, hitEnemy, destroyed
     end
 end
 

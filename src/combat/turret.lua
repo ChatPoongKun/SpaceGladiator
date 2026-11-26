@@ -275,6 +275,8 @@ function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameF
     local rocketSpeed = (cfg and cfg.projectileSpeed ~= nil) and cfg.projectileSpeed
         or (def and def.projectileSpeed)
         or 600
+    local maxRange = (cfg and cfg.projectileRange ~= nil) and cfg.projectileRange
+        or (def and def.projectileRange)
     local ejectAngles = (cfg and cfg.ejectAnglesDeg) or (def and def.ejectAnglesDeg)
     local maxBend = (cfg and cfg.ejectBend) or (def and def.ejectBend) or rocketMaxBend
     local firstMissile = nil
@@ -291,6 +293,13 @@ function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameF
         local sx, sy = sampleTargetScatter(turret, spec.targetScatterRadius)
         tx = tx + sx
         ty = ty + sy
+        local dist = math.sqrt((tx - spec.x) ^ 2 + (ty - spec.y) ^ 2)
+        if maxRange and maxRange > 0 and dist > maxRange then
+            local scale = maxRange / dist
+            tx = spec.x + (tx - spec.x) * scale
+            ty = spec.y + (ty - spec.y) * scale
+            dist = maxRange
+        end
         local missile = {
             x = spec.x, y = spec.y, startX = spec.x, startY = spec.y,
             owner = ship, angle = a, distance = 0, age = 0, shot = shot,
@@ -304,7 +313,6 @@ function Turret.fireModes.rocket(turret, ship, targetX, targetY, enemies, frameF
             targetOffsetX = sx,
             targetOffsetY = sy,
         }
-        local dist = math.sqrt((tx - spec.x) ^ 2 + (ty - spec.y) ^ 2)
         local bend = math.min(maxBend, dist * 0.18)
         if ejectAngles and #ejectAngles > 0 then
             local angleIdx = (((spec.burstIndex or 1) - 1 + offsetIdx - 1) % #ejectAngles) + 1
@@ -646,11 +654,18 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                 end
             end
             local hitX, hitY, hitTime, hitEnemy
-            if enemies and not isRocket then
+            if enemies then
                 local frameStart = dt > 0 and (dt - remaining) / dt or 0
                 local frameEnd = dt > 0 and (dt - remaining + flightTime) / dt or 0
-                hitX, hitY, hitTime, hitEnemy = enemies:hitSegment(oldX, oldY, missile.x, missile.y,
-                    frameStart, frameEnd, camera, width, height, missile.damage, missile.lastHitEnemy)
+                if isRocket then
+                    if enemies.findSegmentHit then
+                        hitX, hitY, hitTime, _, hitEnemy = enemies:findSegmentHit(oldX, oldY, missile.x, missile.y,
+                            frameStart, frameEnd, camera, width, height, missile.lastHitEnemy)
+                    end
+                else
+                    hitX, hitY, hitTime, hitEnemy = enemies:hitSegment(oldX, oldY, missile.x, missile.y,
+                        frameStart, frameEnd, camera, width, height, missile.damage, missile.lastHitEnemy)
+                end
             end
             if hitX or elapsed >= missile.lifetime then
                 local age = hitX and step - flightTime * hitTime or elapsed - missile.lifetime
@@ -660,7 +675,8 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                     or (ModulesData.getByWeaponIndex(2) and ModulesData.getByWeaponIndex(2).blastRadius)
                     or 90
                 if enemies and isRocket then
-                    local fraction = dt > 0 and (dt - remaining + flightTime) / dt or 0
+                    local hitOffset = hitX and (flightTime * hitTime) or flightTime
+                    local fraction = dt > 0 and (dt - remaining + hitOffset) / dt or 0
                     hit = enemies:hitArea(x, y, rRadius, fraction, camera, width, height, missile.damage)
                 end
                 if hit and not missile.shot.hit then
