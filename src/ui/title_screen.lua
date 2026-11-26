@@ -200,6 +200,98 @@ local function createTriangleMesh(triW, h)
     return nil
 end
 
+local SOFT_GAUSS_Y = {
+    { 0.00, 0.00 },
+    { 0.14, 0.04 },
+    { 0.26, 0.18 },
+    { 0.38, 0.54 },
+    { 0.50, 1.00 },
+    { 0.62, 0.54 },
+    { 0.74, 0.18 },
+    { 0.86, 0.04 },
+    { 1.00, 0.00 },
+}
+
+local function createSoftBeam2DMesh(xStops, yProfile, transpose)
+    if not (love and love.graphics and love.graphics.newMesh) then
+        return nil
+    end
+    yProfile = yProfile or SOFT_GAUSS_Y
+    local verts = {}
+    local function pushVert(u, v, s, mult)
+        local a = (s[4] == nil and 1 or s[4]) * mult
+        local x = transpose and v or u
+        local y = transpose and u or v
+        verts[#verts + 1] = { x, y, x, y, s[1] or 0, s[2] or 0, s[3] or 0, a }
+    end
+    for ix = 1, #xStops - 1 do
+        local s0, s1 = xStops[ix], xStops[ix + 1]
+        local u0 = Theme.clamp(s0.pos or 0, 0, 1)
+        local u1 = Theme.clamp(s1.pos or 0, 0, 1)
+        for iy = 1, #yProfile - 1 do
+            local v0, m0 = yProfile[iy][1], yProfile[iy][2]
+            local v1, m1 = yProfile[iy + 1][1], yProfile[iy + 1][2]
+            pushVert(u0, v0, s0, m0)
+            pushVert(u1, v0, s1, m0)
+            pushVert(u1, v1, s1, m1)
+            pushVert(u0, v0, s0, m0)
+            pushVert(u1, v1, s1, m1)
+            pushVert(u0, v1, s0, m1)
+        end
+    end
+    local ok, mesh = pcall(love.graphics.newMesh, verts, "triangles", "static")
+    if ok then return mesh end
+    return nil
+end
+
+local function createSoftRadialMesh(r, g, b, centerAlpha, segments)
+    if not (love and love.graphics and love.graphics.newMesh) then
+        return nil
+    end
+    segments = math.max(16, segments or 40)
+    centerAlpha = centerAlpha or 0.85
+    local rings = {
+        { 0.00, 1.00 },
+        { 0.16, 0.84 },
+        { 0.32, 0.56 },
+        { 0.50, 0.28 },
+        { 0.68, 0.10 },
+        { 0.85, 0.025 },
+        { 1.00, 0.00 },
+    }
+    local verts = {}
+    local function pushRingVert(radius, mult)
+        local a = centerAlpha * mult
+        return function(cosA, sinA)
+            local x, y = cosA * radius, sinA * radius
+            verts[#verts + 1] = { x, y, 0.5 + x * 0.5, 0.5 + y * 0.5, r, g, b, a }
+        end
+    end
+    for i = 0, segments - 1 do
+        local a0 = (i / segments) * math.pi * 2
+        local a1 = ((i + 1) / segments) * math.pi * 2
+        local c0, s0 = math.cos(a0), math.sin(a0)
+        local c1, s1 = math.cos(a1), math.sin(a1)
+        -- Inner core triangle
+        local r1, m1 = rings[2][1], rings[2][2]
+        verts[#verts + 1] = { 0, 0, 0.5, 0.5, r, g, b, centerAlpha }
+        pushRingVert(r1, m1)(c0, s0)
+        pushRingVert(r1, m1)(c1, s1)
+        -- Outer Gaussian falloff rings
+        for k = 2, #rings - 1 do
+            local rIn, mIn = rings[k][1], rings[k][2]
+            local rOut, mOut = rings[k + 1][1], rings[k + 1][2]
+            local vIn = pushRingVert(rIn, mIn)
+            local vOut = pushRingVert(rOut, mOut)
+            vIn(c0, s0); vOut(c0, s0); vOut(c1, s1)
+            vIn(c0, s0); vOut(c1, s1); vIn(c1, s1)
+        end
+    end
+    local ok, mesh = pcall(love.graphics.newMesh, verts, "triangles", "static")
+    if ok then return mesh end
+    return nil
+end
+
 local function buildMeshes()
     local deep = Theme.colors.bgOverlay
     local acc = Theme.colors.accent
@@ -228,37 +320,56 @@ local function buildMeshes()
         }, false),
         -- Soft elliptical radial halo behind the centered title (zero rectangular seams)
         titleHalo = Theme.createRadialGradientMesh(deep[1], deep[2], deep[3], 0.52, nil, 40),
-        -- Reference-style left menu optical flares & gradients
-        menuFlareHalo = Theme.createRadialGradientMesh(p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.85, nil, 40),
-        menuFlareCore = Theme.createRadialGradientMesh(0.95, 0.99, 1.00, 1.00, nil, 32),
-        menuRightBeamSoft = Theme.createGradientMesh({
-            { pos = 0.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.55 },
-            { pos = 0.15, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.30 },
-            { pos = 0.45, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.11 },
-            { pos = 0.78, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.03 },
+        -- Reference-style left menu optical flares & 2D soft-feathered plumes
+        menuFlareHalo = createSoftRadialMesh(p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.85, 40),
+        menuFlareCore = createSoftRadialMesh(0.95, 0.99, 1.00, 1.00, 32),
+        menuRightBeamAura = createSoftBeam2DMesh({
+            { pos = 0.00, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.00 },
+            { pos = 0.09, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.07 },
+            { pos = 0.16, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.22 },
+            { pos = 0.20, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.34 },
+            { pos = 0.28, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.20 },
+            { pos = 0.42, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.09 },
+            { pos = 0.62, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.032 },
+            { pos = 0.82, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.008 },
             { pos = 1.00, p.iceDeep[1], p.iceDeep[2], p.iceDeep[3], 0.00 },
-        }, true),
-        menuRightBeamCore = Theme.createGradientMesh({
-            { pos = 0.00, 0.96, 0.99, 1.00, 1.00 },
-            { pos = 0.08, p.iceBright[1], p.iceBright[2], p.iceBright[3], 0.85 },
-            { pos = 0.28, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.40 },
-            { pos = 0.62, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.10 },
+        }, SOFT_GAUSS_Y, false),
+        menuRightBeamSoft = createSoftBeam2DMesh({
+            { pos = 0.00, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.00 },
+            { pos = 0.08, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.08 },
+            { pos = 0.15, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.28 },
+            { pos = 0.20, p.iceBright[1], p.iceBright[2], p.iceBright[3], 0.58 },
+            { pos = 0.26, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.36 },
+            { pos = 0.38, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.16 },
+            { pos = 0.56, p.iceDeep[1],   p.iceDeep[2],   p.iceDeep[3],   0.055 },
+            { pos = 0.78, p.iceDeep[1],   p.iceDeep[2],   p.iceDeep[3],   0.012 },
             { pos = 1.00, p.iceDeep[1],   p.iceDeep[2],   p.iceDeep[3],   0.00 },
-        }, true),
-        menuStreak = Theme.createGradientMesh({
+        }, SOFT_GAUSS_Y, false),
+        menuRightBeamCore = createSoftBeam2DMesh({
+            { pos = 0.00, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.00 },
+            { pos = 0.08, p.iceBright[1], p.iceBright[2], p.iceBright[3], 0.14 },
+            { pos = 0.16, p.iceBright[1], p.iceBright[2], p.iceBright[3], 0.56 },
+            { pos = 0.20, 0.96,           0.99,           1.00,           1.00 },
+            { pos = 0.25, p.iceBright[1], p.iceBright[2], p.iceBright[3], 0.68 },
+            { pos = 0.35, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.30 },
+            { pos = 0.52, p.iceGlow[1],   p.iceGlow[2],   p.iceGlow[3],   0.09 },
+            { pos = 0.74, p.iceDeep[1],   p.iceDeep[2],   p.iceDeep[3],   0.018 },
+            { pos = 1.00, p.iceDeep[1],   p.iceDeep[2],   p.iceDeep[3],   0.00 },
+        }, SOFT_GAUSS_Y, false),
+        menuStreak = createSoftBeam2DMesh({
             { pos = 0.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.00 },
-            { pos = 0.35, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.35 },
+            { pos = 0.25, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.22 },
             { pos = 0.50, 0.96, 0.99, 1.00, 1.00 },
-            { pos = 0.65, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.35 },
+            { pos = 0.75, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.22 },
             { pos = 1.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.00 },
-        }, true),
-        menuVertStreak = Theme.createGradientMesh({
+        }, SOFT_GAUSS_Y, false),
+        menuVertStreak = createSoftBeam2DMesh({
             { pos = 0.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.00 },
-            { pos = 0.35, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.35 },
+            { pos = 0.25, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.22 },
             { pos = 0.50, 0.96, 0.99, 1.00, 1.00 },
-            { pos = 0.65, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.35 },
+            { pos = 0.75, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.22 },
             { pos = 1.00, p.iceGlow[1], p.iceGlow[2], p.iceGlow[3], 0.00 },
-        }, false),
+        }, SOFT_GAUSS_Y, true),
         menuDivider = Theme.createGradientMesh({
             { pos = 0.00, p.railLine[1], p.railLine[2], p.railLine[3], 0.32 },
             { pos = 0.38, p.railLine[1], p.railLine[2], p.railLine[3], 0.20 },
@@ -891,8 +1002,18 @@ function TitleScreen:_drawLeftMenu(menu, fonts, selected, width, height, launchP
         g.circle("fill", frameSpineX, fa.shelfY, 1.1)
     end
 
-    -- 3. Unselected row dividers & spine intersection pips
+    -- 3. Unselected row dividers & spine intersection pips (including top rule above first item)
     if railAlpha > 0.01 then
+        local topDivY = items[1].y - ROW_GAP * 0.5 + py
+        local topNearActive = (topDivY >= indY - 2) and (topDivY <= indY + indH + 2)
+        local topDamp = topNearActive and 0.25 or 1.0
+        Theme.drawGradientRect(m.menuDivider, spineX + 1, topDivY, MENU_WIDTH - 22, 1, topDamp * railAlpha)
+        g.setBlendMode("add")
+        Theme.drawRadialHalo(m.menuFlareHalo, spineX, topDivY, 4.5, 4.5, 0.45 * topDamp * railAlpha)
+        g.setBlendMode("alpha")
+        Theme.setColor(p.iceBright, 0.85 * topDamp * railAlpha)
+        g.circle("fill", spineX, topDivY, 1.25)
+
         for i = 1, #items do
             local item = items[i]
             local divY = item.y + item.h + ROW_GAP * 0.5 + py
@@ -903,7 +1024,7 @@ function TitleScreen:_drawLeftMenu(menu, fonts, selected, width, height, launchP
 
             if i < #items then
                 g.setBlendMode("add")
-                Theme.drawRadialHalo(m.menuFlareHalo, spineX, divY, 3.5, 3.5, 0.45 * damp * railAlpha)
+                Theme.drawRadialHalo(m.menuFlareHalo, spineX, divY, 4.5, 4.5, 0.45 * damp * railAlpha)
                 g.setBlendMode("alpha")
                 Theme.setColor(p.iceBright, 0.85 * damp * railAlpha)
                 g.circle("fill", spineX, divY, 1.25)
@@ -996,24 +1117,24 @@ function TitleScreen:_drawLeftMenu(menu, fonts, selected, width, height, launchP
         Theme.setColor(p.iceWhite, 0.20 * indA)
         g.line(bx, by, bx + TRI_W, by + bh * 0.5, bx, by + bh)
 
-        -- Left starburst flare centered on the triangle spine
+        -- Left starburst flare centered on the triangle spine (2D feathered & Gaussian halos)
         local leftFlareY = by + bh * 0.5
         g.setBlendMode("add")
-        Theme.drawRadialHalo(m.menuFlareHalo, bx, leftFlareY, 32, 38, (0.52 * breathe + 0.22 * self.selectPulse) * indA)
-        Theme.drawRadialHalo(m.menuFlareHalo, bx, leftFlareY, 14, 24, (0.72 * breathe + 0.24 * self.selectPulse) * indA)
-        Theme.drawRadialHalo(m.menuFlareCore, bx, leftFlareY, 7, 9, 0.92 * indA)
-        Theme.drawGradientRect(m.menuVertStreak, bx - 1.6, leftFlareY - 32, 3.2, 64, 0.84 * indA)
-        Theme.drawGradientRect(m.menuStreak, bx - 18, leftFlareY - 1.0, 36, 2.0, 0.60 * indA)
+        Theme.drawRadialHalo(m.menuFlareHalo, bx, leftFlareY, 42, 48, (0.54 * breathe + 0.22 * self.selectPulse) * indA)
+        Theme.drawRadialHalo(m.menuFlareHalo, bx, leftFlareY, 20, 30, (0.74 * breathe + 0.24 * self.selectPulse) * indA)
+        Theme.drawRadialHalo(m.menuFlareCore, bx, leftFlareY, 8.5, 11, 0.94 * indA)
+        Theme.drawGradientRect(m.menuVertStreak, bx - 2.75, leftFlareY - 34, 5.5, 68, 0.86 * indA)
+        Theme.drawGradientRect(m.menuStreak, bx - 20, leftFlareY - 2.2, 40, 4.4, 0.64 * indA)
 
-        -- Top-right tip anamorphic lens flare & long horizontal light beam
+        -- Top-right tip seamless 2D feathered optical plume & anamorphic lens flare
         local tipX = bx + bw
         local tipY = by + 1.5
-        Theme.drawGradientRect(m.menuRightBeamSoft, tipX, tipY - 5.5, 310, 11, (0.68 * breathe + 0.24 * self.selectPulse) * indA)
-        Theme.drawGradientRect(m.menuRightBeamCore, tipX, tipY - 1.0, 260, 2.0, (0.86 * breathe + 0.22 * self.selectPulse) * indA)
-        Theme.drawGradientRect(m.menuStreak, tipX - 58, tipY - 1.0, 116, 2.0, 0.50 * indA)
-        Theme.drawRadialHalo(m.menuFlareHalo, tipX, tipY, 18, 12, (0.58 * breathe + 0.22 * self.selectPulse) * indA)
-        Theme.drawRadialHalo(m.menuFlareCore, tipX, tipY, 5.5, 4.5, 0.90 * indA)
-        Theme.drawGradientRect(m.menuVertStreak, tipX - 0.8, tipY - 10, 1.6, 20, 0.60 * indA)
+        Theme.drawGradientRect(m.menuRightBeamAura, tipX - 460 * 0.20, tipY - 23, 460, 46, (0.85 * breathe + 0.25 * self.selectPulse) * indA)
+        Theme.drawGradientRect(m.menuRightBeamSoft, tipX - 400 * 0.20, tipY - 9, 400, 18, (0.88 * breathe + 0.22 * self.selectPulse) * indA)
+        Theme.drawGradientRect(m.menuRightBeamCore, tipX - 340 * 0.20, tipY - 2.3, 340, 4.6, (0.95 * breathe + 0.18 * self.selectPulse) * indA)
+        Theme.drawRadialHalo(m.menuFlareHalo, tipX, tipY, 26, 18, (0.62 * breathe + 0.22 * self.selectPulse) * indA)
+        Theme.drawRadialHalo(m.menuFlareCore, tipX, tipY, 7.5, 6.0, 0.92 * indA)
+        Theme.drawGradientRect(m.menuVertStreak, tipX - 2.0, tipY - 12, 4.0, 24, 0.64 * indA)
         g.setBlendMode("alpha")
     end
 
