@@ -241,16 +241,17 @@ local function buildPartSpecRows(def, penaltyPct)
     local penTag = (penaltyPct and penaltyPct > 0) and string.format(" (+%d%%)", penaltyPct) or ""
 
     if cat == "weapon" then
-        local fireMode = "직사 무장"
-        if def.id == "projectile" then fireMode = "3연발 실탄 확산"
-        elseif def.id == "missile" then fireMode = "유도 광역 폭발탄"
-        elseif def.id == "laser" then fireMode = "즉발 직사 레이저" end
+        local damage = def.damage or 0
+        local shotCount = def.shotCount or 1
+        local dmgStr = shotCount > 1
+            and string.format("%s x %d발", formatNum(damage), shotCount)
+            or string.format("%s (%d발)", formatNum(damage), shotCount)
         local interval = def.fireInterval or 0
         local rof = interval > 0 and (1 / interval) or 0
         local enCost = math.floor((def.baseBatteryCost or 0) * mult + 0.5)
         rows = {
-            { k = "사격 방식", v = fireMode },
-            { k = "발사 간격 / 연사율", v = string.format("%.2f s  (%.1f /s)", interval, rof) },
+            { k = "피해 / 발사수", v = dmgStr },
+            { k = "발사 간격 / 공속", v = string.format("%.2f s  (%.1f /s)", interval, rof) },
             { k = "발사 EN 소비", v = tostring(enCost) .. penTag, warn = (penaltyPct or 0) > 0 and enCost > 0 },
             { k = "중량", v = string.format("%d t", def.weight or 0) },
             { k = "점유 격자 / 소켓", v = string.format("%dx%d  ·  %d 슬롯", def.w or 1, def.h or 1, def.maxSockets or 0) },

@@ -654,6 +654,12 @@ local function newWeaponConfig(def, mod)
         name = def and def.name or nil,
         weaponIndex = def and def.weaponIndex or nil,
         fireInterval = def and def.fireInterval or nil,
+        damage = def and def.damage or nil,
+        shotCount = def and def.shotCount or nil,
+        spreadDeg = def and def.spreadDeg or nil,
+        projectileSpeed = def and def.projectileSpeed or nil,
+        projectileRange = def and def.projectileRange or nil,
+        blastRadius = def and def.blastRadius or nil,
         installed = mod ~= nil,
         extraCount = 0,
         extraSpreadDeg = 0,
@@ -881,6 +887,12 @@ function Inventory:computeBuild(feverActive)
             if wCfg then
                 wCfg.installed = true
                 wCfg.fireInterval = wCfg.fireInterval or def.fireInterval
+                wCfg.damage = wCfg.damage or def.damage
+                wCfg.shotCount = wCfg.shotCount or def.shotCount
+                wCfg.spreadDeg = wCfg.spreadDeg or def.spreadDeg
+                wCfg.projectileSpeed = wCfg.projectileSpeed or def.projectileSpeed
+                wCfg.projectileRange = wCfg.projectileRange or def.projectileRange
+                wCfg.blastRadius = wCfg.blastRadius or def.blastRadius
                 mCfg = newWeaponConfig(def, mod)
                 build.weaponModules[#build.weaponModules + 1] = mCfg
             end

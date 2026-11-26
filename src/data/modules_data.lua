@@ -27,14 +27,19 @@ ModulesData.list = {
         category = "weapon",
         rarity = "NORMAL",
         weaponIndex = 1,
+        damage = 5,
+        shotCount = 3,
         fireInterval = 0.18,
+        spreadDeg = 5,
+        projectileSpeed = 900,
+        projectileRange = 600,
         w = 1,
         h = 2,
         shape = { { 0, 0 }, { 1, 0 } },
         maxSockets = 2,
         weight = 20,
         baseBatteryCost = 0,
-        description = "기본 3발 확산탄 (0.18초 간격). 발사 시 배터리 소모 없이 안정적으로 사격합니다.",
+        description = "기본 3발 확산탄 (피해 5, 0.18초 간격). 발사 시 배터리 소모 없이 안정적으로 사격합니다.",
     },
     {
         id = "missile",
@@ -42,14 +47,19 @@ ModulesData.list = {
         category = "weapon",
         rarity = "RARE",
         weaponIndex = 2,
+        damage = 5,
+        shotCount = 1,
         fireInterval = 0.55,
+        spreadDeg = 10,
+        projectileSpeed = 600,
+        blastRadius = 90,
         w = 2,
         h = 2,
         shape = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 1, 0 } },
         maxSockets = 4,
         weight = 45,
         baseBatteryCost = 4,
-        description = "곡선 궤적 폭발 로켓 (0.55초 간격). 2x2 공간을 차지하지만 광역 폭발과 최대 4소켓 포텐셜을 가집니다.",
+        description = "곡선 궤적 폭발 로켓 (피해 5, 반경 90, 0.55초 간격). 2x2 공간을 차지하지만 광역 폭발과 최대 4소켓 포텐셜을 가집니다.",
     },
     {
         id = "laser",
@@ -57,14 +67,17 @@ ModulesData.list = {
         category = "weapon",
         rarity = "RARE",
         weaponIndex = 3,
+        damage = 5,
+        shotCount = 1,
         fireInterval = 0.34,
+        spreadDeg = 7,
         w = 1,
         h = 3,
         shape = { { 0, 0 }, { 1, 0 }, { 2, 0 } },
         maxSockets = 3,
         weight = 35,
         baseBatteryCost = 3,
-        description = "즉시 타격 레이저 빔 (0.34초 간격). 일렬 3소켓 구조로 굴절·연발 조합에 특화됩니다.",
+        description = "즉시 타격 레이저 빔 (피해 5, 0.34초 간격). 일렬 3소켓 구조로 굴절·연발 조합에 특화됩니다.",
     },
     {
         id = "shield",
@@ -126,10 +139,14 @@ ModulesData.list = {
 }
 
 ModulesData.byId = {}
+ModulesData.byWeaponIndex = {}
 for _, def in ipairs(ModulesData.list) do
     def.rarity = Rarity.normalize(def.rarity)
     def.image = def.image or ("assets/items/modules/" .. def.id .. ".png")
     ModulesData.byId[def.id] = def
+    if def.weaponIndex then
+        ModulesData.byWeaponIndex[def.weaponIndex] = def
+    end
 end
 
 function ModulesData.get(id)
@@ -137,6 +154,10 @@ function ModulesData.get(id)
         return ModulesData.byId["battery"]
     end
     return ModulesData.byId[id]
+end
+
+function ModulesData.getByWeaponIndex(weaponIndex)
+    return ModulesData.byWeaponIndex[weaponIndex]
 end
 
 function ModulesData.getByCategory(categoryId)

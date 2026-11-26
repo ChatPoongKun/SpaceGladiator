@@ -1,16 +1,13 @@
 local Arena = require("src.core.arena")
 local Sfx = require("src.audio.sfx")
+local ModulesData = require("src.data.modules_data")
 local Turret = {}
 Turret.__index = Turret
 local tau = 2 * math.pi
 local muzzleLength = 22
-local blastRadius = 90
-local rocketAverageSpeed = 600
 local rocketMaxBend = 38
 local beamLifetime = 0.10
 local beamImpactLifetime = 0.22
-local projectileSpread = math.rad(5)
-local projectileOffsets = {0, -projectileSpread, projectileSpread}
 local explosionColors = { glow = { 0.141, 0.549, 1.0 }, ring = { 0.220, 0.863, 1.0 }, core = { 0.933, 0.984, 1.0 } }
 local beamImpactColors = { glow = {0.12, 0.68, 1}, ring = {0.30, 0.92, 1}, core = {0.83, 0.98, 1} }
 local aimGlowMesh, aimCoreMesh, aimMeshesTried = nil, nil, false
@@ -96,17 +93,13 @@ local function updateSalvoEmbers(turret, dt)
     end
 end
 
+local defaultProjectile = ModulesData.getByWeaponIndex(1) or {}
 Turret.turnSpeed = tau
-Turret.missileSpeed = 900
-Turret.missileLifetime = 600 / 900
-Turret.fireInterval = 0.18
-Turret.baseDamage = 5
+Turret.missileSpeed = defaultProjectile.projectileSpeed or 900
+Turret.missileLifetime = (defaultProjectile.projectileRange or 600) / Turret.missileSpeed
+Turret.fireInterval = defaultProjectile.fireInterval or 0.18
+Turret.baseDamage = defaultProjectile.damage or 5
 Turret.aimLineWidthRatio = 0.30
-Turret.weaponFireIntervals = {
-    [1] = 0.18,
-    [2] = 0.55,
-    [3] = 0.34,
-}
 Turret.explosionLifetime = 0.45
 
 function Turret.new(initialAngle)
@@ -120,13 +113,21 @@ function Turret.new(initialAngle)
 end
 
 local function buildOffsets(baseCount, extraCount, baseSpread, extraSpreadRad)
-    local total = math.max(1, baseCount + (extraCount or 0))
+    local total = math.max(1, math.floor((baseCount or 1) + (extraCount or 0)))
     if total == 1 then return { 0 } end
-    local step = baseSpread + (extraSpreadRad or 0) * 0.25
+    local step = (baseSpread or 0) + (extraSpreadRad or 0) * 0.25
     local offsets = {}
-    local half = (total - 1) * 0.5
-    for i = 0, total - 1 do
-        offsets[#offsets + 1] = (i - half) * step
+    if total % 2 == 1 then
+        offsets[1] = 0
+        for k = 1, (total - 1) / 2 do
+            offsets[#offsets + 1] = -k * step
+            offsets[#offsets + 1] = k * step
+        end
+    else
+        local half = (total - 1) * 0.5
+        for i = 0, total - 1 do
+            offsets[#offsets + 1] = (i - half) * step
+        end
     end
     return offsets
 end
@@ -203,16 +204,27 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
     end
 
     self.shotsFired = self.shotsFired + 1
+    local def = ModulesData.getByWeaponIndex(weapon)
     local extraCount = cfg and cfg.extraCount or 0
     local extraSpreadRad = cfg and math.rad(cfg.extraSpreadDeg or 0) or 0
     local areaMult = (cfg and cfg.areaMult or 1) * (opts.areaMult or 1)
     local bounces = cfg and cfg.bounces or 0
-    local damage = math.max(0.1, (self.baseDamage or Turret.baseDamage) * (cfg and cfg.damageMult or 1))
+    local baseDamage = (cfg and cfg.damage ~= nil) and cfg.damage
+        or (def and def.damage)
+        or self.baseDamage
+        or Turret.baseDamage
+    local damage = math.max(0.1, baseDamage * (cfg and cfg.damageMult or 1))
+    local baseShotCount = (cfg and cfg.shotCount ~= nil) and cfg.shotCount
+        or (def and def.shotCount)
+        or 1
+    local baseSpreadRad = math.rad((cfg and cfg.spreadDeg ~= nil) and cfg.spreadDeg
+        or (def and def.spreadDeg)
+        or 0)
     local dx, dy = math.sin(baseAngle), -math.cos(baseAngle)
     local x, y = ship.x + dx * muzzleLength, ship.y + dy * muzzleLength
 
     if weapon == 3 then
-        local offsets = buildOffsets(1, extraCount, math.rad(7), extraSpreadRad)
+        local offsets = buildOffsets(baseShotCount, extraCount, baseSpreadRad, extraSpreadRad)
         self.beams = self.beams or {}
         local primaryBeam = nil
         local anyHit = false
@@ -268,7 +280,13 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
 
     local shot = { hit = false }
     if weapon == 2 then
-        local offsets = buildOffsets(1, extraCount, math.rad(10), extraSpreadRad)
+        local offsets = buildOffsets(baseShotCount, extraCount, baseSpreadRad, extraSpreadRad)
+        local baseBlastRadius = (cfg and cfg.blastRadius ~= nil) and cfg.blastRadius
+            or (def and def.blastRadius)
+            or 90
+        local rocketSpeed = (cfg and cfg.projectileSpeed ~= nil) and cfg.projectileSpeed
+            or (def and def.projectileSpeed)
+            or 600
         local firstMissile = nil
         local distance = math.sqrt((targetX - x) ^ 2 + (targetY - y) ^ 2)
         for _, offset in ipairs(offsets) do
@@ -283,7 +301,7 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
             local missile = {
                 x = x, y = y, startX = x, startY = y,
                 owner = ship, angle = a, distance = 0, age = 0, shot = shot,
-                blastRadius = blastRadius * areaMult,
+                blastRadius = baseBlastRadius * areaMult,
                 damage = damage,
             }
             local dist = math.sqrt((tx - x) ^ 2 + (ty - y) ^ 2)
@@ -292,7 +310,7 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
             missile.bendX, missile.bendY = -rdy * bend * camera.zoom, rdx * bend * camera.zoom
             missile.startScreenX, missile.startScreenY = camera:worldToScreen(x, y, width, height)
             missile.targetScreenX, missile.targetScreenY = camera:worldToScreen(tx, ty, width, height)
-            missile.lifetime = dist / rocketAverageSpeed
+            missile.lifetime = dist / rocketSpeed
             missile.trail = { { x = x, y = y } }
             missile.emberAcc = 0
             updateRocketPose(missile, camera, width, height)
@@ -306,18 +324,25 @@ function Turret:fire(ship, targetX, targetY, enemies, frameFraction, camera, wid
 
     local vx, vy = ship:worldVelocity()
     local first = #self.missiles + 1
-    local offsets = (extraCount == 0 and extraSpreadRad == 0)
-        and projectileOffsets
-        or buildOffsets(3, extraCount, projectileSpread, extraSpreadRad)
+    local offsets = buildOffsets(baseShotCount, extraCount, baseSpreadRad, extraSpreadRad)
+    local projSpeed = (cfg and cfg.projectileSpeed ~= nil) and cfg.projectileSpeed
+        or (def and def.projectileSpeed)
+        or self.missileSpeed
+    local projRange = (cfg and cfg.projectileRange ~= nil) and cfg.projectileRange
+        or (def and def.projectileRange)
+    local projLifetime = (cfg and cfg.projectileLifetime ~= nil) and cfg.projectileLifetime
+        or (projRange and projSpeed > 0 and (projRange / projSpeed))
+        or self.missileLifetime
     for _, offset in ipairs(offsets) do
         local angle = (baseAngle + offset) % tau
-        local shotVx = math.sin(angle) * self.missileSpeed + vx
-        local shotVy = -math.cos(angle) * self.missileSpeed + vy
+        local shotVx = math.sin(angle) * projSpeed + vx
+        local shotVy = -math.cos(angle) * projSpeed + vy
         self.missiles[#self.missiles + 1] = {
             x = x, y = y, startX = x, startY = y,
             owner = ship, angle = angle, distance = 0, age = 0, shot = shot,
             vx = shotVx, vy = shotVy, speed = math.sqrt(shotVx ^ 2 + shotVy ^ 2),
-            lifetime = self.missileLifetime,
+            lifetime = projLifetime,
+            baseLifetime = projLifetime,
             homing = cfg and cfg.homing or false,
             homingTurnRate = cfg and cfg.homingTurnRate or 0,
             bounces = bounces,
@@ -352,8 +377,9 @@ local function getWeaponKey(wCfg, fallbackIdx)
 end
 
 local function getWeaponInterval(turret, wCfg)
+    local def = wCfg and wCfg.weaponIndex and ModulesData.getByWeaponIndex(wCfg.weaponIndex) or nil
     local base = (wCfg and wCfg.fireInterval)
-        or (wCfg and wCfg.weaponIndex and Turret.weaponFireIntervals[wCfg.weaponIndex])
+        or (def and def.fireInterval)
         or turret.fireInterval
     local cdMult = wCfg and ((wCfg.cooldownMult or 1) * (wCfg.manualCooldownMult or 1)) or 1
     return math.max(0.02, base * cdMult)
@@ -500,7 +526,9 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                 local age = hitX and step - flightTime * hitTime or elapsed - missile.lifetime
                 local x, y = hitX or missile.x, hitY or missile.y
                 local hit = hitX ~= nil
-                local rRadius = missile.blastRadius or blastRadius
+                local rRadius = missile.blastRadius
+                    or (ModulesData.getByWeaponIndex(2) and ModulesData.getByWeaponIndex(2).blastRadius)
+                    or 90
                 if enemies and isRocket then
                     local fraction = dt > 0 and (dt - remaining + flightTime) / dt or 0
                     hit = enemies:hitArea(x, y, rRadius, fraction, camera, width, height, missile.damage)
@@ -535,7 +563,7 @@ function Turret:update(dt, ship, mouseWorldX, mouseWorldY, firing, enemies, came
                             missile.x, missile.y = x, y
                             missile.vx, missile.vy = (bdx / blen) * missile.speed, (bdy / blen) * missile.speed
                             missile.age = 0
-                            missile.lifetime = self.missileLifetime * 0.7
+                            missile.lifetime = (missile.baseLifetime or self.missileLifetime) * 0.7
                         else
                             table.remove(self.missiles, i)
                         end
