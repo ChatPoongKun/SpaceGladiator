@@ -1,6 +1,7 @@
 local Ship = require("src.combat.ship")
 local Arena = require("src.core.arena")
 local Display = require("src.core.display")
+local Controls = require("src.core.controls")
 local Starfield = require("src.visual.starfield")
 local StageBackground = require("src.visual.stage_background")
 local BattleScene = require("src.visual.battle_scene")
@@ -58,6 +59,7 @@ local confirmDialog = nil
 local focused = true
 local gameOverHold = 1.25
 local input = { turn = 0, thrust = false, brake = false, boost = false }
+local rawKeys = { w = false, a = false, s = false, d = false }
 local testMode = false
 local testFlags = {}
 local captureRequested = false
@@ -538,7 +540,13 @@ local function resetSaveData()
     if titleDemo then titleDemo:syncBuild(armoryInventory) end
     if removedOk then
         menus.settings.subtitle = "저장 데이터가 초기화되었습니다."
-        selectedButton = 3
+        selectedButton = 1
+        for i, btn in ipairs(menus.settings.buttons or {}) do
+            if btn.label == "뒤로" then
+                selectedButton = i
+                break
+            end
+        end
     else
         menus.settings.subtitle = "저장 데이터를 초기화할 수 없습니다."
         Sfx.play("ui_error")
@@ -609,6 +617,18 @@ local function changeResolution(dir)
     applyDisplayChange(Display.mode, nextRes.w, nextRes.h)
 end
 
+local function controlModeValue()
+    return "< " .. Controls.getModeLabel() .. " >"
+end
+
+local function changeControlMode(dir)
+    Controls.setMode(Controls.nextMode(dir))
+    menus.settings.subtitle = nil
+    if not Controls.saveSettings() then
+        menus.settings.subtitle = "조작 설정을 저장할 수 없습니다."
+    end
+end
+
 local function buildSettingsButtons(fromTitle)
     local buttons = {
         {
@@ -624,6 +644,13 @@ local function buildSettingsButtons(fromTitle)
             action = function() changeResolution(1) end,
             onLeft = function() changeResolution(-1) end,
             onRight = function() changeResolution(1) end,
+        },
+        {
+            label = "조작법",
+            value = controlModeValue,
+            action = function() changeControlMode(1) end,
+            onLeft = function() changeControlMode(-1) end,
+            onRight = function() changeControlMode(1) end,
         },
         {label = "뒤로", action = closeSettings},
     }
@@ -723,6 +750,11 @@ local function dispatchRequestedTests()
         love.event.quit(0)
         return true
     end
+    if testFlags.controls then
+        require("tests.controls")
+        love.event.quit(0)
+        return true
+    end
     if testFlags.background then
         require("tests.stage_background")
         love.event.quit(0)
@@ -761,6 +793,7 @@ function love.load(args)
         if arg == "--test-replay" then testFlags.replay = true end
         if arg == "--test-sfx" then testFlags.sfx = true end
         if arg == "--test-fullscreen" then testFlags.fullscreen = true end
+        if arg == "--test-controls" then testFlags.controls = true end
         if arg == "--test-background" then testFlags.background = true end
         if arg == "--test-title" then testFlags.title = true end
         if arg == "--test-combat" then testFlags.combat = true end
@@ -773,6 +806,10 @@ function love.load(args)
     if not anyTest then
         local saved = Display.loadSettings()
         Display.applyMode(saved.mode, saved.width, saved.height)
+        local savedControls = Controls.loadSettings()
+        Controls.setMode(savedControls.mode)
+    else
+        Controls.setMode(Controls.DEFAULT_MODE)
     end
     Display.syncFromWindow()
     if not anyTest and love.window and love.window.hasFocus then
@@ -1056,10 +1093,11 @@ function love.update(dt)
         end
         return
     end
-    input.turn = (love.keyboard.isDown("d") and 1 or 0)
-        - (love.keyboard.isDown("a") and 1 or 0)
-    input.thrust = love.keyboard.isDown("w")
-    input.brake = love.keyboard.isDown("s")
+    rawKeys.w = love.keyboard.isDown("w")
+    rawKeys.a = love.keyboard.isDown("a")
+    rawKeys.s = love.keyboard.isDown("s")
+    rawKeys.d = love.keyboard.isDown("d")
+    input.turn, input.thrust, input.brake = Controls.resolveFlightInput(ship, dt, rawKeys)
     mouseX, mouseY = Display.getMousePosition()
     if testMode then
         input.turn, input.thrust, input.brake = 0.55, true, false
