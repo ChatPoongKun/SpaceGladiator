@@ -29,9 +29,9 @@ StageBackground.SMOOTHING = 5.0
 StageBackground.TINT = { 0.88, 0.90, 0.94 }
 StageBackground.ALPHA = 0.80
 StageBackground.TITLE_TINT = { 1, 1, 1 }
-StageBackground.TITLE_ALPHA = 1.0
+StageBackground.TITLE_ALPHA = 0.5
 StageBackground.TITLE_PLANET_UV = { x = 0.67, y = 0.36, innerRadius = 0.21, outerRadius = 0.32 }
-StageBackground.FALLBACK_COLOR = { 0.018, 0.025, 0.065 }
+StageBackground.FALLBACK_COLOR = { 0.005, 0.008, 0.015 }
 StageBackground.DEFAULT_IMG_W = 1024
 StageBackground.DEFAULT_IMG_H = 571
 
