@@ -33,7 +33,7 @@ function TitleDemo.new(armoryInventory)
     ship.vx = math.sin(ship.angle) * 140
     ship.vy = -math.cos(ship.angle) * 140
 
-    local camera = Camera.new(ship.x, ship.y)
+    local camera = Camera.new(ship.x, ship.y, { disableEffects = true })
     camera:update(0, ship, Display.VIRTUAL_WIDTH, Display.VIRTUAL_HEIGHT)
 
     local turret = Turret.new(ship.angle)

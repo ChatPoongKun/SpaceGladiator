@@ -3,15 +3,17 @@ local Collision = require("src.core.collision")
 local Camera = {}
 Camera.__index = Camera
 
-function Camera.new(x, y)
+function Camera.new(x, y, opts)
     return setmetatable({
         x = x, y = y, zoom = 1, screenOffsetY = 0, pullback = 0,
         shakeAmp = 0, shakeTimer = 0, shakeDuration = 0, shakeTime = 0,
         shakeOffsetX = 0, shakeOffsetY = 0,
+        disableEffects = (opts and opts.disableEffects == true) or false,
     }, Camera)
 end
 
 function Camera:addShake(amplitude, duration)
+    if self.disableEffects then return end
     local currentEffective = 0
     if (self.shakeDuration or 0) > 0 and (self.shakeTimer or 0) > 0 then
         local ratio = self.shakeTimer / self.shakeDuration
@@ -23,6 +25,9 @@ function Camera:addShake(amplitude, duration)
 end
 
 function Camera:shakeIntensity()
+    if self.disableEffects then
+        return 0
+    end
     if self.replayShakeIntensity ~= nil then
         return self.replayShakeIntensity
     end
@@ -63,6 +68,11 @@ function Camera.buildReplayProxy(s0, s1, alpha, width, height)
 end
 
 function Camera:updateShake(dt, freezeDecay)
+    if self.disableEffects then
+        self.shakeAmp, self.shakeTimer, self.shakeDuration = 0, 0, 0
+        self.shakeOffsetX, self.shakeOffsetY = 0, 0
+        return 0, 0
+    end
     self.shakeTime = (self.shakeTime or 0) + math.max(0, dt or 0)
     if not freezeDecay and (self.shakeTimer or 0) > 0 then
         self.shakeTimer = math.max(0, self.shakeTimer - math.max(0, dt or 0))
@@ -82,6 +92,15 @@ end
 function Camera:update(dt, ship, width, height, opts)
     local fit = math.min(width / Arena.width, height / Arena.height)
     self.screenOffsetY = 0
+    if self.disableEffects or (opts and opts.disableEffects) then
+        self.pullback = 0
+        self.zoom = fit
+        self.shakeAmp, self.shakeTimer, self.shakeDuration = 0, 0, 0
+        self.shakeOffsetX, self.shakeOffsetY = 0, 0
+        self.x = Arena.width / 2
+        self.y = Arena.height / 2
+        return
+    end
     local easing = 1 - math.exp(-22 * dt)
     local targetBoost = (type(ship.boostLevel) == "number" and ship.boostLevel == ship.boostLevel) and ship.boostLevel or 0
     if self.pullback ~= self.pullback then self.pullback = 0 end
