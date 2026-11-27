@@ -50,8 +50,8 @@ StageTransition.WARP_REWARDS = {
     {
         id = "coin_jackpot",
         title = "글래디에이터 x1.5",
-        short = "COINS x1.5",
-        subtitle = "다음 스테이지 포인트 1.5배",
+        short = "GP x1.5",
+        subtitle = "다음 스테이지 정산 GP 1.5배",
         color = { 1.00, 0.84, 0.32 },
     },
     {
@@ -293,8 +293,8 @@ function StageTransition.drawStageClearOverlay(state, width, height, fonts)
     g.setFont(fonts.menuButton or fonts.menuBody)
     g.setColor(0.84, 0.96, 1.0, enter)
     local reasonKo = state.clearReason == "ALL HOSTILES CLEARED"
-        and "모든 적 섬멸 완료 · 워프 게이트로 이동합니다"
-        or "스테이지 클리어 · 워프 게이트로 이동합니다"
+        and "모든 적 섬멸 완료 · 스테이지 정산으로 이동합니다"
+        or "스테이지 클리어 · 스테이지 정산으로 이동합니다"
     g.printf(string.format("STAGE %02d  ·  %s", state.stageNumber, reasonKo), bx + 16, by + 70, bannerW - 32, "center")
 
     -- Subtle countdown bar along bottom of banner
@@ -308,6 +308,10 @@ function StageTransition.drawStageClearOverlay(state, width, height, fonts)
     g.rectangle("fill", barX, barY, barW * prog, 4, 2, 2)
 
     g.pop()
+end
+
+function StageTransition.drawClosedShutters(width, height)
+    drawShutters(1, width, height)
 end
 
 function StageTransition.drawShutterOpen(state, width, height)

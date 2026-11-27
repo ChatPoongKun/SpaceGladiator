@@ -29,7 +29,9 @@ local armoryInventory, armoryUI
 local stage
 local stageClearState, warpShutter, warpGates, warpState
 local replay, activeExporter
-local coinWallet, lastGladiatorTotal = 0, 0
+local stageStartShotsFired, stageStartShotsHit = 0, 0
+local stageSettlement = nil
+local menus = {}
 local inventoryReturnScreen = "playing"
 local inventoryStageEndMode = false
 local pauseReturnScreen = "playing"
@@ -77,7 +79,7 @@ local function setScreen(nextScreen)
     screen, selectedButton = nextScreen, 1
     confirmDialog = nil
     input.boost, firing = false, false
-    local preserveSfx = (screen == "gameOver" or screen == "stageClear"
+    local preserveSfx = (screen == "gameOver" or screen == "stageClear" or screen == "stageSummary"
         or screen == "warpSelect" or screen == "warping" or screen == "playing")
     if not preserveSfx then
         if prevScreen == "gameOver" and screen == "results" then
@@ -120,7 +122,8 @@ local function setScreen(nextScreen)
         ship, camera, turret, enemies, gladiator = nil, nil, nil, nil, nil
         currentBuild, stage = nil, nil
         stageClearState, warpShutter, warpGates, warpState = nil, nil, nil, nil
-        coinWallet, lastGladiatorTotal = 0, 0
+        stageStartShotsFired, stageStartShotsHit = 0, 0
+        stageSettlement = nil
         lastFeedbackDamageCount, lastHullDamageCount = 0, 0
         hitstopTimer, hullFlashTimer = 0, 0
         lowShieldWarned, lowArmorWarned = false, false
@@ -136,8 +139,7 @@ local function syncInventoryBuild(opts)
     if not inventory or not ship or not gladiator then return end
     currentBuild = inventory:computeBuild(gladiator.feverActive)
     ship:applyBuild(currentBuild, opts)
-    local stageMult = (stage and stage.scoreMultiplier) or 1
-    gladiator.scoreMultiplier = (currentBuild.scoreMultiplier or 1) * stageMult
+    gladiator.scoreMultiplier = 1
     lastFeverState = gladiator.feverActive
 end
 
@@ -192,7 +194,8 @@ local function startRun(opts)
     Bgm.stop()
     inventoryUI = InventoryUI.new()
     stageClearState, warpShutter, warpGates, warpState = nil, nil, nil, nil
-    coinWallet, lastGladiatorTotal = 0, 0
+    stageStartShotsFired, stageStartShotsHit = 0, 0
+    stageSettlement = nil
     inventoryReturnScreen = "playing"
     inventoryStageEndMode = false
     pauseReturnScreen = "playing"
@@ -229,9 +232,6 @@ end
 
 local function beginStageClear()
     if replay then replay:finalizeStage() end
-    local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
-    lastGladiatorTotal = gladiator.total or 0
-    coinWallet = coinWallet + delta
     if ship then
         lastWrapEvents = ship.wrapEvents or 0
         lastDamageCount = ship.damageCount or 0
@@ -289,10 +289,68 @@ local function enterWarpSelect(keepExistingGates)
     setScreen("warpSelect")
 end
 
-local function enterWarpSelectFromStageClear()
-    local delta = math.max(0, (gladiator.total or 0) - lastGladiatorTotal)
-    lastGladiatorTotal = gladiator.total or 0
-    coinWallet = coinWallet + delta
+local function settleCurrentStage(completed, reason)
+    if not gladiator then return nil end
+    local fired = math.max(0, (turret and turret.shotsFired or 0) - stageStartShotsFired)
+    local hit = math.max(0, (turret and turret.shotsHit or 0) - stageStartShotsHit)
+    local stageMult = (stage and stage.scoreMultiplier) or 1
+    local stageMultLabel = (stage and stage.featuredReward and stage.featuredReward.title) or "스테이지 보너스"
+    return gladiator:settleStage({
+        stageNumber = stage and stage.number or 1,
+        clearReason = reason or (stage and stage.clearReason),
+        completed = completed,
+        shotsFired = fired,
+        shotsHit = hit,
+        stageMultiplier = stageMult,
+        stageMultiplierLabel = stageMultLabel,
+    })
+end
+
+local function enterWarpSelectFromStageSummary()
+    stageSettlement = nil
+    warpShutter = StageTransition.newShutterOpen()
+    enterWarpSelect(false)
+end
+
+local function buildStageSummaryMenu(report)
+    if not report then return end
+    local rows = {
+        { label = "컴뱃 스코어", value = report.combatScore .. "점", heading = true },
+        { label = "적 파괴", value = string.format("%d회 · %d점", report.destroy.count, report.destroy.score) },
+        { label = "미사일 회피", value = string.format("%d회 · %d점", report.missileDodge.count, report.missileDodge.score) },
+        { label = "곡예비행", value = string.format("%d회 · %d점", report.aerobatics.count, report.aerobatics.score) },
+    }
+    if (report.feverBonus or 0) > 0 then
+        rows[#rows + 1] = { label = "피버 보너스", value = string.format("+%d점", report.feverBonus) }
+    end
+    rows[#rows + 1] = { label = "기본 글레디에이터 포인트", value = report.basePoints .. "점", heading = true }
+    for _, mod in ipairs(report.modifiers or {}) do
+        local valStr
+        if mod.id == "accuracy" then
+            valStr = mod.noShots and "사격 없음 (x1.00)" or string.format("%s (x%.2f)", mod.detail, mod.multiplier)
+        else
+            valStr = string.format("x%.2f", mod.multiplier)
+        end
+        rows[#rows + 1] = { label = mod.label, value = valStr }
+    end
+    if #(report.modifiers or {}) > 1 then
+        rows[#rows + 1] = { label = "총 정산 배율", value = string.format("x%.2f", report.totalMultiplier) }
+    end
+    rows[#rows + 1] = { label = "획득 글레디에이터 포인트", value = string.format("+%d점", report.finalPoints), heading = true }
+    rows[#rows + 1] = { label = "누적 글레디에이터 포인트", value = report.runSettledTotal .. "점" }
+
+    menus.stageSummary = {
+        title = string.format("STAGE %02d 정산", report.stageNumber or 1),
+        subtitle = (report.clearReason == "ALL HOSTILES CLEARED") and "모든 적 섬멸 완료" or "스테이지 클리어",
+        panelWidth = 468,
+        rows = rows,
+        buttons = {
+            { label = "워프 게이트로 이동", action = enterWarpSelectFromStageSummary },
+        },
+    }
+end
+
+local function enterStageSummaryFromStageClear()
     if gladiator then
         gladiator:clearFever()
         gladiator.popups = {}
@@ -307,8 +365,9 @@ local function enterWarpSelectFromStageClear()
     lowArmorAlertCooldown, lowArmorAura = 0, 0
     if turret then turret:clearEffects() end
     stageClearState = nil
-    warpShutter = StageTransition.newShutterOpen()
-    enterWarpSelect(false)
+    stageSettlement = settleCurrentStage(true, stage and stage.clearReason)
+    buildStageSummaryMenu(stageSettlement)
+    setScreen("stageSummary")
 end
 
 local function beginWarpToNextStage(gate)
@@ -362,13 +421,18 @@ local function completeWarpAndStartStage(gate)
         local changedLevel = (stageBackground.level ~= stage.level)
         stageBackground:setLevel(stage.level, changedLevel)
     end
-    local bonusCoins = StageTransition.applyRewardOnArrival(reward, inventory, ship, coinWallet)
-    coinWallet = coinWallet + bonusCoins
+    StageTransition.applyRewardOnArrival(reward, inventory, ship)
     enemies.items = {}
     if enemies.fire then enemies.fire:clear() end
     if turret then turret:clearEffects() end
     enemies.spawnAccumulator = 0.5
     stage:configureEnemies(enemies)
+    if gladiator then
+        gladiator:beginStage(stage.number)
+    end
+    stageStartShotsFired = turret and turret.shotsFired or 0
+    stageStartShotsHit = turret and turret.shotsHit or 0
+    stageSettlement = nil
     warpState = nil
     warpGates = nil
     if ship then
@@ -422,8 +486,6 @@ local function closeInventoryScreen()
     setScreen(inventoryReturnScreen or "playing")
 end
 
-local menus = {}
-
 local function closeReplay()
     if activeExporter then
         activeExporter:finish("내보내기 취소됨")
@@ -463,13 +525,17 @@ end
 
 local function showResults(reason)
     if replay then replay:finalizeStage() end
+    if gladiator and gladiator.stage and not gladiator.stage.settled then
+        settleCurrentStage(false, reason)
+    end
     local shield = math.floor((ship.shieldDamageTaken or 0) + 0.5)
     local armor = math.floor((ship.armorDamageTaken or 0) + 0.5)
     local rows = {
-        {label = "글레디에이터 포인트", value = gladiator.total .. "점", heading = true},
-        {label = "적 파괴", value = string.format("%d회 · %d점", gladiator.destroy.count, gladiator.destroy.points)},
-        {label = "미사일 회피", value = string.format("%d회 · %d점", gladiator.missileDodge.count, gladiator.missileDodge.points)},
-        {label = "곡예비행", value = string.format("%d회 · %d점", gladiator.aerobatics.count, gladiator.aerobatics.points)},
+        {label = "글레디에이터 포인트", value = (gladiator.settledPoints or 0) .. "점", heading = true},
+        {label = "컴뱃 스코어", value = (gladiator.combatScore or 0) .. "점", heading = true},
+        {label = "적 파괴", value = string.format("%d회 · %d점", gladiator.destroy.count, gladiator.destroy.score or 0)},
+        {label = "미사일 회피", value = string.format("%d회 · %d점", gladiator.missileDodge.count, gladiator.missileDodge.score or 0)},
+        {label = "곡예비행", value = string.format("%d회 · %d점", gladiator.aerobatics.count, gladiator.aerobatics.score or 0)},
         {label = "피버타임 유지시간", value = string.format("%.1f초", gladiator.feverTotalTime)},
         {label = "피버타임 최대 지속시간", value = string.format("%.1f초", gladiator.feverMaxDuration)},
         {label = "입은 피해", value = string.format("%d", shield + armor), heading = true},
@@ -1024,7 +1090,7 @@ function love.update(dt)
         end
         return
     end
-    if screen == "pause" or screen == "settings" or screen == "inventory" then return end
+    if screen == "pause" or screen == "settings" or screen == "inventory" or screen == "stageSummary" then return end
     time = time + dt
     if screen == "stageClear" then
         if lowArmorAura > 0 then
@@ -1048,7 +1114,7 @@ function love.update(dt)
         if stageBackground then stageBackground:update(dt, vx * bgScale, vy * bgScale, bgW, bgH) end
         stars:update(dt, (90 + vx * 1.8) * bgScale, (-210 + vy * 1.8) * bgScale, 0, bgW, bgH, 0)
         if StageTransition.updateStageClear(stageClearState, dt) then
-            enterWarpSelectFromStageClear()
+            enterStageSummaryFromStageClear()
         end
         return
     end
@@ -1178,11 +1244,7 @@ function love.update(dt)
         })
     end
 
-    -- Sync 1:1 Gladiator Coins and check stage completion (timer or all squads cleared)
-    if gladiator and (gladiator.total or 0) > lastGladiatorTotal then
-        coinWallet = coinWallet + (gladiator.total - lastGladiatorTotal)
-        lastGladiatorTotal = gladiator.total
-    end
+    -- Check stage completion (timer or all squads cleared)
     if stage and not (testMode or testFlags.flow or testFlags.gladiator or testFlags.inventory or testFlags.combat) then
         if stage:update(dt, enemies) then
             beginStageClear()
@@ -1195,68 +1257,91 @@ end
 
 local function drawHud()
     local g = love.graphics
-    local gx, gw = math.floor(width / 2) - 115, 230
-    -- Subtle compact backing keeps Gladiator Points legible over the full-screen battlefield.
-    g.setColor(0.018, 0.028, 0.055, 0.62)
-    g.rectangle("fill", gx - 10, 16, gw + 20, 88, 8, 8)
-    g.setColor(0.25, 0.47, 0.58, 0.24)
-    g.setLineWidth(1)
-    g.rectangle("line", gx - 10, 16, gw + 20, 88, 8, 8)
-    g.setFont(fonts.small)
-    if gladiator.feverActive then
-        local pulse = 0.78 + 0.22 * math.sin(time * 14)
-        g.setColor(1, 0.84, 0.34, pulse)
-        g.printf(string.format("FEVER TIME x2  /  %.1fS", gladiator.feverDuration), gx, 26, gw, "center")
-        g.setFont(fonts.title)
-        g.setColor(1, 0.92, 0.52, 1)
-        g.printf(string.format("%04d", gladiator.total), gx, 43, gw, "center")
-        local rate = gladiator:feverAverageRate()
-        local barW = 148
-        local barX, barY = math.floor(width / 2 - barW / 2), 82
-        local ratio = math.min(1, rate / gladiator.feverSustainRate)
-        g.setColor(0.18, 0.14, 0.22, 0.85)
-        g.rectangle("fill", barX, barY, barW, 5, 2, 2)
-        if gladiator.feverDuration < gladiator.feverMinDuration or rate >= gladiator.feverSustainRate then
-            g.setColor(1, 0.82, 0.32, 0.95)
-        else
-            g.setColor(1, 0.36, 0.48, 0.95)
-        end
-        g.rectangle("fill", barX, barY, math.max(3, barW * ratio), 5, 2, 2)
+    if gladiator and screen ~= "warpSelect" then
+        local panelW = 220
+        local barW = 184
+        local px = math.floor(width / 2 - panelW / 2)
+        local barX = math.floor(width / 2 - barW / 2)
+        g.push("all")
         g.setFont(fonts.small)
-        g.setColor(1, 0.88, 0.58, 0.9)
-        g.printf(string.format("%d / %d PTS/S", math.floor(rate + 0.5), gladiator.feverSustainRate),
-            gx, 89, gw, "center")
-    else
-        g.setColor(0.53, 0.65, 0.75, 1)
-        g.printf("GLADIATOR COINS", gx, 29, gw, "center")
-        g.setFont(fonts.title)
-        if gladiator.lastEvent then
-            g.setColor(1, 0.84, 0.44, 1)
-        else
-            g.setColor(0.92, 0.86, 0.68, 1)
-        end
-        g.printf(string.format("%04d", gladiator.total), gx, 46, gw, "center")
-        if gladiator.feverCooldown > 0 then
-            g.setFont(fonts.small)
-            g.setColor(0.58, 0.66, 0.76, 0.82)
-            g.printf(string.format("FEVER COOLDOWN  %.1fS", gladiator.feverCooldown), gx, 82, gw, "center")
+
+        if gladiator.feverActive then
+            local pulse = 0.78 + 0.22 * math.sin(time * 14)
+            g.setColor(0.018, 0.028, 0.055, 0.66)
+            g.rectangle("fill", px, 14, panelW, 56, 8, 8)
+            g.setColor(1.0, 0.84, 0.34, 0.42 * pulse)
+            g.setLineWidth(1)
+            g.rectangle("line", px, 14, panelW, 56, 8, 8)
+
+            g.setColor(1.0, 0.84, 0.34, pulse)
+            g.printf(string.format("FEVER TIME x2  /  %.1fS", gladiator.feverDuration), px, 20, panelW, "center")
+
+            local rate = gladiator:feverAverageRate()
+            local barY = 37
+            local ratio = math.min(1, rate / gladiator.feverSustainRate)
+            g.setColor(0.18, 0.14, 0.22, 0.85)
+            g.rectangle("fill", barX, barY, barW, 6, 3, 3)
+            if gladiator.feverDuration < gladiator.feverMinDuration or rate >= gladiator.feverSustainRate then
+                g.setColor(1.0, 0.82, 0.32, 0.95)
+            else
+                g.setColor(1.0, 0.36, 0.48, 0.95)
+            end
+            g.rectangle("fill", barX, barY, math.max(4, barW * ratio), 6, 3, 3)
+
+            g.setColor(1.0, 0.88, 0.58, 0.92)
+            g.printf(string.format("%d / %d PTS/S", math.floor(rate + 0.5), gladiator.feverSustainRate),
+                px, 48, panelW, "center")
+        elseif gladiator.feverCooldown > 0 then
+            local cdRatio = math.max(0, math.min(1, gladiator.feverCooldown / math.max(1e-6, gladiator.feverCooldownDuration)))
+            local blink = 0.30 + 0.70 * (0.5 + 0.5 * math.sin(time * 16))
+            g.setColor(0.018, 0.028, 0.055, 0.62)
+            g.rectangle("fill", px, 14, panelW, 48, 8, 8)
+            g.setColor(0.32, 0.66, 0.86, 0.30 + 0.24 * blink)
+            g.setLineWidth(1)
+            g.rectangle("line", px, 14, panelW, 48, 8, 8)
+
+            g.setColor(0.54, 0.82, 0.96, 0.78 + 0.22 * blink)
+            g.printf("FEVER COOLDOWN", px, 19, panelW, "center")
+
+            -- Locked main Fever charge track (empty while cooling down)
+            g.setColor(0.10, 0.15, 0.22, 0.85)
+            g.rectangle("fill", barX, 34, barW, 4, 2, 2)
+
+            -- Separate shrinking blinking cooldown bar
+            g.setColor(0.09, 0.16, 0.26, 0.88)
+            g.rectangle("fill", barX, 43, barW, 5, 2, 2)
+            if cdRatio > 0 then
+                g.setColor(0.42, 0.80, 1.0, blink)
+                g.rectangle("fill", barX, 43, math.max(2, barW * cdRatio), 5, 2, 2)
+            end
         else
             local recent = gladiator:recentPoints()
+            local ratio = math.min(1, recent / math.max(1e-6, gladiator.feverThreshold))
+            g.setColor(0.018, 0.028, 0.055, 0.56)
+            g.rectangle("fill", px, 14, panelW, 38, 8, 8)
+            g.setColor(0.25, 0.47, 0.58, recent > 0 and 0.36 or 0.22)
+            g.setLineWidth(1)
+            g.rectangle("line", px, 14, panelW, 38, 8, 8)
+
             if recent > 0 then
-                local barW = 128
-                local barX, barY = math.floor(width / 2 - barW / 2), 84
-                g.setColor(0.12, 0.18, 0.24, 0.85)
-                g.rectangle("fill", barX, barY, barW, 4, 2, 2)
-                g.setColor(1, 0.78, 0.34, 0.9)
-                g.rectangle("fill", barX, barY, barW * math.min(1, recent / gladiator.feverThreshold), 4, 2, 2)
-            elseif gladiator.lastEvent then
-                local fade = math.max(0, 1 - gladiator.lastEvent.age / gladiator.noticeDuration)
-                g.setFont(fonts.small)
-                g.setColor(1, 0.82, 0.40, fade)
-                g.printf(string.format("+%d  %s", gladiator.lastEvent.points, gladiator.lastEvent.label),
-                    gx, 82, gw, "center")
+                g.setColor(1.0, 0.84, 0.44, 0.95)
+            else
+                g.setColor(0.53, 0.65, 0.75, 0.82)
+            end
+            g.printf("FEVER", px, 19, panelW, "center")
+
+            local barY = 35
+            g.setColor(0.12, 0.18, 0.24, 0.85)
+            g.rectangle("fill", barX, barY, barW, 6, 3, 3)
+            if ratio > 0 then
+                local fillW = math.max(4, barW * ratio)
+                g.setColor(1.0, 0.78, 0.34, 0.92)
+                g.rectangle("fill", barX, barY, fillW, 6, 3, 3)
+                g.setColor(1.0, 0.95, 0.72, 0.80)
+                g.rectangle("fill", barX + fillW - 2, barY, 2, 6, 1, 1)
             end
         end
+        g.pop()
     end
 
     hud:draw(ship, width, height, time)
@@ -1391,6 +1476,9 @@ function love.draw()
     end
     if screen == "stageClear" and stageClearState then
         StageTransition.drawStageClearOverlay(stageClearState, width, height, fonts)
+    elseif screen == "stageSummary" and menu then
+        StageTransition.drawClosedShutters(width, height)
+        Menu.draw(menu, fonts, selectedButton, width, height, true)
     elseif screen == "warpSelect" and warpShutter then
         StageTransition.drawShutterOpen(warpShutter, width, height)
     elseif screen == "inventory" and inventory and inventoryUI then
@@ -1463,6 +1551,16 @@ function love.keypressed(key, _, isRepeat)
         return
     end
     if screen == "stageClear" or screen == "warping" then
+        return
+    end
+    if screen == "stageSummary" then
+        if key == "return" or key == "kpenter" or key == "space" then
+            local menu = menus.stageSummary
+            if menu and menu.buttons and menu.buttons[selectedButton] then
+                Sfx.play("ui_click")
+                menu.buttons[selectedButton].action()
+            end
+        end
         return
     end
     if key == "tab" or key == "i" then

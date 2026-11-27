@@ -21,6 +21,9 @@ Gladiator.feverSustainRate = 50
 Gladiator.feverCooldownDuration = 5.0
 Gladiator.feverMultiplier = 2
 Gladiator.feverFlashDuration = 0.75
+Gladiator.baseConversionRate = 1.0
+Gladiator.accuracyBaseMultiplier = 0.5
+Gladiator.settlementModifiers = {}
 
 local categoryInfo = {
     destroy = { label = "DESTROY", color = { 1.0, 0.58, 0.32 } },
@@ -28,12 +31,39 @@ local categoryInfo = {
     aerobatics = { marginKey = "aerobaticsMargin", label = "AEROBATICS", color = { 1.0, 0.85, 0.38 } },
 }
 
+local function newStageBucket(stageNumber)
+    return {
+        stageNumber = stageNumber or 1,
+        combatScore = 0,
+        basePoints = 0,
+        feverBonus = 0,
+        destroy = { score = 0, points = 0, count = 0 },
+        missileDodge = { score = 0, points = 0, count = 0 },
+        aerobatics = { score = 0, points = 0, count = 0 },
+        settled = false,
+    }
+end
+
+local function cloneCategoryStat(stat)
+    return {
+        score = stat and stat.score or 0,
+        points = stat and stat.points or 0,
+        count = stat and stat.count or 0,
+    }
+end
+
 function Gladiator.new()
     return setmetatable({
         total = 0,
-        destroy = { points = 0, count = 0 },
-        missileDodge = { points = 0, count = 0 },
-        aerobatics = { points = 0, count = 0 },
+        combatScore = 0,
+        settledPoints = 0,
+        baseConversionRate = Gladiator.baseConversionRate,
+        destroy = { score = 0, points = 0, count = 0 },
+        missileDodge = { score = 0, points = 0, count = 0 },
+        aerobatics = { score = 0, points = 0, count = 0 },
+        stage = newStageBucket(1),
+        stageHistory = {},
+        lastSettlement = nil,
         lastEvent = nil,
         popups = {},
         damageEpoch = 0,
@@ -179,25 +209,183 @@ function Gladiator:clearFever()
     self.sparkAccumulator = 0
 end
 
-function Gladiator:award(category, points, label, x, y)
-    if not points or points <= 0 then return 0 end
+function Gladiator:beginStage(stageNumber)
+    self.stage = newStageBucket(stageNumber)
+end
+
+function Gladiator.registerSettlementModifier(spec)
+    if not spec or not spec.id or type(spec.compute) ~= "function" then return end
+    for i = #Gladiator.settlementModifiers, 1, -1 do
+        if Gladiator.settlementModifiers[i].id == spec.id then
+            table.remove(Gladiator.settlementModifiers, i)
+        end
+    end
+    Gladiator.settlementModifiers[#Gladiator.settlementModifiers + 1] = {
+        id = spec.id,
+        order = spec.order or 0,
+        compute = spec.compute,
+    }
+    table.sort(Gladiator.settlementModifiers, function(a, b)
+        if a.order ~= b.order then
+            return a.order < b.order
+        end
+        return a.id < b.id
+    end)
+end
+
+function Gladiator.unregisterSettlementModifier(id)
+    for i = #Gladiator.settlementModifiers, 1, -1 do
+        if Gladiator.settlementModifiers[i].id == id then
+            table.remove(Gladiator.settlementModifiers, i)
+        end
+    end
+end
+
+function Gladiator.computeAccuracyModifier(shotsFired, shotsHit)
+    local fired = shotsFired or 0
+    if fired <= 0 then
+        return {
+            id = "accuracy",
+            label = "명중률 보정",
+            detail = "사격 없음",
+            accuracy = nil,
+            multiplier = 1.0,
+            noShots = true,
+        }
+    end
+    local acc = math.max(0, math.min(1, (shotsHit or 0) / fired))
+    local mult = (Gladiator.accuracyBaseMultiplier or 0.5) + acc
+    return {
+        id = "accuracy",
+        label = "명중률 보정",
+        detail = string.format("%.1f%%", acc * 100),
+        accuracy = acc,
+        multiplier = mult,
+        noShots = false,
+    }
+end
+
+function Gladiator.buildStageModifiers(stageData, context)
+    context = context or {}
+    local modifiers = {}
+    local accMod = Gladiator.computeAccuracyModifier(context.shotsFired, context.shotsHit)
+    modifiers[#modifiers + 1] = accMod
+
+    local stageMult = context.stageMultiplier
+    if stageMult and math.abs(stageMult - 1.0) > 1e-6 then
+        modifiers[#modifiers + 1] = {
+            id = "stage_bonus",
+            label = context.stageMultiplierLabel or "스테이지 보너스",
+            detail = string.format("x%.2f", stageMult),
+            multiplier = stageMult,
+        }
+    end
+
+    for _, spec in ipairs(Gladiator.settlementModifiers) do
+        local entry = spec.compute(stageData, context)
+        if entry and entry.multiplier ~= nil then
+            modifiers[#modifiers + 1] = entry
+        end
+    end
+
+    if context.extraModifiers then
+        for _, entry in ipairs(context.extraModifiers) do
+            if entry and entry.multiplier ~= nil then
+                modifiers[#modifiers + 1] = entry
+            end
+        end
+    end
+
+    return modifiers, accMod
+end
+
+function Gladiator:settleStage(context)
+    context = context or {}
+    if not self.stage then
+        self.stage = newStageBucket(context.stageNumber or 1)
+    end
+    if self.stage.settled and self.lastSettlement then
+        return self.lastSettlement
+    end
+
+    local modifiers, accMod = Gladiator.buildStageModifiers(self.stage, context)
+    local totalMultiplier = 1.0
+    for _, mod in ipairs(modifiers) do
+        totalMultiplier = totalMultiplier * (mod.multiplier or 1)
+    end
+    totalMultiplier = math.max(0, totalMultiplier)
+
+    local basePoints = self.stage.basePoints or 0
+    local scaledPoints = basePoints > 0 and math.max(0, math.floor(basePoints * totalMultiplier + 0.5)) or 0
+    local flatBonus = context.bonusPoints or 0
+    local finalPoints = math.max(0, scaledPoints + flatBonus)
+
+    self.stage.settled = true
+    self.settledPoints = (self.settledPoints or 0) + finalPoints
+
+    local report = {
+        stageNumber = context.stageNumber or self.stage.stageNumber or 1,
+        clearReason = context.clearReason,
+        completed = context.completed == true,
+        combatScore = self.stage.combatScore or 0,
+        basePoints = basePoints,
+        feverBonus = self.stage.feverBonus or 0,
+        destroy = cloneCategoryStat(self.stage.destroy),
+        missileDodge = cloneCategoryStat(self.stage.missileDodge),
+        aerobatics = cloneCategoryStat(self.stage.aerobatics),
+        accuracy = accMod.accuracy,
+        accuracyNoShots = accMod.noShots,
+        accuracyMultiplier = accMod.multiplier,
+        modifiers = modifiers,
+        totalMultiplier = totalMultiplier,
+        bonusPoints = flatBonus,
+        finalPoints = finalPoints,
+        runSettledTotal = self.settledPoints,
+    }
+    self.stageHistory[#self.stageHistory + 1] = report
+    self.lastSettlement = report
+    return report
+end
+
+function Gladiator:award(category, combatScore, label, x, y)
+    local rawScore = combatScore
+    if not rawScore or rawScore <= 0 then return 0 end
     local isFever = self.feverActive
+    local conv = self.baseConversionRate or Gladiator.baseConversionRate or 1
+    local converted = conv ~= 1 and math.max(1, math.floor(rawScore * conv + 0.5)) or rawScore
     local scaled = (self.scoreMultiplier and self.scoreMultiplier ~= 1)
-        and math.max(1, math.floor(points * self.scoreMultiplier + 0.5)) or points
+        and math.max(1, math.floor(converted * self.scoreMultiplier + 0.5)) or converted
     local awarded = isFever and (scaled * self.feverMultiplier) or scaled
+
     local bucket = self[category]
+    bucket.score = (bucket.score or 0) + rawScore
     bucket.points = bucket.points + awarded
     bucket.count = bucket.count + 1
+    self.combatScore = (self.combatScore or 0) + rawScore
     self.total = self.total + awarded
+
+    if not self.stage then
+        self.stage = newStageBucket(1)
+    end
+    local stageBucket = self.stage[category]
+    stageBucket.score = stageBucket.score + rawScore
+    stageBucket.points = stageBucket.points + awarded
+    stageBucket.count = stageBucket.count + 1
+    self.stage.combatScore = self.stage.combatScore + rawScore
+    self.stage.basePoints = self.stage.basePoints + awarded
+    if isFever then
+        self.stage.feverBonus = self.stage.feverBonus + math.max(0, awarded - scaled)
+    end
+
     self.lastEvent = { category = category, points = awarded, label = label, age = 0, fever = isFever }
     local px, py = self:spawnPopup(category, awarded, x, y, isFever)
     if self.onAward then
-        self.onAward(category, awarded, px or x, py or y, isFever, points)
+        self.onAward(category, awarded, px or x, py or y, isFever, rawScore)
     end
     if isFever then
         self.feverPoints = self.feverPoints + awarded
     elseif self.feverCooldown <= 0 then
-        self.recentGains[#self.recentGains + 1] = { time = self.elapsed, points = awarded }
+        self.recentGains[#self.recentGains + 1] = { time = self.elapsed, points = rawScore }
         if self:recentPoints() >= self.feverThreshold then
             self:startFever(x, y)
         end

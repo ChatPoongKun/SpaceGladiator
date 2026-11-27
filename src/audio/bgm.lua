@@ -192,6 +192,7 @@ end
 
 local CONTINUE_SCREENS = {
     stageClear = true,
+    stageSummary = true,
     warpSelect = true,
     warping = true,
     inventory = true,
@@ -199,7 +200,7 @@ local CONTINUE_SCREENS = {
 
 -- Synchronizes BGM state to the active game screen and stage level.
 -- Active combat ("playing") ensures the level's BGM is looping; run-flow screens
--- ("stageClear", "warpSelect", "warping", "inventory") keep the active
+-- ("stageClear", "stageSummary", "warpSelect", "warping", "inventory") keep the active
 -- level's BGM looping continuously; pause/settings pause it; title/armory/gameOver/results/replay stop it.
 function Bgm.syncScreen(screen, stageLevel, opts)
     opts = opts or {}
